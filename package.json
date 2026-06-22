@@ -20,7 +20,9 @@
     "audit:tui": "npm audit --workspace ui-tui",
     "audit:fix:root": "npm audit fix --workspaces=false",
     "audit:fix:web": "npm audit fix --workspace web",
-    "audit:fix:tui": "npm audit fix --workspace ui-tui"
+    "audit:fix:tui": "npm audit fix --workspace ui-tui",
+    "build:web:desk": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-command-desk-web.ps1",
+    "validate:desk": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/validate-command-desk.ps1"
   },
   "repository": {
     "type": "git",
