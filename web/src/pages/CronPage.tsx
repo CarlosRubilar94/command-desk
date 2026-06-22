@@ -31,6 +31,7 @@ import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
 import { Segmented } from "@nous-research/ui/ui/components/segmented";
 import { AutomationBlueprints } from "@/components/AutomationBlueprints";
+import { CronJobRuns } from "@/components/CronJobRuns";
 import { cn, themedBody } from "@/lib/utils";
 
 function formatTime(iso?: string | null): string {
@@ -855,6 +856,7 @@ export default function CronPage() {
                       {job.last_error}
                     </p>
                   )}
+                  <CronJobRuns jobId={job.id} profile={profile} />
                 </div>
 
                 <div className="flex items-center gap-1 shrink-0">

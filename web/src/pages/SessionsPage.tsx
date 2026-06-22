@@ -5,7 +5,7 @@ import {
   useCallback,
   useRef,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -433,6 +433,16 @@ function SessionRow({
         {session.source ?? "local"}
       </Badge>
 
+      {session.parent_session_id ? (
+        <Badge
+          tone="outline"
+          className="text-xs text-warning"
+          title={`Child of ${session.parent_session_id}`}
+        >
+          delegation
+        </Badge>
+      ) : null}
+
       {resumeInChatEnabled && (
         <Button
           ghost
@@ -714,6 +724,7 @@ function SessionsPagination({
 }
 
 export default function SessionsPage() {
+  const [searchParams] = useSearchParams();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -724,6 +735,9 @@ export default function SessionsPage() {
     SessionSearchResult[] | null
   >(null);
   const [searching, setSearching] = useState(false);
+  const [sessionKindFilter, setSessionKindFilter] = useState<
+    "all" | "delegation" | "cron"
+  >("all");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const logScrollRef = useRef<HTMLPreElement | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -1197,6 +1211,29 @@ export default function SessionsPage() {
     ? sessions.filter((s) => snippetMap.has(s.id))
     : sessions;
 
+  const visibleSessions = filtered.filter((s) => {
+    if (sessionKindFilter === "delegation") {
+      return Boolean(s.parent_session_id);
+    }
+    if (sessionKindFilter === "cron") {
+      return s.source === "cron";
+    }
+    return true;
+  });
+
+  const focusSessionId = searchParams.get("focus");
+  const kindParam = searchParams.get("kind");
+  useEffect(() => {
+    if (focusSessionId) {
+      setExpandedId(focusSessionId);
+      setView("list");
+    }
+    if (kindParam === "delegation" || kindParam === "cron") {
+      setSessionKindFilter(kindParam);
+      setView("list");
+    }
+  }, [focusSessionId, kindParam]);
+
   const platformEntries = status
     ? Object.entries(status.gateway_platforms ?? {})
     : [];
@@ -1511,6 +1548,22 @@ export default function SessionsPage() {
               </div>
             )}
 
+            {showList && !isSearching && (
+              <Segmented
+                className="w-fit shrink-0"
+                size="sm"
+                value={sessionKindFilter}
+                onChange={(v) =>
+                  setSessionKindFilter(v as "all" | "delegation" | "cron")
+                }
+                options={[
+                  { value: "all", label: "All" },
+                  { value: "delegation", label: "Delegation" },
+                  { value: "cron", label: "Cron" },
+                ]}
+              />
+            )}
+
             {showList && emptyCount > 0 && !isSearching && (
               <Button
                 outlined
@@ -1556,11 +1609,11 @@ export default function SessionsPage() {
               String(selectedIds.size),
             )}
           </span>
-          {filtered.some((s) => !selectedIds.has(s.id)) && (
+          {visibleSessions.some((s) => !selectedIds.has(s.id)) && (
             <Button
               ghost
               size="sm"
-              onClick={() => selectAllOnPage(filtered)}
+              onClick={() => selectAllOnPage(visibleSessions)}
               aria-label={t.sessions.selectAllOnPage}
               title={t.sessions.selectAllOnPage}
             >
@@ -1607,7 +1660,7 @@ export default function SessionsPage() {
       )}
 
       {showList ? (
-        filtered.length === 0 ? (
+        visibleSessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Clock className="h-8 w-8 mb-3 opacity-40" />
             <p className="text-sm font-medium">
@@ -1622,7 +1675,7 @@ export default function SessionsPage() {
         ) : (
           <>
             <div className="flex min-w-0 flex-col gap-1.5">
-              {filtered.map((s, index) => (
+              {visibleSessions.map((s, index) => (
                 <SessionRow
                   key={s.id}
                   session={s}
@@ -1634,7 +1687,7 @@ export default function SessionsPage() {
                     setExpandedId((prev) => (prev === s.id ? null : s.id))
                   }
                   onSelectClick={(event) =>
-                    handleSelectClick(event, index, filtered)
+                    handleSelectClick(event, index, visibleSessions)
                   }
                   onDelete={() => sessionDelete.requestDelete(s.id)}
                   onRename={handleRename}

@@ -98,6 +98,8 @@ import {
   DevssdDoctorPage,
   GatewayStatusPage,
 } from "@/pages/DevssdPages";
+import OpsFleetPage from "@/pages/OpsFleetPage";
+import RoutingPage from "@/pages/RoutingPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -110,7 +112,7 @@ import { api } from "@/lib/api";
 import type { StatusResponse } from "@/lib/api";
 
 function RootRedirect() {
-  return <Navigate to="/sessions" replace />;
+  return <Navigate to="/agent" replace />;
 }
 
 function UnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
@@ -118,7 +120,7 @@ function UnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
     // Render nothing during the plugin-load window — a spinner here would just flash.
     return null;
   }
-  return <Navigate to="/sessions" replace />;
+  return <Navigate to="/agent" replace />;
 }
 
 const CHAT_NAV_ITEM: NavItem = {
@@ -140,6 +142,8 @@ const CHAT_NAV_ITEM: NavItem = {
 const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/": RootRedirect,
   "/agent": AgentHomePage,
+  "/ops": OpsFleetPage,
+  "/routing": RoutingPage,
   "/doctor": DevssdDoctorPage,
   "/bitwarden": BitwardenStatusPage,
   "/gateway": GatewayStatusPage,
@@ -171,6 +175,15 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
 function ChatRouteSink() {
   return null;
 }
+
+const COMMAND_DESK_NAV: NavItem[] = [
+  { path: "/agent", label: "Home", icon: Sparkles },
+  { path: "/ops", label: "Fleet", icon: Activity },
+  { path: "/routing", label: "Routing", icon: Zap },
+  { path: "/doctor", label: "Doctor", icon: ShieldCheck },
+  { path: "/gateway", label: "Gateway", icon: Radio },
+  { path: "/command-deck", label: "Command Deck", icon: Globe },
+];
 
 const BUILTIN_NAV_REST: NavItem[] = [
   {
@@ -361,6 +374,8 @@ const SIDEBAR_COLLAPSED_KEY = "hermes-sidebar-collapsed";
 /** DevSSD deck pages use full-width layout without outer page padding. */
 const DECK_LAYOUT_ROUTES = new Set([
   "/agent",
+  "/ops",
+  "/routing",
   "/doctor",
   "/bitwarden",
   "/gateway",
@@ -624,6 +639,35 @@ export default function App() {
               aria-label={t.app.navigation}
             >
               <ul className="flex flex-col">
+                <span
+                  className={cn(
+                    "deck-nav-section-label",
+                    isDesktopCollapsed && "lg:hidden",
+                  )}
+                >
+                  Command Desk
+                </span>
+                {COMMAND_DESK_NAV.map((item) => (
+                  <SidebarNavLink
+                    closeMobile={closeMobile}
+                    collapsed={isDesktopCollapsed}
+                    item={item}
+                    key={item.path}
+                    t={t}
+                    tooltipWarmRef={tooltipWarmRef}
+                  />
+                ))}
+              </ul>
+
+              <ul className="flex flex-col border-t border-current/10 pt-2">
+                <span
+                  className={cn(
+                    "deck-nav-section-label",
+                    isDesktopCollapsed && "lg:hidden",
+                  )}
+                >
+                  Hermes
+                </span>
                 {sidebarNav.coreItems.map((item) => (
                   <SidebarNavLink
                     closeMobile={closeMobile}
