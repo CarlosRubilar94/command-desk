@@ -26,6 +26,7 @@ import {
   Code,
   Cpu,
   Database,
+  DollarSign,
   Download,
   Eye,
   FolderOpen,
@@ -100,6 +101,7 @@ import {
   GatewayStatusPage,
 } from "@/pages/DevssdPages";
 import OpsFleetPage from "@/pages/OpsFleetPage";
+import CostsPage from "@/pages/CostsPage";
 import RoutingPage from "@/pages/RoutingPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -144,6 +146,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/": RootRedirect,
   "/agent": AgentHomePage,
   "/ops": OpsFleetPage,
+  "/costs": CostsPage,
   "/routing": RoutingPage,
   "/doctor": DevssdDoctorPage,
   "/bitwarden": BitwardenStatusPage,
@@ -180,6 +183,7 @@ function ChatRouteSink() {
 const COMMAND_DESK_NAV: NavItem[] = [
   { path: "/agent", label: "Home", icon: Sparkles },
   { path: "/ops", label: "Fleet", icon: Activity },
+  { path: "/costs", label: "Spend", icon: DollarSign },
   { path: "/routing", label: "Routing", icon: Zap },
   { path: "/doctor", label: "Doctor", icon: ShieldCheck },
   { path: "/gateway", label: "Gateway", icon: Radio },
@@ -231,6 +235,9 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   BarChart3,
   Clock,
   Cpu,
+  Database,
+  DollarSign,
+  Eye,
   FileText,
   FolderOpen,
   KeyRound,
@@ -241,7 +248,6 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   Sparkles,
   Terminal,
   Globe,
-  Database,
   Shield,
   Users,
   Wrench,
@@ -249,7 +255,6 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   Heart,
   Star,
   Code,
-  Eye,
 };
 
 function resolveIcon(name: string): ComponentType<{ className?: string }> {

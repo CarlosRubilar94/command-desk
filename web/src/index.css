@@ -13,6 +13,12 @@
 /* Scan the published design-system bundle so its utility classes survive
    Tailwind's JIT purge. */
 @source '../node_modules/@nous-research/ui/dist';
+/* Ensure local ds/ primitives and any new component subdirectories are
+   also scanned — Tailwind v4 covers src/** automatically via the root
+   @import, but an explicit @source guarantees JIT pickup for sub-trees
+   that may be added later without rebuilding the project config. */
+@source './components/ds/**';
+@source './pages/**';
 
 /* ------------------------------------------------------------------ */
 /* JetBrains Mono — bundled for the embedded TUI (/chat tab).          */

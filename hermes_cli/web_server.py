@@ -11307,6 +11307,166 @@ async def get_models_analytics(days: int = 30, profile: Optional[str] = None):
 
 
 # ---------------------------------------------------------------------------
+# Cost Intelligence endpoints (/api/costs/*)
+#
+# Source: SessionDB aggregates (estimated_cost_usd / actual_cost_usd /
+# input_tokens / output_tokens / model / started_at). Auth inherited from
+# the existing middleware — these routes are NOT in public_paths.py.
+# No dependency on traces.db or spans (Wave 1B scope).
+# ---------------------------------------------------------------------------
+
+@app.get("/api/costs/summary")
+async def get_costs_summary(profile: Optional[str] = None):
+    """Spend summary: today + all-time totals, token counts, run count."""
+    db = _open_session_db_for_profile(profile)
+    try:
+        today_start = time.mktime(time.strptime(time.strftime("%Y-%m-%d"), "%Y-%m-%d"))
+        cur = db._conn.execute(
+            """
+            SELECT COALESCE(SUM(estimated_cost_usd), 0) AS spend_today,
+                   SUM(input_tokens)                    AS tokens_input_today,
+                   SUM(output_tokens)                   AS tokens_output_today,
+                   COUNT(*)                             AS runs_today
+            FROM sessions WHERE started_at >= ?
+            """,
+            (today_start,),
+        )
+        today = dict(cur.fetchone())
+
+        cur2 = db._conn.execute(
+            """
+            SELECT COALESCE(SUM(estimated_cost_usd), 0) AS spend_total,
+                   COALESCE(SUM(actual_cost_usd), 0)    AS actual_total,
+                   SUM(input_tokens)                    AS tokens_input_total,
+                   SUM(output_tokens)                   AS tokens_output_total,
+                   COUNT(*)                             AS runs_total
+            FROM sessions
+            """
+        )
+        totals = dict(cur2.fetchone())
+
+        return {
+            "spend_today": today["spend_today"],
+            "runs_today": today["runs_today"],
+            "tokens_today": (today["tokens_input_today"] or 0) + (today["tokens_output_today"] or 0),
+            "spend_total": totals["spend_total"],
+            "actual_total": totals["actual_total"],
+            "tokens_total": (totals["tokens_input_total"] or 0) + (totals["tokens_output_total"] or 0),
+            "runs_total": totals["runs_total"],
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/costs/by-model")
+async def get_costs_by_model(days: int = 30, profile: Optional[str] = None):
+    """Per-model cost breakdown for the given lookback window."""
+    db = _open_session_db_for_profile(profile)
+    try:
+        cutoff = time.time() - (days * 86400)
+        cur = db._conn.execute(
+            """
+            SELECT model,
+                   COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost,
+                   COALESCE(SUM(actual_cost_usd), 0)    AS actual_cost,
+                   SUM(input_tokens)                    AS input_tokens,
+                   SUM(output_tokens)                   AS output_tokens,
+                   COUNT(*)                             AS runs,
+                   SUM(COALESCE(api_call_count, 0))     AS api_calls
+            FROM sessions
+            WHERE started_at > ? AND model IS NOT NULL AND model != ''
+            GROUP BY model
+            ORDER BY SUM(COALESCE(estimated_cost_usd, 0)) DESC
+            """,
+            (cutoff,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        return {"by_model": rows, "period_days": days}
+    finally:
+        db.close()
+
+
+@app.get("/api/costs/by-day")
+async def get_costs_by_day(days: int = 30, profile: Optional[str] = None):
+    """Daily cost trend for sparkline rendering."""
+    db = _open_session_db_for_profile(profile)
+    try:
+        cutoff = time.time() - (days * 86400)
+        cur = db._conn.execute(
+            """
+            SELECT date(started_at, 'unixepoch') AS day,
+                   COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost,
+                   SUM(input_tokens)                    AS input_tokens,
+                   SUM(output_tokens)                   AS output_tokens,
+                   COUNT(*)                             AS runs
+            FROM sessions
+            WHERE started_at > ?
+            GROUP BY day
+            ORDER BY day
+            """,
+            (cutoff,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        return {"by_day": rows, "period_days": days}
+    finally:
+        db.close()
+
+
+@app.get("/api/costs/savings")
+async def get_costs_savings(days: int = 30, profile: Optional[str] = None):
+    """
+    Routing downgrade savings estimate.
+
+    No per-call savings are recorded in Wave 1B (smart_model_routing does not
+    persist this yet). We compute a best-effort estimate: sessions run on known
+    premium-tier models are compared against an estimated mid-tier cost ratio.
+    The ``is_estimate: true`` flag lets the UI clearly mark the result.
+    """
+    PREMIUM_PREFIXES = (
+        "claude-3-5-sonnet", "claude-3-opus", "gpt-4o", "gpt-4-turbo",
+        "gpt-4", "o1", "o3",
+    )
+    MID_COST_FACTOR = 0.30  # approximate mid-tier / premium cost ratio
+
+    db = _open_session_db_for_profile(profile)
+    try:
+        cutoff = time.time() - (days * 86400)
+        cur = db._conn.execute(
+            """
+            SELECT model,
+                   COALESCE(SUM(estimated_cost_usd), 0) AS spend,
+                   COUNT(*) AS runs
+            FROM sessions
+            WHERE started_at > ? AND model IS NOT NULL AND model != ''
+            GROUP BY model
+            """,
+            (cutoff,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+
+        premium_spend = 0.0
+        premium_runs = 0
+        for row in rows:
+            m = (row.get("model") or "").lower()
+            if any(m.startswith(p) for p in PREMIUM_PREFIXES):
+                premium_spend += row["spend"]
+                premium_runs += row["runs"]
+
+        estimated_savings = premium_spend * (1.0 - MID_COST_FACTOR)
+        return {
+            "estimated_savings_usd": round(estimated_savings, 6),
+            "premium_spend_usd": round(premium_spend, 6),
+            "premium_runs": premium_runs,
+            "mid_cost_factor": MID_COST_FACTOR,
+            "is_estimate": True,
+            "note": "Best-effort estimate; no per-call savings recorded in Wave 1B.",
+            "period_days": days,
+        }
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # /api/pty — PTY-over-WebSocket bridge for the dashboard "Chat" tab.
 #
 # The endpoint spawns the same ``hermes --tui`` binary the CLI uses, behind

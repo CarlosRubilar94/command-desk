@@ -1188,6 +1188,24 @@ export const api = {
     fetchJSON<SkillHubScan>(
       `/api/skills/hub/scan?identifier=${encodeURIComponent(identifier)}`,
     ),
+
+  // ── Cost Intelligence (/api/costs/*) ───────────────────────────────────
+  getCostsSummary: (profile = getManagementProfile()) =>
+    fetchJSON<CostsSummaryResponse>(
+      appendProfileParam("/api/costs/summary", profile),
+    ),
+  getCostsByModel: (days: number, profile = getManagementProfile()) =>
+    fetchJSON<CostsByModelResponse>(
+      appendProfileParam(`/api/costs/by-model?days=${days}`, profile),
+    ),
+  getCostsByDay: (days: number, profile = getManagementProfile()) =>
+    fetchJSON<CostsByDayResponse>(
+      appendProfileParam(`/api/costs/by-day?days=${days}`, profile),
+    ),
+  getCostsSavings: (days: number, profile = getManagementProfile()) =>
+    fetchJSON<CostsSavingsResponse>(
+      appendProfileParam(`/api/costs/savings?days=${days}`, profile),
+    ),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -2380,4 +2398,54 @@ export interface AgentPluginUpdateResponse {
 export interface PluginProvidersPutRequest {
   memory_provider?: string;
   context_engine?: string;
+}
+
+// ── Cost Intelligence types ─────────────────────────────────────────────────
+
+export interface CostsSummaryResponse {
+  spend_today: number;
+  runs_today: number;
+  tokens_today: number;
+  spend_total: number;
+  actual_total: number;
+  tokens_total: number;
+  runs_total: number;
+}
+
+export interface CostsModelEntry {
+  model: string;
+  estimated_cost: number;
+  actual_cost: number;
+  input_tokens: number;
+  output_tokens: number;
+  runs: number;
+  api_calls: number;
+}
+
+export interface CostsByModelResponse {
+  by_model: CostsModelEntry[];
+  period_days: number;
+}
+
+export interface CostsDayEntry {
+  day: string;
+  estimated_cost: number;
+  input_tokens: number;
+  output_tokens: number;
+  runs: number;
+}
+
+export interface CostsByDayResponse {
+  by_day: CostsDayEntry[];
+  period_days: number;
+}
+
+export interface CostsSavingsResponse {
+  estimated_savings_usd: number;
+  premium_spend_usd: number;
+  premium_runs: number;
+  mid_cost_factor: number;
+  is_estimate: boolean;
+  note: string;
+  period_days: number;
 }
