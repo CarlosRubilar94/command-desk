@@ -35,7 +35,7 @@ function CronRunRow({
         ) : (
           <ChevronRight className="h-3 w-3 shrink-0" />
         )}
-        <span className="font-mono text-[var(--dsd-sem-info)]" title={run.id}>
+        <span className="font-mono text-[var(--dsd-sem-info)]" title={run.id} onClick={(e) => e.stopPropagation()}>
           {run.id.slice(-12)}
         </span>
         <span>{formatRunTime(run.started_at)}</span>
