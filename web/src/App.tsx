@@ -49,6 +49,7 @@ import {
   ShieldCheck,
   Sparkles,
   Star,
+  Target,
   Terminal,
   Users,
   Webhook,
@@ -105,6 +106,7 @@ import OpsFleetPage from "@/pages/OpsFleetPage";
 import CostsPage from "@/pages/CostsPage";
 import TracesPage from "@/pages/TracesPage";
 import RoutingPage from "@/pages/RoutingPage";
+import MissionsPage from "@/pages/MissionsPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -150,6 +152,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/ops": OpsFleetPage,
   "/costs": CostsPage,
   "/traces": TracesPage,
+  "/missions": MissionsPage,
   "/routing": RoutingPage,
   "/doctor": DevssdDoctorPage,
   "/bitwarden": BitwardenStatusPage,
@@ -185,6 +188,7 @@ function ChatRouteSink() {
 
 const COMMAND_DESK_NAV: NavItem[] = [
   { path: "/agent", label: "Home", icon: Sparkles },
+  { path: "/missions", label: "Missions", icon: Target },
   { path: "/ops", label: "Fleet", icon: Activity },
   { path: "/costs", label: "Spend", icon: DollarSign },
   { path: "/traces", label: "Runs", icon: GitBranch },
@@ -260,6 +264,7 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   Heart,
   Star,
   Code,
+  Target,
 };
 
 function resolveIcon(name: string): ComponentType<{ className?: string }> {
@@ -385,6 +390,7 @@ const SIDEBAR_COLLAPSED_KEY = "hermes-sidebar-collapsed";
 /** DevSSD deck pages use full-width layout without outer page padding. */
 const DECK_LAYOUT_ROUTES = new Set([
   "/agent",
+  "/missions",
   "/ops",
   "/costs",
   "/traces",

@@ -1232,6 +1232,18 @@ export const api = {
     fetchJSON<CostsByMissionResponse>(
       appendProfileParam(`/api/costs/by-mission?days=${days}`, profile),
     ),
+
+  // ── Mission Control ────────────────────────────────────────────────────
+  getMissions: (params?: MissionsParams) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    if (params?.status) qs.set("status", params.status);
+    const q = qs.toString();
+    return fetchJSON<MissionsResponse>(`/api/missions${q ? `?${q}` : ""}`);
+  },
+  getMission: (missionId: string) =>
+    fetchJSON<MissionDetailResponse>(`/api/missions/${encodeURIComponent(missionId)}`),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -2590,4 +2602,75 @@ export interface MissionCostRow {
 export interface CostsByMissionResponse {
   missions: MissionCostRow[];
   is_estimate: boolean;
+}
+
+// ── Mission Control types ──────────────────────────────────────────────────────
+
+export interface MissionProgress {
+  done: number;
+  total: number;
+  pct: number;
+}
+
+export interface MissionRow {
+  mission_id: string;
+  board_slug: string;
+  title: string;
+  status: string;
+  owner: string | null;
+  progress: MissionProgress;
+  models: string[];
+  cost_usd: number;
+  total_tokens: number;
+  run_count: number;
+  updated_at: string | null;
+}
+
+export interface MissionsParams {
+  limit?: number;
+  offset?: number;
+  status?: string;
+}
+
+export interface MissionsResponse {
+  missions: MissionRow[];
+  total: number;
+}
+
+export interface MissionTask {
+  id: string;
+  title: string;
+  status: string;
+  assignee: string | null;
+  session_id: string | null;
+}
+
+export interface MissionDelegationNode {
+  session_id: string;
+  parent_session_id: string | null;
+  agent: string | null;
+  model: string | null;
+  cost_usd: number | null;
+  status: string;
+}
+
+export interface MissionTimelineEvent {
+  ts: string;
+  kind: string;
+  label: string;
+}
+
+export interface MissionTopRun {
+  session_id: string;
+  cost_usd: number;
+  status: string;
+  duration_ms: number | null;
+}
+
+export interface MissionDetailResponse {
+  mission: MissionRow;
+  tasks: MissionTask[];
+  delegation_tree: MissionDelegationNode[];
+  timeline: MissionTimelineEvent[];
+  top_runs: MissionTopRun[];
 }

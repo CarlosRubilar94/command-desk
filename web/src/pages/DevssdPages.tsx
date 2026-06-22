@@ -29,6 +29,7 @@ import {
   ServiceCell,
 } from "@/components/DeckOps";
 import { FleetOpsPanel } from "@/components/FleetOpsPanel";
+import { MissionOverview } from "@/components/MissionOverview";
 import { useI18n } from "@/i18n";
 
 function useDevssdStatus() {
@@ -283,6 +284,8 @@ export function AgentHomePage() {
               state={bwOk ? "ok" : "warning"}
             />
           </div>
+
+          <MissionOverview />
 
           <div className="service-matrix col-12">
             <ServiceCell

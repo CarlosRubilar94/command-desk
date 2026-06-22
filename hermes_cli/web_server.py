@@ -11546,6 +11546,301 @@ def _mission_session_ids(board_slug: str) -> List[str]:
         return []
 
 
+def _derived_mission_id(board_slug: str) -> str:
+    slug = str(board_slug or "").strip()
+    return f"board:{slug}" if slug else "board:unknown"
+
+
+def _session_runtime_status(session: Dict[str, Any]) -> str:
+    if not session:
+        return "unknown"
+    if session.get("ended_at") is None:
+        return "running"
+    reason = str(session.get("end_reason") or "").strip()
+    return reason or "ended"
+
+
+def _mission_updated_at(
+    base_updated_at: float,
+    board_snapshot: Dict[str, Any],
+    session_rows: List[Dict[str, Any]],
+    span_rows: List[Dict[str, Any]],
+) -> float:
+    latest = _safe_float(base_updated_at, 0.0)
+    latest = max(latest, _safe_float(board_snapshot.get("latest_event_ts"), 0.0))
+    for row in session_rows:
+        latest = max(
+            latest,
+            _safe_float(row.get("started_at"), 0.0),
+            _safe_float(row.get("ended_at"), 0.0),
+        )
+    for row in span_rows:
+        latest = max(latest, _safe_float(row.get("started_at"), 0.0))
+    return latest
+
+
+def _load_board_snapshot(board_slug: str) -> Dict[str, Any]:
+    from hermes_cli import kanban_db
+
+    empty_snapshot: Dict[str, Any] = {
+        "tasks": [],
+        "task_events": [],
+        "by_status": {},
+        "latest_event_ts": 0,
+    }
+    if not board_slug:
+        return empty_snapshot
+
+    conn = None
+    try:
+        conn = kanban_db.connect(board=board_slug)
+        task_rows = kanban_db.list_tasks(conn, include_archived=False)
+        stats = kanban_db.board_stats(conn)
+        tasks = []
+        events: List[Dict[str, Any]] = []
+        latest_event_ts = 0
+        for task in task_rows:
+            tasks.append(
+                {
+                    "id": task.id,
+                    "title": task.title or task.id,
+                    "status": task.status,
+                    "assignee": task.assignee,
+                    "session_id": task.session_id,
+                }
+            )
+            for ev in kanban_db.list_events(conn, task.id):
+                ts = _safe_int(ev.created_at)
+                latest_event_ts = max(latest_event_ts, ts)
+                events.append(
+                    {
+                        "ts": ts,
+                        "kind": "task_event",
+                        "label": f"{task.title or task.id}: {ev.kind}",
+                    }
+                )
+        by_status = stats.get("by_status", {}) if isinstance(stats, dict) else {}
+        return {
+            "tasks": tasks,
+            "task_events": events,
+            "by_status": by_status if isinstance(by_status, dict) else {},
+            "latest_event_ts": latest_event_ts,
+        }
+    except Exception:
+        return empty_snapshot
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _session_rows_for_ids(db: Any, session_ids: List[str]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for sid in session_ids:
+        try:
+            row = db.get_session(sid)
+        except Exception:
+            row = None
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _mission_span_rows(session_ids: List[str]) -> Dict[str, Any]:
+    from hermes_cli import traces_store
+    import sqlite3
+
+    output: Dict[str, Any] = {
+        "spans": [],
+        "delegations": [],
+        "models": set(),
+        "timeline": [],
+    }
+    if not session_ids:
+        return output
+
+    db_path = traces_store.traces_db_path()
+    if not db_path.exists():
+        return output
+
+    session_set = {str(sid) for sid in session_ids if str(sid).strip()}
+    if not session_set:
+        return output
+
+    placeholders = ",".join("?" for _ in session_set)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        span_rows = conn.execute(
+            f"""
+            SELECT session_id, kind, agent, model, cost_usd, status, started_at, attributes
+            FROM spans
+            WHERE session_id IN ({placeholders})
+            ORDER BY started_at ASC
+            """,
+            list(session_set),
+        ).fetchall()
+        delegation_rows = conn.execute(
+            """
+            SELECT session_id, kind, agent, model, cost_usd, status, started_at, attributes
+            FROM spans
+            WHERE kind = 'delegation'
+            ORDER BY started_at ASC
+            """,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        conn.close()
+        return output
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    spans = [dict(row) for row in span_rows]
+    output["spans"] = spans
+    output["timeline"] = [
+        {
+            "ts": _safe_float(row.get("started_at")),
+            "kind": "span",
+            "label": f"{row.get('kind') or 'span'}:{row.get('agent') or 'agent'}",
+        }
+        for row in spans
+        if row.get("started_at") is not None
+    ]
+    output["models"] = {
+        str(row.get("model"))
+        for row in spans
+        if str(row.get("model") or "").strip()
+    }
+
+    delegations: List[Dict[str, Any]] = []
+    for raw_row in delegation_rows:
+        row = dict(raw_row)
+        attrs: Dict[str, Any] = {}
+        raw_attrs = row.get("attributes")
+        if isinstance(raw_attrs, str) and raw_attrs:
+            try:
+                parsed = json.loads(raw_attrs)
+                if isinstance(parsed, dict):
+                    attrs = parsed
+            except Exception:
+                attrs = {}
+
+        child_sid = str(attrs.get("child_session_id") or row.get("session_id") or "").strip()
+        parent_sid = str(attrs.get("parent_session_id") or "").strip() or None
+        if not child_sid:
+            continue
+        if child_sid not in session_set and (parent_sid is None or parent_sid not in session_set):
+            continue
+        delegations.append(
+            {
+                "session_id": child_sid,
+                "parent_session_id": parent_sid,
+                "agent": row.get("agent") or attrs.get("child_role"),
+                "model": row.get("model"),
+                "cost_usd": _safe_float(row.get("cost_usd")),
+                "status": attrs.get("child_status") or row.get("status") or "unknown",
+            }
+        )
+    output["delegations"] = delegations
+    return output
+
+
+def _mission_summary_payload(
+    *,
+    mission_id: str,
+    board_slug: str,
+    title: str,
+    status: str,
+    owner: Optional[str],
+    base_updated_at: float,
+    board_snapshot: Dict[str, Any],
+    session_rows: List[Dict[str, Any]],
+    span_rows: List[Dict[str, Any]],
+    span_models: set[str],
+) -> Dict[str, Any]:
+    by_status = board_snapshot.get("by_status", {}) if isinstance(board_snapshot, dict) else {}
+    total = int(sum(_safe_int(v) for v in by_status.values())) if isinstance(by_status, dict) else 0
+    done = _safe_int(by_status.get("done")) if isinstance(by_status, dict) else 0
+    pct = float((done / total) * 100.0) if total > 0 else 0.0
+    cost_usd = 0.0
+    total_tokens = 0
+    session_models: set[str] = set()
+    for row in session_rows:
+        estimated = row.get("estimated_cost_usd")
+        actual = row.get("actual_cost_usd")
+        cost_usd += _safe_float(estimated if estimated is not None else actual)
+        total_tokens += _safe_int(row.get("input_tokens")) + _safe_int(row.get("output_tokens"))
+        model_name = str(row.get("model") or "").strip()
+        if model_name:
+            session_models.add(model_name)
+    models = sorted(session_models.union(span_models))
+    updated_at = _mission_updated_at(base_updated_at, board_snapshot, session_rows, span_rows)
+    return {
+        "mission_id": mission_id,
+        "board_slug": board_slug,
+        "title": title,
+        "status": status,
+        "owner": owner,
+        "progress": {"done": done, "total": total, "pct": round(pct, 2)},
+        "models": models,
+        "cost_usd": round(cost_usd, 6),
+        "total_tokens": total_tokens,
+        "run_count": len(session_rows),
+        "updated_at": updated_at,
+    }
+
+
+def _mission_catalog() -> List[Dict[str, Any]]:
+    from hermes_cli import kanban_db, traces_store
+
+    missions = traces_store.list_missions(include_rollup=False, limit=2000, offset=0)
+    missions_by_board: Dict[str, Dict[str, Any]] = {}
+    for mission in missions:
+        slug = str(mission.get("board_slug") or "").strip()
+        if slug and slug not in missions_by_board:
+            missions_by_board[slug] = mission
+
+    boards = kanban_db.list_boards(include_archived=True)
+    board_by_slug = {
+        str(board.get("slug") or "").strip(): board
+        for board in boards
+        if str(board.get("slug") or "").strip()
+    }
+
+    all_slugs = sorted(set(missions_by_board.keys()).union(board_by_slug.keys()))
+    catalog: List[Dict[str, Any]] = []
+    for slug in all_slugs:
+        mission = missions_by_board.get(slug) or {}
+        board_meta = board_by_slug.get(slug) or {}
+        catalog.append(
+            {
+                "mission_id": str(mission.get("id") or _derived_mission_id(slug)),
+                "board_slug": slug,
+                "title": str(mission.get("title") or board_meta.get("name") or slug),
+                "status": str(
+                    mission.get("status")
+                    or ("archived" if bool(board_meta.get("archived")) else "todo")
+                ),
+                "owner": mission.get("owner"),
+                "updated_at": _safe_float(mission.get("updated_at") or board_meta.get("created_at")),
+                "tags": mission.get("tags") if isinstance(mission.get("tags"), list) else [],
+            }
+        )
+    return catalog
+
+
+class MissionUpsertRequest(BaseModel):
+    board_slug: str
+    title: Optional[str] = None
+    owner: Optional[str] = None
+    status: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
 def _tracer_health_payload() -> Dict[str, Any]:
     payload = {
         "dropped_spans": 0,
@@ -11694,6 +11989,195 @@ async def get_trace_detail(trace_id: str, profile: Optional[str] = None):
                 "error_count": error_count,
             },
         }
+
+
+@app.get("/api/missions")
+async def get_missions(profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        db = _open_session_db_for_profile(profile)
+        try:
+            payload: List[Dict[str, Any]] = []
+            for mission in _mission_catalog():
+                board_slug = str(mission.get("board_slug") or "")
+                board_snapshot = _load_board_snapshot(board_slug)
+                session_ids = sorted(
+                    {
+                        str(task.get("session_id"))
+                        for task in board_snapshot.get("tasks", [])
+                        if str(task.get("session_id") or "").strip()
+                    }
+                )
+                session_rows = _session_rows_for_ids(db, session_ids)
+                span_payload = _mission_span_rows(session_ids)
+                payload.append(
+                    _mission_summary_payload(
+                        mission_id=str(mission.get("mission_id") or ""),
+                        board_slug=board_slug,
+                        title=str(mission.get("title") or board_slug),
+                        status=str(mission.get("status") or "todo"),
+                        owner=mission.get("owner"),
+                        base_updated_at=_safe_float(mission.get("updated_at")),
+                        board_snapshot=board_snapshot,
+                        session_rows=session_rows,
+                        span_rows=span_payload.get("spans", []),
+                        span_models=span_payload.get("models", set()),
+                    )
+                )
+            payload.sort(key=lambda item: _safe_float(item.get("updated_at")), reverse=True)
+            return {"missions": payload, "total": len(payload)}
+        finally:
+            db.close()
+
+
+@app.get("/api/missions/{mission_id}")
+async def get_mission_detail(mission_id: str, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        db = _open_session_db_for_profile(profile)
+        try:
+            catalog = _mission_catalog()
+            target = next((item for item in catalog if item.get("mission_id") == mission_id), None)
+            if target is None:
+                target = next((item for item in catalog if item.get("board_slug") == mission_id), None)
+            if target is None:
+                raise HTTPException(status_code=404, detail="Mission not found")
+
+            board_slug = str(target.get("board_slug") or "")
+            board_snapshot = _load_board_snapshot(board_slug)
+            tasks = [
+                {
+                    "id": task.get("id"),
+                    "title": task.get("title"),
+                    "status": task.get("status"),
+                    "assignee": task.get("assignee"),
+                    "session_id": task.get("session_id"),
+                }
+                for task in board_snapshot.get("tasks", [])
+            ]
+            session_ids = sorted(
+                {
+                    str(task.get("session_id"))
+                    for task in tasks
+                    if str(task.get("session_id") or "").strip()
+                }
+            )
+            session_rows = _session_rows_for_ids(db, session_ids)
+            span_payload = _mission_span_rows(session_ids)
+            summary = _mission_summary_payload(
+                mission_id=str(target.get("mission_id") or mission_id),
+                board_slug=board_slug,
+                title=str(target.get("title") or board_slug),
+                status=str(target.get("status") or "todo"),
+                owner=target.get("owner"),
+                base_updated_at=_safe_float(target.get("updated_at")),
+                board_snapshot=board_snapshot,
+                session_rows=session_rows,
+                span_rows=span_payload.get("spans", []),
+                span_models=span_payload.get("models", set()),
+            )
+
+            delegations: Dict[str, Dict[str, Any]] = {}
+            for item in span_payload.get("delegations", []):
+                child_sid = str(item.get("session_id") or "").strip()
+                if not child_sid:
+                    continue
+                delegations[child_sid] = {
+                    "session_id": child_sid,
+                    "parent_session_id": item.get("parent_session_id"),
+                    "agent": item.get("agent"),
+                    "model": item.get("model"),
+                    "cost_usd": _safe_float(item.get("cost_usd")),
+                    "status": item.get("status") or "unknown",
+                }
+            session_by_id = {str(row.get("id")): row for row in session_rows if row.get("id")}
+            for sid, session in session_by_id.items():
+                parent_sid = str(session.get("parent_session_id") or "").strip() or None
+                if not parent_sid:
+                    continue
+                existing = delegations.get(sid, {"session_id": sid})
+                existing["parent_session_id"] = existing.get("parent_session_id") or parent_sid
+                existing["agent"] = existing.get("agent") or "delegate"
+                existing["model"] = existing.get("model") or session.get("model")
+                estimated = session.get("estimated_cost_usd")
+                actual = session.get("actual_cost_usd")
+                existing["cost_usd"] = _safe_float(
+                    existing.get("cost_usd")
+                    if existing.get("cost_usd") not in (None, 0, 0.0)
+                    else (estimated if estimated is not None else actual)
+                )
+                existing["status"] = existing.get("status") or _session_runtime_status(session)
+                delegations[sid] = existing
+
+            timeline = list(board_snapshot.get("task_events", [])) + list(span_payload.get("timeline", []))
+            timeline.sort(key=lambda row: _safe_float(row.get("ts")))
+
+            top_runs: List[Dict[str, Any]] = []
+            for session in session_rows:
+                started_at = _safe_float(session.get("started_at"))
+                ended_at = session.get("ended_at")
+                ended_ts = _safe_float(ended_at) if ended_at is not None else time.time()
+                estimated = session.get("estimated_cost_usd")
+                actual = session.get("actual_cost_usd")
+                top_runs.append(
+                    {
+                        "session_id": session.get("id"),
+                        "cost_usd": _safe_float(estimated if estimated is not None else actual),
+                        "status": _session_runtime_status(session),
+                        "duration_ms": max(0, int((ended_ts - started_at) * 1000)),
+                    }
+                )
+            top_runs.sort(key=lambda row: _safe_float(row.get("cost_usd")), reverse=True)
+
+            return {
+                "mission": summary,
+                "tasks": tasks,
+                "delegation_tree": sorted(
+                    delegations.values(),
+                    key=lambda row: (_safe_float(row.get("cost_usd")) * -1, str(row.get("session_id") or "")),
+                ),
+                "timeline": timeline,
+                "top_runs": top_runs[:5],
+            }
+        finally:
+            db.close()
+
+
+@app.post("/api/missions")
+async def post_mission(body: MissionUpsertRequest, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import kanban_db, traces_store
+
+        board_slug = str(body.board_slug or "").strip()
+        if not board_slug:
+            raise HTTPException(status_code=400, detail="board_slug is required")
+        existing = traces_store.list_missions(
+            board_slug=board_slug,
+            include_rollup=False,
+            limit=1,
+            offset=0,
+        )
+        current = existing[0] if existing else {}
+        board_meta = kanban_db.read_board_metadata(board_slug)
+        mission_id = str(current.get("id") or _derived_mission_id(board_slug))
+        title = (
+            str(body.title).strip()
+            if body.title is not None and str(body.title).strip()
+            else str(current.get("title") or board_meta.get("name") or board_slug)
+        )
+        payload = traces_store.upsert_mission(
+            {
+                "id": mission_id,
+                "board_slug": board_slug,
+                "title": title,
+                "owner": body.owner if body.owner is not None else current.get("owner"),
+                "status": (
+                    body.status
+                    if body.status is not None
+                    else str(current.get("status") or "todo")
+                ),
+                "tags": body.tags if body.tags is not None else current.get("tags") or [],
+            }
+        )
+        return {"mission": payload}
 
 
 @app.get("/api/ops/fleet-metrics")
