@@ -20,6 +20,8 @@ export function FleetOpsPanel({ compact = false }: { compact?: boolean }) {
   const [fleet, setFleet] = useState<FleetStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [nudging, setNudging] = useState(false);
+  const [nudgeMsg, setNudgeMsg] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -65,6 +67,20 @@ export function FleetOpsPanel({ compact = false }: { compact?: boolean }) {
   const blocked = countStatus(fleet.kanban.stats, "blocked");
   const routingOn = fleet.smart_model_routing.enabled;
 
+  const handleNudgeDispatch = async () => {
+    setNudging(true);
+    setNudgeMsg(null);
+    try {
+      await api.nudgeKanbanDispatch(4);
+      setNudgeMsg("Dispatcher nudged");
+      await refresh();
+    } catch (err) {
+      setNudgeMsg(err instanceof Error ? err.message : "Dispatch failed");
+    } finally {
+      setNudging(false);
+    }
+  };
+
   return (
     <DeckCard
       title="Multi-agent fleet"
@@ -107,8 +123,20 @@ export function FleetOpsPanel({ compact = false }: { compact?: boolean }) {
       {!compact && fleet.kanban.dispatcher.message ? (
         <p className="mt-2 text-xs text-text-tertiary">{fleet.kanban.dispatcher.message}</p>
       ) : null}
+      {nudgeMsg ? <p className="mt-1 text-xs text-text-secondary">{nudgeMsg}</p> : null}
 
       <DeckToolbar>
+        {ready > 0 ? (
+          <button
+            type="button"
+            className="deck-btn-sm primary"
+            disabled={nudging}
+            onClick={() => void handleNudgeDispatch()}
+          >
+            <GitBranch className={cn("h-3.5 w-3.5", nudging && "animate-spin")} />
+            Dispatch now
+          </button>
+        ) : null}
         <Link to="/ops" className="deck-btn-sm ghost">
           <Layers className="h-3.5 w-3.5" />
           Fleet detail

@@ -4,11 +4,12 @@ import { RefreshCw } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { api } from "@/lib/api";
-import type { FleetStatusResponse } from "@/lib/api";
+import type { DelegationStatusResponse, FleetStatusResponse } from "@/lib/api";
 import { DeckCard, DeckToolbar, LayoutGrid, MetricRow } from "@/components/DeckOps";
 
 export default function OpsFleetPage() {
   const [fleet, setFleet] = useState<FleetStatusResponse | null>(null);
+  const [delegation, setDelegation] = useState<DelegationStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -16,7 +17,12 @@ export default function OpsFleetPage() {
     setLoading(true);
     setError(null);
     try {
-      setFleet(await api.getFleetStatus());
+      const [fleetData, delegationData] = await Promise.all([
+        api.getFleetStatus(),
+        api.getDelegationStatus(),
+      ]);
+      setFleet(fleetData);
+      setDelegation(delegationData);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -117,22 +123,54 @@ export default function OpsFleetPage() {
             )}
           </DeckCard>
 
-          <DeckCard title="Smart model routing" colClass="col-6">
-            {fleet.smart_model_routing.lines.map((line) => (
-              <p key={line} className="text-xs text-text-secondary">
-                {line}
-              </p>
-            ))}
+            <DeckCard title="Smart model routing" colClass="col-6">
+              {fleet.smart_model_routing.lines.map((line) => (
+                <p key={line} className="text-xs text-text-secondary">
+                  {line}
+                </p>
+              ))}
+              <DeckToolbar>
+                <Link to="/routing" className="deck-btn-sm primary">
+                  Routing settings
+                </Link>
+                <Link to="/config" className="deck-btn-sm ghost">
+                  Config YAML
+                </Link>
+              </DeckToolbar>
+            </DeckCard>
+
+            <DeckCard title="Background delegations" colClass="col-12">
+              {delegation && delegation.items.length > 0 ? (
+                <div className="space-y-2">
+                  {delegation.items.map((item) => (
+                    <div
+                      key={item.delegation_id ?? item.goal}
+                      className="border border-border/60 px-3 py-2 text-xs"
+                    >
+                      <div className="flex flex-wrap gap-2 text-text-secondary">
+                        <span className="font-medium text-foreground">
+                          {item.status ?? "unknown"}
+                        </span>
+                        {item.model ? <span>{item.model}</span> : null}
+                      </div>
+                      {item.goal ? (
+                        <p className="mt-1 text-text-tertiary">{item.goal}</p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No background delegations in this process.
+                </p>
+              )}
             <DeckToolbar>
-              <Link to="/routing" className="deck-btn-sm primary">
-                Routing settings
-              </Link>
-              <Link to="/config" className="deck-btn-sm ghost">
-                Config YAML
-              </Link>
-            </DeckToolbar>
-          </DeckCard>
-        </LayoutGrid>
+                <Link to="/sessions?kind=delegation" className="deck-btn-sm ghost">
+                  Delegation sessions
+                </Link>
+              </DeckToolbar>
+            </DeckCard>
+          </LayoutGrid>
       ) : null}
     </div>
   );

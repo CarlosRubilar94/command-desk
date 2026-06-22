@@ -2284,6 +2284,33 @@ async def get_routing_status():
     return await loop.run_in_executor(None, _routing_payload)
 
 
+@app.get("/api/ops/delegation-status")
+async def get_delegation_status():
+    """Background delegate_task slots (running + recent)."""
+    loop = asyncio.get_running_loop()
+
+    def _delegation_payload() -> dict:
+        try:
+            from tools.async_delegation import list_async_delegations
+            items = list_async_delegations()
+            running = sum(1 for d in items if d.get("status") == "running")
+            # Strip bulky fields for dashboard display.
+            slim = []
+            for d in items[:20]:
+                slim.append({
+                    "delegation_id": d.get("delegation_id") or d.get("id"),
+                    "status": d.get("status"),
+                    "goal": (str(d.get("goal") or "")[:120] or None),
+                    "started_at": d.get("started_at"),
+                    "model": d.get("model"),
+                })
+            return {"running": running, "total": len(items), "items": slim}
+        except Exception as exc:
+            return {"running": 0, "total": 0, "items": [], "error": str(exc)}
+
+    return await loop.run_in_executor(None, _delegation_payload)
+
+
 _WINDOWS_11_MIN_BUILD = 22000
 
 

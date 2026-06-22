@@ -548,6 +548,19 @@ export const api = {
     fetchJSON<CronJob>(`/api/cron/jobs/${encodeURIComponent(id)}/trigger?profile=${encodeURIComponent(profile)}`, { method: "POST" }),
   deleteCronJob: (id: string, profile = "default") =>
     fetchJSON<{ ok: boolean }>(`/api/cron/jobs/${encodeURIComponent(id)}?profile=${encodeURIComponent(profile)}`, { method: "DELETE" }),
+  getCronJobRuns: (jobId: string, profile = "default", limit = 10) =>
+    fetchJSON<{ runs: SessionInfo[]; limit: number }>(
+      `/api/cron/jobs/${encodeURIComponent(jobId)}/runs?profile=${encodeURIComponent(profile)}&limit=${limit}`,
+    ),
+
+  nudgeKanbanDispatch: (max = 4) =>
+    fetchJSON<Record<string, unknown>>(
+      `/api/plugins/kanban/dispatch?max=${max}`,
+      { method: "POST" },
+    ),
+
+  getDelegationStatus: () =>
+    fetchJSON<DelegationStatusResponse>("/api/ops/delegation-status"),
 
   // Automation Blueprints — parameterized automation blueprints
   getAutomationBlueprints: () =>
@@ -1721,6 +1734,18 @@ export interface RoutingStatusResponse {
   performance_tasks: string[];
   lines: string[];
   error?: string;
+}
+
+export interface DelegationStatusResponse {
+  running: number;
+  total: number;
+  items: Array<{
+    delegation_id?: string;
+    status?: string;
+    goal?: string;
+    started_at?: number;
+    model?: string;
+  }>;
 }
 
 export interface SessionInfo {
