@@ -60,6 +60,7 @@ import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Typography } from "@nous-research/ui/ui/components/typography/index";
 import { cn } from "@/lib/utils";
 import { Backdrop } from "@/components/Backdrop";
+import { OpsAmbientBackground } from "@/components/OpsAmbientBackground";
 import { SidebarFooter } from "@/components/SidebarFooter";
 import { SidebarStatusStrip, gatewayLine } from "@/components/SidebarStatusStrip";
 import { useBelowBreakpoint } from "@nous-research/ui/hooks/use-below-breakpoint";
@@ -525,6 +526,7 @@ export default function App() {
     >
       <SelectionSwitcher />
       <Backdrop />
+      <OpsAmbientBackground />
       <PluginSlot name="backdrop" />
 
       <header
@@ -567,7 +569,7 @@ export default function App() {
       <PluginSlot name="header-banner" />
       <ProfileScopeBanner />
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-14 lg:pt-0">
+      <div className="relative z-[1] flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pt-14 lg:pt-0">
         <div className="flex min-h-0 min-w-0 flex-1">
           <aside
             id="app-sidebar"
@@ -787,7 +789,9 @@ export default function App() {
                     "pb-[calc(2rem+env(safe-area-inset-bottom,0px))] lg:pb-8",
                   (isDocsRoute || isChatRoute) &&
                     "min-h-0 flex flex-1 flex-col",
-                  !isChatRoute && !isDeckLayoutRoute && "deck-content-shell",
+                  isDeckLayoutRoute
+                    ? "deck-main-dashboard"
+                    : !isChatRoute && "deck-content-shell",
                 )}
               >
                 <ProfileKeyedRoutes>

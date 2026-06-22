@@ -99,7 +99,7 @@ export const commandDeckOpsTheme: DashboardTheme = {
       fillerOpacity: "0",
     },
   },
-  swatchColors: ["#070B12", "#7DD3FC", "#0C111C"],
+  swatchColors: ["#060a10", "#7DD3FC", "#0C111C"],
 };
 
 export const commandDeckOpsLargeTheme: DashboardTheme = {

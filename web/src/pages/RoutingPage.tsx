@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Power, RefreshCw } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
+import { DeckPageShell } from "@/components/DeckPageShell";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { api } from "@/lib/api";
 import type { RoutingStatusResponse } from "@/lib/api";
@@ -61,16 +62,19 @@ export default function RoutingPage() {
 
   if (loading && !routing) {
     return (
-      <div className="flex items-center gap-2 py-8">
-        <Spinner />
-        <span className="text-sm text-muted-foreground">Loading routing…</span>
-      </div>
+      <DeckPageShell>
+        <div className="flex items-center gap-2 py-8">
+          <Spinner />
+          <span className="text-sm text-[var(--dsd-text-secondary)]">Loading routing…</span>
+        </div>
+      </DeckPageShell>
     );
   }
 
   return (
-    <div className="deck-dashboard">
-      {error ? <p className="mb-4 text-sm text-destructive">{error}</p> : null}
+    <DeckPageShell>
+      <div className="deck-dashboard">
+        {error ? <p className="mb-4 text-sm text-[var(--dsd-sem-critical)]">{error}</p> : null}
       {routing ? (
         <LayoutGrid>
           <DeckCard title="Status" colClass="col-6">
@@ -86,7 +90,7 @@ export default function RoutingPage() {
               tone="ok"
             />
             {routing.lines.map((line) => (
-              <p key={line} className="text-xs text-text-secondary">
+              <p key={line} className="text-xs text-[var(--dsd-text-secondary)]">
                 {line}
               </p>
             ))}
@@ -131,13 +135,13 @@ export default function RoutingPage() {
           </DeckCard>
 
           <DeckCard title="Economy tasks" subtitle="Cheap model for side work" colClass="col-6">
-            <p className="text-xs leading-relaxed text-text-secondary">
+            <p className="text-xs leading-relaxed text-[var(--dsd-text-secondary)]">
               {routing.economy_tasks.join(", ")}
             </p>
           </DeckCard>
 
           <DeckCard title="Performance tasks" subtitle="Keep main chat model" colClass="col-6">
-            <p className="text-xs leading-relaxed text-text-secondary">
+            <p className="text-xs leading-relaxed text-[var(--dsd-text-secondary)]">
               {routing.performance_tasks.join(", ")}
             </p>
             <DeckToolbar>
@@ -154,6 +158,7 @@ export default function RoutingPage() {
           </DeckCard>
         </LayoutGrid>
       ) : null}
-    </div>
+      </div>
+    </DeckPageShell>
   );
 }

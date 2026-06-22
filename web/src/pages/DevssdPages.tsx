@@ -539,7 +539,7 @@ export function CommandDeckOpsPage() {
             <iframe
               title="Command Deck"
               src={deck.app_url}
-              className="col-12 min-h-[560px] w-full rounded-[var(--dsd-radius-lg)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-surface-1)]"
+              className="col-12 min-h-[560px] w-full rounded-[var(--dsd-radius-lg)] border border-[var(--dsd-border-glow)] bg-[var(--dsd-surface-1-solid)] shadow-[var(--dsd-shadow-glow)]"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             />
           ) : null}
