@@ -709,6 +709,11 @@ class ConfigUpdate(BaseModel):
     profile: Optional[str] = None
 
 
+class RoutingUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    delegation_tier: Optional[str] = None
+
+
 class EnvVarUpdate(BaseModel):
     key: str
     value: str
@@ -2282,6 +2287,42 @@ async def get_routing_status():
             return {"enabled": False, "error": str(exc), "lines": []}
 
     return await loop.run_in_executor(None, _routing_payload)
+
+
+@app.post("/api/ops/routing")
+async def update_routing_status(body: RoutingUpdate):
+    """Toggle smart model routing or change delegation tier from the dashboard."""
+    tier = (body.delegation_tier or "").strip().lower()
+    if tier and tier not in ("economy", "inherit", "performance"):
+        raise HTTPException(
+            status_code=400,
+            detail="delegation_tier must be economy, inherit, or performance",
+        )
+
+    loop = asyncio.get_running_loop()
+
+    def _update_routing() -> dict:
+        from hermes_cli.config import load_config, save_config
+        from agent.smart_model_routing import routing_status_lines
+
+        config = load_config()
+        routing = config.setdefault("smart_model_routing", {})
+        if not isinstance(routing, dict):
+            routing = {}
+            config["smart_model_routing"] = routing
+
+        if body.enabled is not None:
+            routing["enabled"] = bool(body.enabled)
+        if tier:
+            routing["delegation_tier"] = tier
+
+        save_config(config)
+        return {
+            "ok": True,
+            "lines": routing_status_lines(),
+        }
+
+    return await loop.run_in_executor(None, _update_routing)
 
 
 @app.get("/api/ops/delegation-status")

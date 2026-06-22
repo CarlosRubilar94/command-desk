@@ -26,7 +26,7 @@ import { Button } from "@nous-research/ui/ui/components/button";
 import { Typography } from "@nous-research/ui/ui/components/typography/index";
 import { HERMES_BASE_PATH, buildWsAuthParam } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { Copy, PanelRight, RotateCcw, X } from "lucide-react";
+import { Copy, GitBranch, PanelRight, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
@@ -120,6 +120,17 @@ function terminalLineHeightForWidth(layoutWidthPx: number): number {
   return layoutWidthPx < 1024 ? 1.02 : 1.15;
 }
 
+const AGENT_ACTIVITY_KEY = "command-desk.chat.showAgentActivity";
+
+function readAgentActivityPref(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(AGENT_ACTIVITY_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -196,6 +207,19 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       ? window.matchMedia("(max-width: 1023px)").matches
       : false,
   );
+  const [showAgentActivity, setShowAgentActivity] = useState(readAgentActivityPref);
+
+  const toggleAgentActivity = useCallback(() => {
+    setShowAgentActivity((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(AGENT_ACTIVITY_KEY, String(next));
+      } catch {
+        /* localStorage may be unavailable */
+      }
+      return next;
+    });
+  }, []);
 
   const { theme } = useTheme();
   const terminalBg = theme.terminalBackground ?? "#000000";
@@ -313,6 +337,27 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     return () => mql.removeEventListener("change", onChange);
   }, []);
 
+  const agentActivityToggle = (
+    <Button
+      ghost
+      onClick={toggleAgentActivity}
+      aria-pressed={showAgentActivity}
+      title="Show delegate_task activity in the sidebar"
+      className={cn(
+        "shrink-0 rounded border border-current/20",
+        "px-2 py-1 text-xs font-medium tracking-wide",
+        showAgentActivity
+          ? "text-primary border-primary/40"
+          : "text-text-secondary hover:text-midground hover:bg-midground/5",
+      )}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        <GitBranch className="h-3 w-3 shrink-0" />
+        Delegation
+      </span>
+    </Button>
+  );
+
   useEffect(() => {
     // When hidden (non-chat tab) we must not register the header button —
     // another page owns the header's end slot at that point.
@@ -321,29 +366,40 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       return;
     }
     if (!narrow) {
-      setEnd(null);
+      setEnd(agentActivityToggle);
       return;
     }
     setEnd(
-      <Button
-        ghost
-        onClick={() => setMobilePanelOpenRaw(true)}
-        aria-expanded={mobilePanelOpen}
-        aria-controls="chat-side-panel"
-        className={cn(
-          "shrink-0 rounded border border-current/20",
-          "px-2 py-1 text-xs font-medium tracking-wide",
-          "text-text-secondary hover:text-midground hover:bg-midground/5",
-        )}
-      >
-        <span className="inline-flex items-center gap-1.5">
-          <PanelRight className="h-3 w-3 shrink-0" />
-          {modelToolsLabel}
-        </span>
-      </Button>,
+      <div className="flex items-center gap-2">
+        {agentActivityToggle}
+        <Button
+          ghost
+          onClick={() => setMobilePanelOpenRaw(true)}
+          aria-expanded={mobilePanelOpen}
+          aria-controls="chat-side-panel"
+          className={cn(
+            "shrink-0 rounded border border-current/20",
+            "px-2 py-1 text-xs font-medium tracking-wide",
+            "text-text-secondary hover:text-midground hover:bg-midground/5",
+          )}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            <PanelRight className="h-3 w-3 shrink-0" />
+            {modelToolsLabel}
+          </span>
+        </Button>
+      </div>,
     );
     return () => setEnd(null);
-  }, [isActive, narrow, mobilePanelOpen, modelToolsLabel, setEnd]);
+  }, [
+    isActive,
+    narrow,
+    mobilePanelOpen,
+    modelToolsLabel,
+    setEnd,
+    showAgentActivity,
+    toggleAgentActivity,
+  ]);
 
   const handleCopyLast = () => {
     const ws = wsRef.current;
@@ -945,7 +1001,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
                 profile={scopedProfile}
                 onDashboardNewSessionRequest={startFreshDashboardChat}
                 onSessionTitleChange={handleSessionTitleChange}
-                showTools={false}
+                showTools={showAgentActivity}
+                toolsFilter="delegation"
               />
             </div>
             <ChatSessionList
@@ -1036,7 +1093,10 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             id="chat-side-panel"
             role="complementary"
             aria-label={modelToolsLabel}
-            className="flex min-h-0 shrink-0 flex-col gap-3 overflow-hidden lg:h-full lg:w-60"
+            className={cn(
+              "flex min-h-0 shrink-0 flex-col gap-3 overflow-hidden lg:h-full",
+              showAgentActivity ? "lg:w-72" : "lg:w-60",
+            )}
           >
             {/* Model picker (tools card hidden — keeps the rail thin). */}
             <div className="shrink-0">
@@ -1045,7 +1105,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
                 profile={scopedProfile}
                 onDashboardNewSessionRequest={startFreshDashboardChat}
                 onSessionTitleChange={handleSessionTitleChange}
-                showTools={false}
+                showTools={showAgentActivity}
+                toolsFilter="delegation"
               />
             </div>
 

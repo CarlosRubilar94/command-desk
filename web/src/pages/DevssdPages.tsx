@@ -518,6 +518,8 @@ export function CommandDeckOpsPage() {
       <LoadingOrError loading={loading} error={error} />
       {deck ? (
         <div className="deck-dashboard gap-5">
+          <FleetOpsPanel compact />
+
           <DeckCard title="Command Deck" colClass="col-12">
             <MetricRow
               label="Status"

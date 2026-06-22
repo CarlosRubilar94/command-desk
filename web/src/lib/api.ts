@@ -1078,6 +1078,12 @@ export const api = {
     fetchJSON<DevssdStatusResponse>("/api/devssd/status"),
   getFleetStatus: () => fetchJSON<FleetStatusResponse>("/api/ops/fleet-status"),
   getRoutingStatus: () => fetchJSON<RoutingStatusResponse>("/api/ops/routing"),
+  updateRoutingStatus: (body: RoutingUpdateRequest) =>
+    fetchJSON<{ ok: boolean; lines: string[] }>("/api/ops/routing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   runSecurityAudit: () =>
     fetchJSON<ActionResponse>("/api/ops/security-audit", { method: "POST" }),
   runBackup: (output?: string) =>
@@ -1734,6 +1740,11 @@ export interface RoutingStatusResponse {
   performance_tasks: string[];
   lines: string[];
   error?: string;
+}
+
+export interface RoutingUpdateRequest {
+  enabled?: boolean;
+  delegation_tier?: "economy" | "inherit" | "performance";
 }
 
 export interface DelegationStatusResponse {

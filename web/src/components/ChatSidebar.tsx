@@ -87,6 +87,8 @@ interface ChatSidebarProps {
    * column; the model picker and its event plumbing are unaffected.
    */
   showTools?: boolean;
+  /** When set to "delegation", only delegate_task tool rows are shown. */
+  toolsFilter?: "all" | "delegation";
 }
 
 export function ChatSidebar({
@@ -96,6 +98,7 @@ export function ChatSidebar({
   onDashboardNewSessionRequest,
   onSessionTitleChange,
   showTools = true,
+  toolsFilter = "all",
 }: ChatSidebarProps) {
   // `version` bumps on reconnect; gw is derived so we never call setState
   // for it inside an effect (React 19's set-state-in-effect rule). The
@@ -388,6 +391,14 @@ export function ChatSidebar({
   const modelName = effectiveModel || info.model || "—";
   const modelLabel = modelName.split("/").slice(-1)[0] ?? "—";
   const banner = error ?? info.credential_warning ?? null;
+  const visibleTools =
+    toolsFilter === "delegation"
+      ? tools.filter((t) => t.name === "delegate_task")
+      : tools;
+  const toolsEmptyLabel =
+    toolsFilter === "delegation"
+      ? "no delegate_task activity yet"
+      : "no tool calls yet";
 
   return (
     <aside
@@ -475,16 +486,16 @@ export function ChatSidebar({
       {showTools && (
         <Card className="flex min-h-0 flex-none flex-col px-2 py-2">
           <div className="text-display px-1 pb-2 text-xs tracking-wider text-text-tertiary">
-            tools
+            {toolsFilter === "delegation" ? "delegation" : "tools"}
           </div>
 
           <div className="flex min-h-0 flex-col gap-1.5">
-            {tools.length === 0 ? (
+            {visibleTools.length === 0 ? (
               <div className="px-2 py-4 text-center text-xs text-text-secondary">
-                no tool calls yet
+                {toolsEmptyLabel}
               </div>
             ) : (
-              tools.map((t) => <ToolCall key={t.id} tool={t} />)
+              visibleTools.map((t) => <ToolCall key={t.id} tool={t} />)
             )}
           </div>
         </Card>
