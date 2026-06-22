@@ -24,6 +24,7 @@ import {
   LayoutGrid,
   MetricRow,
   OperationalStatus,
+  MetricTile,
   OpsSummaryGrid,
   ServiceCell,
 } from "@/components/DeckOps";
@@ -221,7 +222,7 @@ export function AgentHomePage() {
     >
       <LoadingOrError loading={loading} error={error} />
       {status ? (
-        <div className="deck-dashboard">
+        <div className="deck-dashboard deck-animate">
           <div className="ops-first-fold">
             <div className="ops-hero">
               <OperationalStatus
@@ -257,6 +258,30 @@ export function AgentHomePage() {
                 ) : null}
               </div>
             </div>
+          </div>
+
+          <div className="metrics-strip col-12">
+            <MetricTile
+              label="Model"
+              value={(status.agent.model || "—").split("/").pop() ?? "—"}
+              context={status.agent.provider || undefined}
+              state="ok"
+            />
+            <MetricTile
+              label="Gateway"
+              value={gatewayOk ? "online" : "offline"}
+              state={gatewayOk ? "ok" : "warning"}
+            />
+            <MetricTile
+              label="Command Deck"
+              value={deckOk ? `${status.command_deck.latency_ms} ms` : "offline"}
+              state={deckOk ? "ok" : "warning"}
+            />
+            <MetricTile
+              label="Secrets"
+              value={bwOk ? "configured" : "pending"}
+              state={bwOk ? "ok" : "warning"}
+            />
           </div>
 
           <div className="service-matrix col-12">
@@ -517,7 +542,7 @@ export function CommandDeckOpsPage() {
     >
       <LoadingOrError loading={loading} error={error} />
       {deck ? (
-        <div className="deck-dashboard gap-5">
+        <div className="deck-dashboard deck-animate gap-5">
           <FleetOpsPanel compact />
 
           <DeckCard title="Command Deck" colClass="col-12">
@@ -539,7 +564,7 @@ export function CommandDeckOpsPage() {
             <iframe
               title="Command Deck"
               src={deck.app_url}
-              className="col-12 min-h-[560px] w-full rounded-[var(--dsd-radius-lg)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-surface-1)]"
+              className="col-12 min-h-[560px] w-full rounded-[var(--dsd-radius-lg)] border border-[var(--dsd-border-glow)] bg-[var(--dsd-surface-1-solid)] shadow-[var(--dsd-shadow-glow)]"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             />
           ) : null}

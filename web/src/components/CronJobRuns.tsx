@@ -7,6 +7,7 @@ import { SessionTranscript } from "@/components/SessionTranscript";
 import { api } from "@/lib/api";
 import type { SessionInfo } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 function formatRunTime(epoch?: number): string {
   if (!epoch) return "—";
@@ -23,31 +24,29 @@ function CronRunRow({
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="rounded border border-border/60 bg-background/30 px-2 py-1.5">
+    <div className={cn("deck-list-row", expanded && "deck-list-row--open")}>
       <button
         type="button"
-        className="flex w-full flex-wrap items-center gap-2 text-left text-xs text-muted-foreground"
+        className="flex w-full flex-wrap items-center gap-2 text-left text-xs text-[var(--dsd-text-secondary)]"
         onClick={() => setExpanded((v) => !v)}
       >
         {expanded ? (
-          <ChevronDown className="h-3 w-3 shrink-0" />
+          <ChevronDown className="h-3 w-3 shrink-0 text-[var(--dsd-sem-info)]" />
         ) : (
           <ChevronRight className="h-3 w-3 shrink-0" />
         )}
-        <span
-          className="font-mono-ui text-primary"
-          title={run.id}
-          onClick={(e) => e.stopPropagation()}
-        >
+        <span className="font-mono text-[var(--dsd-sem-info)]" title={run.id} onClick={(e) => e.stopPropagation()}>
           {run.id.slice(-12)}
         </span>
         <span>{formatRunTime(run.started_at)}</span>
         <span>{timeAgo(run.last_active)}</span>
         <span>{run.message_count} msgs</span>
-        {run.is_active ? <span className="text-warning">active</span> : null}
+        {run.is_active ? (
+          <span className="deck-status-pill running">active</span>
+        ) : null}
         <Link
           to={`/sessions?focus=${encodeURIComponent(run.id)}`}
-          className="ml-auto text-primary hover:underline"
+          className="ml-auto text-[var(--dsd-sem-info)] hover:underline"
           onClick={(e) => e.stopPropagation()}
         >
           open session
@@ -84,11 +83,11 @@ export function CronJobRuns({
   }, [open, jobId, profile, runs]);
 
   return (
-    <div className="mt-2 border-t border-border pt-2">
+    <div className="mt-3 border-t border-[var(--dsd-border-subtle)] pt-3">
       <Button
         ghost
         size="sm"
-        className="h-7 px-2 text-xs text-muted-foreground"
+        className="h-7 px-2 text-xs text-[var(--dsd-text-secondary)]"
         onClick={() => setOpen((v) => !v)}
         prefix={open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
       >
@@ -97,16 +96,16 @@ export function CronJobRuns({
       </Button>
 
       {open ? (
-        <div className="mt-2 space-y-1.5">
+        <div className="mt-2 space-y-2">
           {loading ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs text-[var(--dsd-text-secondary)]">
               <Spinner />
               Loading runs…
             </div>
           ) : null}
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
+          {error ? <p className="text-xs text-[var(--dsd-sem-critical)]">{error}</p> : null}
           {runs && runs.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No runs yet.</p>
+            <p className="text-xs text-[var(--dsd-text-muted)]">No runs yet.</p>
           ) : null}
           {runs?.map((run) => (
             <CronRunRow key={run.id} run={run} profile={profile} />

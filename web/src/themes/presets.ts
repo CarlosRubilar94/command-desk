@@ -74,21 +74,21 @@ const OPS_COLOR_OVERRIDES = {
 // Themes
 // ---------------------------------------------------------------------------
 
-/** Canonical DevSSD / Command Deck Ops dark console theme (#070B12 + cyan). */
+/** Canonical DevSSD / Command Deck Ops dark console theme (#060a10 + cyan glass). */
 export const commandDeckOpsTheme: DashboardTheme = {
   name: "command-desk-ops",
   label: "Command Deck Ops",
-  description: "Dark ops console — DevSSD cyan accent on #070B12",
+  description: "Dark ops console — glass panels with cyan accent on #060a10",
   palette: {
-    background: { hex: "#070B12", alpha: 1 },
+    background: { hex: "#060a10", alpha: 1 },
     midground: { hex: "#E8ECF2", alpha: 1 },
     foreground: { hex: "#ffffff", alpha: 0 },
-    warmGlow: "rgba(125, 211, 252, 0.12)",
-    noiseOpacity: 0.15,
+    warmGlow: "rgba(125, 211, 252, 0.14)",
+    noiseOpacity: 0.12,
   },
   typography: OPS_TYPOGRAPHY,
   layout: OPS_LAYOUT,
-  terminalBackground: "#0C111C",
+  terminalBackground: "#0a1018",
   colorOverrides: { ...OPS_COLOR_OVERRIDES },
   seriesColors: {
     inputTokenAccent: "#A7B0C0",
@@ -99,7 +99,7 @@ export const commandDeckOpsTheme: DashboardTheme = {
       fillerOpacity: "0",
     },
   },
-  swatchColors: ["#070B12", "#7DD3FC", "#0C111C"],
+  swatchColors: ["#060a10", "#7DD3FC", "#0C111C"],
 };
 
 export const commandDeckOpsLargeTheme: DashboardTheme = {

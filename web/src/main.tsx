@@ -30,11 +30,11 @@ if (typeof window !== "undefined") {
     window.localStorage.setItem(THEME_STORAGE_KEY, themeName);
   }
   const root = document.documentElement;
-  root.style.setProperty("--background-base", "#070B12");
+  root.style.setProperty("--background-base", "#060a10");
   root.style.setProperty("--midground-base", "#E8ECF2");
   root.style.setProperty("--foreground-base", "#ffffff");
-  root.style.setProperty("--warm-glow", "rgba(125, 211, 252, 0.12)");
-  root.style.setProperty("--noise-opacity-mul", "0.15");
+  root.style.setProperty("--warm-glow", "rgba(125, 211, 252, 0.14)");
+  root.style.setProperty("--noise-opacity-mul", "0.12");
   root.dataset.deckTheme = "ops";
 }
 

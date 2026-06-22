@@ -44,7 +44,7 @@ export function FleetOpsPanel({ compact = false }: { compact?: boolean }) {
   if (loading && !fleet) {
     return (
       <DeckCard title="Multi-agent fleet" colClass={compact ? "col-12" : "col-6"}>
-        <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 py-4 text-sm text-[var(--dsd-text-secondary)]">
           <Spinner />
           Loading fleet status…
         </div>
@@ -55,7 +55,7 @@ export function FleetOpsPanel({ compact = false }: { compact?: boolean }) {
   if (error && !fleet) {
     return (
       <DeckCard title="Multi-agent fleet" colClass={compact ? "col-12" : "col-6"}>
-        <p className="text-sm text-destructive">{error}</p>
+        <p className="text-sm text-[var(--dsd-sem-critical)]">{error}</p>
       </DeckCard>
     );
   }
@@ -121,9 +121,9 @@ export function FleetOpsPanel({ compact = false }: { compact?: boolean }) {
       </LayoutGrid>
 
       {!compact && fleet.kanban.dispatcher.message ? (
-        <p className="mt-2 text-xs text-text-tertiary">{fleet.kanban.dispatcher.message}</p>
+        <p className="mt-2 text-xs text-[var(--dsd-text-muted)]">{fleet.kanban.dispatcher.message}</p>
       ) : null}
-      {nudgeMsg ? <p className="mt-1 text-xs text-text-secondary">{nudgeMsg}</p> : null}
+      {nudgeMsg ? <p className="mt-1 text-xs text-[var(--dsd-text-secondary)]">{nudgeMsg}</p> : null}
 
       <DeckToolbar>
         {ready > 0 ? (

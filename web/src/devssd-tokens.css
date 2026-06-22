@@ -1,23 +1,32 @@
 /*
- * DevSSD design tokens — mirrored from control-center/public/deck.css (v5).
- * Keep values in sync manually; do not import across repos at runtime.
+ * DevSSD design tokens — Command Desk ops console.
+ * Inspired by dark glassmorphism + developer control panels (PulseOps, LaunchKit).
  */
 :root {
-  --dsd-bg: #070B12;
-  --dsd-surface-1: #0C111C;
-  --dsd-surface-2: #121A28;
-  --dsd-surface-3: #1A2436;
-  --dsd-border-subtle: rgba(148, 163, 184, 0.1);
-  --dsd-border-strong: rgba(148, 163, 184, 0.2);
-  --dsd-text-primary: #E8ECF2;
-  --dsd-text-secondary: #A7B0C0;
-  --dsd-text-muted: #6B7280;
-  --dsd-sem-ok: #4ADE80;
-  --dsd-sem-info: #7DD3FC;
-  --dsd-sem-warning: #FBBF24;
-  --dsd-sem-degraded: #FB923C;
-  --dsd-sem-critical: #F87171;
-  --dsd-sem-unknown: #94A3B8;
+  --dsd-bg: #060a10;
+  --dsd-bg-elevated: #0a1018;
+  --dsd-surface-1: rgba(12, 17, 28, 0.72);
+  --dsd-surface-1-solid: #0c111c;
+  --dsd-surface-2: rgba(18, 26, 40, 0.78);
+  --dsd-surface-2-solid: #121a28;
+  --dsd-surface-3: rgba(26, 36, 54, 0.85);
+  --dsd-surface-3-solid: #1a2436;
+  --dsd-border-subtle: rgba(148, 163, 184, 0.12);
+  --dsd-border-strong: rgba(148, 163, 184, 0.22);
+  --dsd-border-glow: rgba(125, 211, 252, 0.28);
+  --dsd-text-primary: #e8ecf2;
+  --dsd-text-secondary: #a7b0c0;
+  --dsd-text-muted: #6b7280;
+  --dsd-sem-ok: #4ade80;
+  --dsd-sem-info: #7dd3fc;
+  --dsd-sem-warning: #fbbf24;
+  --dsd-sem-degraded: #fb923c;
+  --dsd-sem-critical: #f87171;
+  --dsd-sem-unknown: #94a3b8;
+  --dsd-accent-cyan: #7dd3fc;
+  --dsd-accent-violet: #a78bfa;
+  --dsd-accent-emerald: #34d399;
+  --dsd-glass-blur: 16px;
   --dsd-radius-lg: 18px;
   --dsd-radius-md: 14px;
   --dsd-radius-sm: 6px;
@@ -32,5 +41,7 @@
   --dsd-text-caption: 12px;
   --dsd-font-sans: "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
   --dsd-font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, Consolas, monospace;
-  --dsd-shadow-soft: 0 12px 40px rgba(0, 0, 0, 0.18);
+  --dsd-shadow-soft: 0 12px 40px rgba(0, 0, 0, 0.22);
+  --dsd-shadow-glow: 0 0 0 1px rgba(125, 211, 252, 0.06), 0 8px 32px rgba(0, 0, 0, 0.28);
+  --dsd-shadow-card-hover: 0 0 0 1px rgba(125, 211, 252, 0.14), 0 16px 48px rgba(0, 0, 0, 0.32);
 }

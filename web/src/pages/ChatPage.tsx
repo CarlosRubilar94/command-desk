@@ -83,9 +83,12 @@ function generateChannelId(scope?: string): string {
 const TERMINAL_THEME_STATIC = {
   foreground: "#E8ECF2",
   cursor: "#7DD3FC",
-  cursorAccent: "#070B12",
-  selectionBackground: "#7DD3FC33",
+  cursorAccent: "#0a1018",
+  selectionBackground: "rgba(125, 211, 252, 0.22)",
 };
+
+/** Default terminal canvas — matches Command Desk ops surface stack. */
+const DEFAULT_TERMINAL_BG = "#0a1018";
 
 /**
  * CSS width for xterm font tiers.
@@ -222,7 +225,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   }, []);
 
   const { theme } = useTheme();
-  const terminalBg = theme.terminalBackground ?? "#000000";
+  const terminalBg = theme.terminalBackground ?? DEFAULT_TERMINAL_BG;
   const terminalTheme = useMemo(
     () => ({ ...TERMINAL_THEME_STATIC, background: terminalBg }),
     [terminalBg],
@@ -338,24 +341,19 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   }, []);
 
   const agentActivityToggle = (
-    <Button
-      ghost
+    <button
+      type="button"
       onClick={toggleAgentActivity}
       aria-pressed={showAgentActivity}
       title="Show delegate_task activity in the sidebar"
       className={cn(
-        "shrink-0 rounded border border-current/20",
-        "px-2 py-1 text-xs font-medium tracking-wide",
-        showAgentActivity
-          ? "text-primary border-primary/40"
-          : "text-text-secondary hover:text-midground hover:bg-midground/5",
+        "deck-btn-sm",
+        showAgentActivity ? "primary" : "ghost",
       )}
     >
-      <span className="inline-flex items-center gap-1.5">
-        <GitBranch className="h-3 w-3 shrink-0" />
-        Delegation
-      </span>
-    </Button>
+      <GitBranch className="h-3.5 w-3.5 shrink-0" />
+      Delegation
+    </button>
   );
 
   useEffect(() => {
@@ -377,16 +375,10 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           onClick={() => setMobilePanelOpenRaw(true)}
           aria-expanded={mobilePanelOpen}
           aria-controls="chat-side-panel"
-          className={cn(
-            "shrink-0 rounded border border-current/20",
-            "px-2 py-1 text-xs font-medium tracking-wide",
-            "text-text-secondary hover:text-midground hover:bg-midground/5",
-          )}
+          className="deck-btn-sm ghost shrink-0"
         >
-          <span className="inline-flex items-center gap-1.5">
-            <PanelRight className="h-3 w-3 shrink-0" />
-            {modelToolsLabel}
-          </span>
+          <PanelRight className="h-3.5 w-3.5 shrink-0" />
+          {modelToolsLabel}
         </Button>
       </div>,
     );
@@ -1031,13 +1023,10 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row lg:gap-3">
         <div
           className={cn(
-            "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg",
+            "deck-chat-terminal relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
             "p-2 sm:p-3",
           )}
-          style={{
-            backgroundColor: terminalBg,
-            boxShadow: "0 8px 32px rgba(0, 0, 0, 0.4)",
-          }}
+          style={{ backgroundColor: terminalBg }}
         >
           <div
             ref={hostRef}
