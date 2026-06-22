@@ -88,7 +88,7 @@ export const commandDeckOpsTheme: DashboardTheme = {
   },
   typography: OPS_TYPOGRAPHY,
   layout: OPS_LAYOUT,
-  terminalBackground: "#0C111C",
+  terminalBackground: "#0a1018",
   colorOverrides: { ...OPS_COLOR_OVERRIDES },
   seriesColors: {
     inputTokenAccent: "#A7B0C0",

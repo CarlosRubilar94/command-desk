@@ -81,7 +81,7 @@ export default function OpsFleetPage() {
 
   return (
     <DeckPageShell>
-      <div className="deck-dashboard">
+      <div className="deck-dashboard deck-animate">
         {error ? (
           <p className="mb-4 text-sm text-[var(--dsd-sem-critical)]">{error}</p>
         ) : null}

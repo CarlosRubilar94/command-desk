@@ -222,7 +222,7 @@ export function AgentHomePage() {
     >
       <LoadingOrError loading={loading} error={error} />
       {status ? (
-        <div className="deck-dashboard">
+        <div className="deck-dashboard deck-animate">
           <div className="ops-first-fold">
             <div className="ops-hero">
               <OperationalStatus
@@ -542,7 +542,7 @@ export function CommandDeckOpsPage() {
     >
       <LoadingOrError loading={loading} error={error} />
       {deck ? (
-        <div className="deck-dashboard gap-5">
+        <div className="deck-dashboard deck-animate gap-5">
           <FleetOpsPanel compact />
 
           <DeckCard title="Command Deck" colClass="col-12">

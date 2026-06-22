@@ -83,9 +83,12 @@ function generateChannelId(scope?: string): string {
 const TERMINAL_THEME_STATIC = {
   foreground: "#E8ECF2",
   cursor: "#7DD3FC",
-  cursorAccent: "#070B12",
-  selectionBackground: "#7DD3FC33",
+  cursorAccent: "#0a1018",
+  selectionBackground: "rgba(125, 211, 252, 0.22)",
 };
+
+/** Default terminal canvas — matches Command Desk ops surface stack. */
+const DEFAULT_TERMINAL_BG = "#0a1018";
 
 /**
  * CSS width for xterm font tiers.
@@ -222,7 +225,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   }, []);
 
   const { theme } = useTheme();
-  const terminalBg = theme.terminalBackground ?? "#000000";
+  const terminalBg = theme.terminalBackground ?? DEFAULT_TERMINAL_BG;
   const terminalTheme = useMemo(
     () => ({ ...TERMINAL_THEME_STATIC, background: terminalBg }),
     [terminalBg],
@@ -1020,13 +1023,10 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       <div className="flex min-h-0 flex-1 flex-col gap-2 lg:flex-row lg:gap-3">
         <div
           className={cn(
-            "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg",
+            "deck-chat-terminal relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
             "p-2 sm:p-3",
           )}
-          style={{
-            backgroundColor: terminalBg,
-            boxShadow: "0 8px 32px rgba(0, 0, 0, 0.4)",
-          }}
+          style={{ backgroundColor: terminalBg }}
         >
           <div
             ref={hostRef}

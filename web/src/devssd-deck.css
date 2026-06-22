@@ -1426,3 +1426,132 @@ aside.deck-sidebar.lg\:is-rail {
   background: color-mix(in srgb, var(--dsd-sem-info) 8%, var(--dsd-surface-2-solid)) !important;
 }
 
+/* ------------------------------------------------------------------ */
+/* Hermes pages — Config / Models deck cards                          */
+/* ------------------------------------------------------------------ */
+
+.deck-app-shell .deck-hermes-card {
+  background: var(--dsd-surface-1) !important;
+  border: 1px solid var(--dsd-border-subtle) !important;
+  border-radius: var(--dsd-radius-lg) !important;
+  box-shadow: var(--dsd-shadow-glow);
+  overflow: hidden;
+  transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+}
+
+.deck-app-shell .deck-hermes-card:hover {
+  border-color: var(--dsd-border-glow);
+  box-shadow: var(--dsd-shadow-card-hover);
+}
+
+.deck-config-sidebar {
+  border: 1px solid var(--dsd-border-subtle) !important;
+  border-radius: var(--dsd-radius-md) !important;
+  background: var(--dsd-surface-2-solid) !important;
+  overflow: hidden;
+}
+
+.deck-config-path {
+  font-family: var(--dsd-font-mono);
+  font-size: 11px;
+  color: var(--dsd-text-secondary) !important;
+  background: var(--dsd-surface-3-solid) !important;
+  border: 1px solid var(--dsd-border-subtle);
+  border-radius: var(--dsd-radius-sm);
+  padding: 4px 10px;
+}
+
+.deck-model-row {
+  background: var(--dsd-surface-2-solid) !important;
+  border: 1px solid var(--dsd-border-subtle) !important;
+  border-radius: var(--dsd-radius-sm);
+  transition: border-color 160ms ease;
+}
+
+.deck-model-row:hover {
+  border-color: var(--dsd-border-strong) !important;
+}
+
+.deck-config-page .deck-config-toolbar {
+  padding: 10px 12px;
+  border-radius: var(--dsd-radius-md);
+  background: var(--dsd-surface-2-solid);
+  border: 1px solid var(--dsd-border-subtle);
+}
+
+/* ------------------------------------------------------------------ */
+/* Chat terminal chrome                                               */
+/* ------------------------------------------------------------------ */
+
+.deck-chat-terminal {
+  border: 1px solid var(--dsd-border-subtle);
+  border-radius: var(--dsd-radius-lg);
+  box-shadow: var(--dsd-shadow-glow), inset 0 1px 0 rgba(125, 211, 252, 0.06);
+  background: var(--dsd-bg-elevated, #0a1018);
+}
+
+.deck-chat-terminal:focus-within {
+  border-color: var(--dsd-border-glow);
+  box-shadow: var(--dsd-shadow-card-hover), inset 0 1px 0 rgba(125, 211, 252, 0.1);
+}
+
+.deck-chat-terminal .hermes-chat-xterm-host {
+  border-radius: calc(var(--dsd-radius-lg) - 4px);
+}
+
+/* ------------------------------------------------------------------ */
+/* Entry animations (ops pages)                                       */
+/* ------------------------------------------------------------------ */
+
+@keyframes deck-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.deck-animate > * {
+  animation: deck-enter 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.deck-animate > *:nth-child(1) { animation-delay: 0ms; }
+.deck-animate > *:nth-child(2) { animation-delay: 45ms; }
+.deck-animate > *:nth-child(3) { animation-delay: 90ms; }
+.deck-animate > *:nth-child(4) { animation-delay: 135ms; }
+.deck-animate > *:nth-child(5) { animation-delay: 180ms; }
+.deck-animate > *:nth-child(6) { animation-delay: 225ms; }
+.deck-animate > *:nth-child(7) { animation-delay: 270ms; }
+.deck-animate > *:nth-child(8) { animation-delay: 315ms; }
+
+.deck-animate .layout-grid > * {
+  animation: deck-enter 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.deck-animate .layout-grid > *:nth-child(1) { animation-delay: 60ms; }
+.deck-animate .layout-grid > *:nth-child(2) { animation-delay: 100ms; }
+.deck-animate .layout-grid > *:nth-child(3) { animation-delay: 140ms; }
+.deck-animate .layout-grid > *:nth-child(4) { animation-delay: 180ms; }
+.deck-animate .layout-grid > *:nth-child(5) { animation-delay: 220ms; }
+.deck-animate .layout-grid > *:nth-child(6) { animation-delay: 260ms; }
+
+.deck-animate .metrics-strip > * {
+  animation: deck-enter 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.deck-animate .metrics-strip > *:nth-child(1) { animation-delay: 30ms; }
+.deck-animate .metrics-strip > *:nth-child(2) { animation-delay: 70ms; }
+.deck-animate .metrics-strip > *:nth-child(3) { animation-delay: 110ms; }
+.deck-animate .metrics-strip > *:nth-child(4) { animation-delay: 150ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .deck-animate > *,
+  .deck-animate .layout-grid > *,
+  .deck-animate .metrics-strip > * {
+    animation: none;
+  }
+}
+

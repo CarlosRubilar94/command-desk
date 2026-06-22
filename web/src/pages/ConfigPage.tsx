@@ -50,7 +50,7 @@ import { Input } from "@nous-research/ui/ui/components/input";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { useI18n } from "@/i18n";
 import { usePageHeader } from "@/contexts/usePageHeader";
-import { PluginSlot } from "@/plugins";
+import { DeckPageShell } from "@/components/DeckPageShell";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -422,14 +422,14 @@ export default function ConfigPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="deck-page-shell deck-config-page flex flex-col gap-4">
       <PluginSlot name="config:top" />
       <Toast toast={toast} />
 
-      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <div className="deck-config-toolbar flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="flex min-w-0 items-center gap-2 sm:flex-1">
-          <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <code className="min-w-0 flex-1 break-words text-xs text-muted-foreground bg-muted/50 px-2 py-0.5">
+          <Settings2 className="h-4 w-4 shrink-0 text-[var(--dsd-text-muted)]" />
+          <code className="deck-config-path min-w-0 flex-1 break-words">
             {configPath ?? t.config.configPath}
           </code>
         </div>
@@ -515,7 +515,7 @@ export default function ConfigPage() {
       </div>
 
       {yamlMode ? (
-        <Card>
+        <Card className="deck-hermes-card">
           <CardHeader className="py-3 px-4">
             <CardTitle className="text-sm flex items-center gap-2">
               <FileText className="h-4 w-4" />
@@ -541,15 +541,15 @@ export default function ConfigPage() {
         <div className="flex flex-col sm:flex-row gap-4">
           <aside aria-label={t.config.filters} className="sm:w-56 sm:shrink-0">
             <div className="sm:sticky sm:top-4">
-              <div className="flex flex-col border border-border bg-muted/20">
-                <div className="hidden sm:flex items-center gap-2 px-3 py-2 border-b border-border">
-                  <Filter className="h-3 w-3 text-text-tertiary" />
-                  <span className="font-mondwest text-display text-xs tracking-[0.12em] text-text-secondary">
+              <div className="deck-config-sidebar flex flex-col">
+                <div className="hidden sm:flex items-center gap-2 px-3 py-2 border-b border-[var(--dsd-border-subtle)]">
+                  <Filter className="h-3 w-3 text-[var(--dsd-text-muted)]" />
+                  <span className="text-xs font-semibold uppercase tracking-wider text-[var(--dsd-text-secondary)]">
                     {t.config.filters}
                   </span>
                 </div>
 
-                <div className="hidden sm:block px-3 pt-2 pb-1 font-mondwest text-display text-xs tracking-[0.12em] text-text-tertiary">
+                <div className="hidden sm:block px-3 pt-2 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--dsd-text-muted)]">
                   {t.config.sections}
                 </div>
 
@@ -593,7 +593,7 @@ export default function ConfigPage() {
 
           <div className="flex-1 min-w-0">
             {isSearching ? (
-              <Card>
+              <Card className="deck-hermes-card">
                 <CardHeader className="py-3 px-4">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm flex items-center gap-2">
@@ -621,7 +621,7 @@ export default function ConfigPage() {
               </Card>
             ) : (
               /* Active category */
-              <Card>
+              <Card className="deck-hermes-card">
                 <CardHeader className="py-3 px-4">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm flex items-center gap-2">

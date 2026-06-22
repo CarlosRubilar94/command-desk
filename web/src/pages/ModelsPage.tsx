@@ -390,7 +390,10 @@ function ModelCard({
 
   return (
     <Card
-      className={`min-w-0 max-w-full overflow-hidden${isMain ? " ring-1 ring-primary/40" : ""}`}
+      className={cn(
+        "deck-hermes-card min-w-0 max-w-full overflow-hidden",
+        isMain && "ring-1 ring-[var(--dsd-border-glow)]",
+      )}
     >
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
@@ -735,7 +738,7 @@ function ModelSettingsPanel({
   ).length ?? 0;
 
   return (
-    <Card className="min-w-0 max-w-full overflow-hidden">
+    <Card className="deck-hermes-card min-w-0 max-w-full overflow-hidden">
       <CardHeader className="min-w-0 pb-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <Settings2 className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -748,7 +751,7 @@ function ModelSettingsPanel({
 
       <CardContent className="min-w-0 space-y-3 pt-3">
         {/* Main row */}
-        <div className="flex min-w-0 flex-col gap-2 bg-muted/20 border border-border/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div className="flex min-w-0 flex-col gap-2 deck-model-row px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-0.5">
               <Star className="h-3 w-3 text-primary" />
@@ -772,7 +775,7 @@ function ModelSettingsPanel({
         </div>
 
         {/* Auxiliary tasks summary + open modal */}
-        <div className="flex min-w-0 flex-col gap-2 bg-muted/20 border border-border/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <div className="flex min-w-0 flex-col gap-2 deck-model-row px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-0.5">
               <Cpu className="h-3 w-3 text-text-tertiary" />
@@ -958,10 +961,10 @@ export default function ModelsPage() {
   }, [refreshAux]);
 
   return (
-    <div className="flex min-w-0 max-w-full flex-col gap-6">
+    <div className="deck-page-shell flex min-w-0 max-w-full flex-col gap-6">
       <PluginSlot name="models:top" />
 
-      <div className="grid min-w-0 gap-6 lg:grid-cols-2">
+      <div className="grid min-w-0 gap-6 lg:grid-cols-2 deck-animate">
         <ModelSettingsPanel
           aux={aux}
           refreshKey={saveKey}
@@ -969,7 +972,7 @@ export default function ModelsPage() {
         />
 
         {data && (
-          <Card className="min-w-0 max-w-full overflow-hidden">
+          <Card className="deck-hermes-card min-w-0 max-w-full overflow-hidden">
             <CardContent className="min-w-0 py-6">
               <div className="min-w-0 max-w-full [&_div.grid]:grid-cols-[auto_minmax(0,1fr)_auto]">
                 <Stats
@@ -1040,9 +1043,9 @@ export default function ModelsPage() {
       )}
 
       {error && (
-        <Card>
+        <Card className="deck-hermes-card">
           <CardContent className="py-6">
-            <p className="text-sm text-destructive text-center">{error}</p>
+            <p className="text-sm text-[var(--dsd-sem-critical)] text-center">{error}</p>
           </CardContent>
         </Card>
       )}
@@ -1050,7 +1053,7 @@ export default function ModelsPage() {
       {data && (
         <>
           {data.models.length > 0 ? (
-            <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-3 deck-animate">
               {data.models.map((m, i) => (
                 <ModelCard
                   key={`${m.model}:${m.provider}`}
@@ -1064,9 +1067,9 @@ export default function ModelsPage() {
               ))}
             </div>
           ) : (
-            <Card>
+            <Card className="deck-hermes-card">
               <CardContent className="py-12">
-                <div className="flex flex-col items-center text-muted-foreground">
+                <div className="flex flex-col items-center text-[var(--dsd-text-secondary)]">
                   <Cpu className="h-8 w-8 mb-3 opacity-40" />
                   <p className="text-sm font-medium">{t.models.noModelsData}</p>
                   <p className="text-xs mt-1 text-text-tertiary">
