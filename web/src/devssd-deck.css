@@ -1,0 +1,1095 @@
+/*
+ * DevSSD Deck design system — mirrored from control-center/public/deck.css + tokens.css.
+ * Keep in sync manually with Command Deck (:8765).
+ */
+
+/* ------------------------------------------------------------------ */
+/* App chrome                                                         */
+/* ------------------------------------------------------------------ */
+
+.deck-app-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  background: var(--dsd-bg);
+}
+
+.deck-app-header {
+  min-height: var(--dsd-header-h);
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--dsd-border-subtle);
+  background: rgba(7, 11, 18, 0.92);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 15;
+}
+
+.deck-app-header .deck-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.deck-app-header h1 {
+  margin: 0;
+  font-size: var(--dsd-text-h1);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  color: var(--dsd-text-primary);
+  white-space: nowrap;
+}
+
+.deck-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--dsd-text-caption);
+  color: var(--dsd-text-muted);
+  flex-wrap: wrap;
+}
+
+.deck-header-meta .env-tag {
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--dsd-surface-2);
+  border: 1px solid var(--dsd-border-subtle);
+  color: var(--dsd-text-secondary);
+}
+
+.deck-header-meta .live-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsd-text-secondary);
+}
+
+.deck-header-meta .live-tag .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsd-sem-ok);
+}
+
+.deck-header-meta .live-tag.paused .dot {
+  background: var(--dsd-sem-warning);
+}
+
+.deck-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.deck-btn-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--dsd-border-subtle);
+  background: var(--dsd-surface-2);
+  color: var(--dsd-text-secondary);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: border-color 150ms, color 150ms;
+}
+
+.deck-btn-icon:hover {
+  border-color: var(--dsd-border-strong);
+  color: var(--dsd-text-primary);
+}
+
+.deck-health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--dsd-border-subtle);
+  background: var(--dsd-surface-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dsd-text-secondary);
+}
+
+.deck-health-badge.ok {
+  border-color: rgba(74, 222, 128, 0.3);
+  color: var(--dsd-sem-ok);
+}
+
+.deck-health-badge.warn {
+  border-color: rgba(251, 191, 36, 0.3);
+  color: var(--dsd-sem-warning);
+}
+
+.deck-health-badge.bad {
+  border-color: rgba(248, 113, 113, 0.3);
+  color: var(--dsd-sem-critical);
+}
+
+.deck-main-dashboard {
+  padding: 24px;
+  max-width: var(--dsd-content-max);
+  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+}
+
+.deck-content-shell {
+  max-width: var(--dsd-content-max);
+  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar — Deck density (248px expanded, 56px rail)                 */
+/* ------------------------------------------------------------------ */
+
+.deck-sidebar {
+  width: var(--dsd-sidebar-w);
+  background: var(--dsd-surface-1) !important;
+  border-right: 1px solid var(--dsd-border-subtle) !important;
+  clip-path: none !important;
+  border-image: none !important;
+}
+
+.deck-sidebar.is-rail {
+  width: 56px !important;
+}
+
+aside.deck-sidebar.lg\:is-rail {
+  width: 56px;
+}
+
+@media (min-width: 1024px) {
+  aside.deck-sidebar.lg\:w-14 {
+    width: 56px !important;
+  }
+}
+
+.deck-sidebar-brand .deck-brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  background: var(--dsd-surface-3);
+  border: 1px solid var(--dsd-border-strong);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--dsd-text-secondary);
+  font-family: var(--dsd-font-mono);
+  letter-spacing: 0.06em;
+}
+
+.deck-sidebar-brand .deck-wordmark {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--dsd-text-primary);
+  letter-spacing: -0.01em;
+}
+
+.deck-sidebar-brand .deck-tagline {
+  font-size: 12px;
+  color: var(--dsd-text-muted);
+  font-family: var(--dsd-font-sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.deck-sidebar-status {
+  padding: 10px 12px;
+  border-radius: var(--dsd-radius-md);
+  background: var(--dsd-surface-2);
+  border: 1px solid var(--dsd-border-subtle);
+  margin: 0 12px 12px;
+  font-size: var(--dsd-text-caption);
+}
+
+.deck-sidebar-status .status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--dsd-text-primary);
+}
+
+.deck-sidebar-status .status-sub {
+  color: var(--dsd-text-muted);
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.deck-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  margin: 0 8px;
+  border-radius: 10px;
+  color: var(--dsd-text-secondary) !important;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--dsd-font-sans) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  transition: background 150ms, color 150ms;
+  clip-path: none !important;
+}
+
+.deck-nav-link:hover {
+  background: var(--dsd-surface-2);
+  color: var(--dsd-text-primary) !important;
+}
+
+.deck-nav-link.active,
+.deck-nav-link[aria-current="page"] {
+  background: var(--dsd-surface-3);
+  color: var(--dsd-text-primary) !important;
+  font-weight: 600;
+}
+
+.deck-nav-section-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dsd-text-muted);
+  padding: 8px 20px 4px;
+  font-family: var(--dsd-font-sans);
+}
+
+.deck-system-action {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--dsd-font-sans) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: var(--dsd-text-secondary);
+  transition: background 150ms, color 150ms;
+}
+
+.deck-system-action:hover:not(:disabled) {
+  background: var(--dsd-surface-2);
+  color: var(--dsd-text-primary);
+}
+
+.deck-system-section-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dsd-text-muted);
+  padding: 8px 16px 4px;
+  font-family: var(--dsd-font-sans);
+}
+
+/* Agent home — full-width dashboard (sidebar hidden) */
+.deck-home-layout .deck-main-dashboard,
+.deck-home-layout .deck-content-shell {
+  max-width: var(--dsd-content-max);
+}
+
+/* ------------------------------------------------------------------ */
+/* Dashboard layout                                                   */
+/* ------------------------------------------------------------------ */
+
+.deck-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsd-block-gap);
+  width: 100%;
+  min-width: 0;
+}
+
+.ops-first-fold {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+.ops-hero {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 20px;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 960px) {
+  .ops-hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+.layout-grid,
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 20px;
+  width: 100%;
+  max-width: 100%;
+  align-items: start;
+}
+
+.col-3 { grid-column: span 3; min-width: 0; }
+.col-4 { grid-column: span 4; min-width: 0; }
+.col-6 { grid-column: span 6; min-width: 0; }
+.col-8 { grid-column: span 8; min-width: 0; }
+.col-12 { grid-column: 1 / -1; min-width: 0; }
+
+@media (max-width: 900px) {
+  .col-3, .col-4, .col-6, .col-8 {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Cards (deck-card aliases card from Deck)                           */
+/* ------------------------------------------------------------------ */
+
+.deck-card,
+.card {
+  background: var(--dsd-surface-1);
+  border: 1px solid var(--dsd-border-subtle);
+  border-radius: var(--dsd-radius-lg);
+  overflow: hidden;
+  box-shadow: var(--dsd-shadow-soft);
+  transition: border-color 160ms ease;
+}
+
+.deck-card:hover,
+.card:hover {
+  border-color: var(--dsd-border-strong);
+}
+
+.deck-card-header,
+.card-header {
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--dsd-border-subtle);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: var(--dsd-surface-1);
+}
+
+.deck-card-header h2,
+.card-header h2 {
+  margin: 0;
+  font-size: var(--dsd-text-h2);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--dsd-text-primary);
+}
+
+.deck-card-header .deck-card-sub,
+.card-header .card-sub {
+  font-size: var(--dsd-text-caption);
+  color: var(--dsd-text-muted);
+  font-weight: 400;
+  margin-top: 2px;
+}
+
+.deck-card-body,
+.card-body {
+  padding: 22px 24px;
+  min-width: 0;
+}
+
+.deck-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid var(--dsd-border-subtle);
+  background: var(--dsd-surface-3);
+  color: var(--dsd-text-secondary);
+}
+
+.deck-card-badge.ok {
+  border-color: rgba(74, 222, 128, 0.3);
+  color: var(--dsd-sem-ok);
+}
+
+.deck-card-badge.warn {
+  border-color: rgba(251, 191, 36, 0.3);
+  color: var(--dsd-sem-warning);
+}
+
+.deck-card-badge.bad {
+  border-color: rgba(248, 113, 113, 0.3);
+  color: var(--dsd-sem-critical);
+}
+
+/* ------------------------------------------------------------------ */
+/* Service matrix cells (Deck dashboard cards)                          */
+/* ------------------------------------------------------------------ */
+
+.service-matrix {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+}
+
+@media (max-width: 900px) {
+  .service-matrix {
+    grid-template-columns: 1fr;
+  }
+}
+
+.service-cell {
+  padding: 16px 18px;
+  border-radius: var(--dsd-radius-md);
+  background: var(--dsd-surface-2);
+  border: 1px solid var(--dsd-border-subtle);
+  transition: border-color 150ms ease;
+  min-width: 0;
+}
+
+.service-cell:hover {
+  border-color: var(--dsd-border-strong);
+}
+
+.service-cell .sc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.service-cell .sc-name {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dsd-text-primary);
+}
+
+.service-cell .sc-state {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsd-text-primary);
+  margin-top: 4px;
+}
+
+.service-cell .sc-state.ok { color: var(--dsd-sem-ok); }
+.service-cell .sc-state.warn { color: var(--dsd-sem-warning); }
+.service-cell .sc-state.bad { color: var(--dsd-sem-critical); }
+
+.service-cell .sc-meta {
+  font-size: 12px;
+  color: var(--dsd-text-secondary);
+  margin-top: 4px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.service-cell .sc-hint {
+  font-size: 10px;
+  color: var(--dsd-text-muted);
+  margin-top: 6px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.service-cell--warn { border-color: rgba(251, 191, 36, 0.2); }
+.service-cell--bad { border-color: rgba(248, 113, 113, 0.22); }
+
+/* ------------------------------------------------------------------ */
+/* Operational hero                                                   */
+/* ------------------------------------------------------------------ */
+
+.operational-status {
+  padding: 20px 22px;
+  border-radius: var(--dsd-radius-lg);
+  background: var(--dsd-surface-2);
+  border: 1px solid var(--dsd-border-subtle);
+  border-left-width: 3px;
+  align-self: start;
+  min-width: 0;
+}
+
+.operational-status.overall-ok { border-left-color: var(--dsd-sem-ok); }
+.operational-status.overall-warning { border-left-color: var(--dsd-sem-warning); }
+.operational-status.overall-degraded { border-left-color: var(--dsd-sem-degraded); }
+.operational-status.overall-critical { border-left-color: var(--dsd-sem-critical); }
+.operational-status.overall-unknown { border-left-color: var(--dsd-sem-unknown); }
+
+.operational-status .os-label {
+  font-size: 11px;
+  color: var(--dsd-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+}
+
+.operational-status .os-title {
+  font-size: var(--dsd-text-h1);
+  font-weight: 650;
+  margin: 8px 0 6px;
+  letter-spacing: -0.02em;
+  color: var(--dsd-text-primary);
+}
+
+.operational-status .os-sub {
+  font-size: 13px;
+  color: var(--dsd-text-secondary);
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+.ops-hero-badges {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  justify-content: center;
+  align-self: stretch;
+}
+
+.breakdown-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.breakdown-chip {
+  font-size: 11px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--dsd-surface-3);
+  border: 1px solid var(--dsd-border-subtle);
+  color: var(--dsd-text-secondary);
+}
+
+.breakdown-chip strong {
+  color: var(--dsd-text-primary);
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------------ */
+/* Metrics                                                            */
+/* ------------------------------------------------------------------ */
+
+.metrics-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .metrics-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.metric-tile {
+  padding: 18px 20px;
+  border-radius: var(--dsd-radius-md);
+  background: var(--dsd-surface-2);
+  border: 1px solid var(--dsd-border-subtle);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.metric-tile .mt-label {
+  font-size: 11px;
+  color: var(--dsd-text-muted);
+  margin-bottom: 8px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.metric-tile .mt-value {
+  font-size: clamp(20px, 2vw, 26px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--dsd-text-primary);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-tile .mt-context {
+  font-size: 11px;
+  color: var(--dsd-text-muted);
+  margin-top: 8px;
+}
+
+.metric-tile.state-warning .mt-value { color: var(--dsd-sem-warning); }
+.metric-tile.state-critical .mt-value { color: var(--dsd-sem-critical); }
+.metric-tile.state-degraded .mt-value { color: var(--dsd-sem-degraded); }
+.metric-tile.state-ok .mt-value { color: var(--dsd-sem-ok); }
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  align-items: baseline;
+  font-size: var(--dsd-text-body);
+}
+
+.metric-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.metric-row .label {
+  color: var(--dsd-text-secondary);
+  min-width: 0;
+}
+
+.metric-row .value {
+  text-align: right;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  color: var(--dsd-text-primary);
+}
+
+.metric-row:hover {
+  background: rgba(255, 255, 255, 0.015);
+  border-radius: 6px;
+}
+
+.ops-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.ops-summary-item {
+  padding: 12px 14px;
+  border-radius: var(--dsd-radius-md);
+  background: var(--dsd-surface-2);
+  border: 1px solid var(--dsd-border-subtle);
+}
+
+.ops-summary-item .osi-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dsd-text-muted);
+  margin-bottom: 6px;
+}
+
+.ops-summary-item .osi-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsd-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ops-summary-item .osi-hint {
+  display: block;
+  font-size: 10px;
+  color: var(--dsd-text-muted);
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Muted pre / code (smoke commands — NOT pink terminal)              */
+/* ------------------------------------------------------------------ */
+
+.deck-smoke-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.deck-smoke-row {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .deck-smoke-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
+.deck-smoke-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dsd-text-muted);
+}
+
+.deck-muted-pre,
+.deck-card pre,
+.deck-card-body pre,
+.deck-dashboard pre {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--dsd-radius-sm);
+  background: var(--dsd-surface-3) !important;
+  border: 1px solid var(--dsd-border-subtle);
+  color: var(--dsd-text-secondary) !important;
+  font-family: var(--dsd-font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.deck-card code,
+.deck-card-body code,
+.deck-dashboard code,
+.deck-muted-pre code {
+  background: transparent !important;
+  color: inherit !important;
+  font-size: inherit;
+  padding: 0;
+  border: 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Status dots + badges                                               */
+/* ------------------------------------------------------------------ */
+
+.status-dot-inline {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.status-dot-inline.ok { background: var(--dsd-sem-ok); opacity: 0.85; }
+.status-dot-inline.warn { background: var(--dsd-sem-warning); }
+.status-dot-inline.bad { background: var(--dsd-sem-critical); }
+
+.deck-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.deck-status-dot.ok { background: var(--dsd-sem-ok); }
+.deck-status-dot.warning { background: var(--dsd-sem-warning); }
+.deck-status-dot.degraded { background: var(--dsd-sem-degraded); }
+.deck-status-dot.critical { background: var(--dsd-sem-critical); }
+
+/* ------------------------------------------------------------------ */
+/* Buttons + toolbar                                                  */
+/* ------------------------------------------------------------------ */
+
+.deck-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.deck-btn-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: var(--dsd-text-caption);
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--dsd-border-subtle);
+  background: var(--dsd-surface-3);
+  color: var(--dsd-text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 150ms, color 150ms, background 150ms;
+  font-family: inherit;
+}
+
+.deck-btn-sm:hover {
+  border-color: var(--dsd-border-strong);
+  color: var(--dsd-text-primary);
+  background: var(--dsd-surface-2);
+}
+
+.deck-btn-sm.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.deck-btn-sm.ghost:hover {
+  border-color: var(--dsd-border-subtle);
+  background: var(--dsd-surface-2);
+}
+
+.deck-btn-sm.primary {
+  border-color: rgba(125, 211, 252, 0.35);
+  color: var(--dsd-sem-info);
+  background: color-mix(in srgb, var(--dsd-sem-info) 8%, var(--dsd-surface-2));
+}
+
+.deck-footer-deck-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  margin-top: 4px;
+  border-radius: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.25);
+  background: color-mix(in srgb, var(--dsd-sem-info) 8%, var(--dsd-surface-2));
+  color: var(--dsd-sem-info);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 150ms, border-color 150ms;
+}
+
+.deck-footer-deck-link:hover {
+  background: color-mix(in srgb, var(--dsd-sem-info) 14%, var(--dsd-surface-2));
+  border-color: rgba(125, 211, 252, 0.4);
+}
+
+/* ------------------------------------------------------------------ */
+/* Global Hermes UI — Command Deck Ops overrides (all routes)         */
+/* ------------------------------------------------------------------ */
+
+.deck-app-shell {
+  background: var(--dsd-bg);
+  color: var(--dsd-text-primary);
+  font-family: var(--dsd-font-sans);
+}
+
+/* Flatten Nous backdrop grain / warm vignette for ops console */
+.deck-app-shell .pointer-events-none.fixed.inset-0.z-\[2\] {
+  opacity: 0 !important;
+}
+
+.deck-app-shell .pointer-events-none.fixed.inset-0.z-\[99\] {
+  opacity: 0.35 !important;
+}
+
+/* Scrollbars */
+.deck-app-shell * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--dsd-surface-3) transparent;
+}
+
+.deck-app-shell *::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.deck-app-shell *::-webkit-scrollbar-thumb {
+  background: var(--dsd-surface-3);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.deck-app-shell *::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--dsd-text-muted) 50%, var(--dsd-surface-3));
+  background-clip: padding-box;
+}
+
+/* Focus rings */
+.deck-app-shell :focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--dsd-sem-info) 55%, transparent);
+  outline-offset: 2px;
+}
+
+/* Shadcn / Nous DS utility remaps */
+.deck-app-shell .bg-card,
+.deck-app-shell .bg-background-base,
+.deck-app-shell [class*="bg-background"] {
+  --tw-bg-opacity: 1;
+}
+
+.deck-app-shell .bg-card {
+  background-color: var(--dsd-surface-1) !important;
+}
+
+.deck-app-shell .border-border,
+.deck-app-shell .border-current\/20,
+.deck-app-shell .border-current\/10 {
+  border-color: var(--dsd-border-subtle) !important;
+}
+
+.deck-app-shell .text-muted-foreground,
+.deck-app-shell .text-text-tertiary {
+  color: var(--dsd-text-muted) !important;
+}
+
+.deck-app-shell .text-text-secondary {
+  color: var(--dsd-text-secondary) !important;
+}
+
+.deck-app-shell .text-midground,
+.deck-app-shell .text-foreground {
+  color: var(--dsd-text-primary) !important;
+}
+
+/* Tables */
+.deck-app-shell table {
+  border-color: var(--dsd-border-subtle);
+}
+
+.deck-app-shell thead th {
+  color: var(--dsd-text-muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--dsd-border-subtle);
+  background: var(--dsd-surface-1);
+}
+
+.deck-app-shell tbody tr {
+  border-bottom: 1px solid var(--dsd-border-subtle);
+}
+
+.deck-app-shell tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Inputs */
+.deck-app-shell input:not([type="checkbox"]):not([type="radio"]),
+.deck-app-shell textarea,
+.deck-app-shell select {
+  background: var(--dsd-surface-2) !important;
+  border: 1px solid var(--dsd-border-subtle) !important;
+  color: var(--dsd-text-primary) !important;
+  border-radius: var(--dsd-radius-sm);
+}
+
+.deck-app-shell input::placeholder,
+.deck-app-shell textarea::placeholder {
+  color: var(--dsd-text-muted);
+}
+
+/* Dialogs / sheets / popovers */
+.deck-app-shell [role="dialog"],
+.deck-app-shell [data-radix-popper-content-wrapper] > * {
+  background: var(--dsd-surface-1) !important;
+  border: 1px solid var(--dsd-border-subtle) !important;
+  color: var(--dsd-text-primary);
+  box-shadow: var(--dsd-shadow-soft);
+}
+
+/* Tabs */
+.deck-app-shell [role="tablist"] {
+  border-color: var(--dsd-border-subtle);
+}
+
+.deck-app-shell [role="tab"][aria-selected="true"] {
+  color: var(--dsd-sem-info) !important;
+  border-color: color-mix(in srgb, var(--dsd-sem-info) 40%, transparent) !important;
+}
+
+/* Chat / terminal chrome — dark ops, not pink/cream hacker */
+.deck-app-shell [data-chat-active="true"] .rounded-lg,
+.deck-app-shell [data-chat-active="true"] [class*="rounded-"] {
+  border-color: var(--dsd-border-subtle) !important;
+}
+
+.deck-app-shell .xterm {
+  padding: 8px 10px;
+}
+
+.deck-app-shell .xterm-viewport {
+  background-color: var(--dsd-surface-1) !important;
+  border-radius: var(--dsd-radius-md);
+}
+
+.deck-app-shell .xterm-screen {
+  background-color: var(--dsd-surface-1) !important;
+}
+
+/* Code blocks outside deck cards */
+.deck-app-shell pre:not(.deck-muted-pre) {
+  background: var(--dsd-surface-3) !important;
+  border: 1px solid var(--dsd-border-subtle);
+  color: var(--dsd-text-secondary) !important;
+  border-radius: var(--dsd-radius-sm);
+}
+
+.deck-app-shell code:not(.deck-muted-pre code) {
+  background: var(--dsd-surface-3);
+  color: var(--dsd-sem-info);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+/* Sidebar footer + auth */
+.deck-app-shell #app-sidebar .border-t {
+  border-color: var(--dsd-border-subtle) !important;
+}
+
+/* Mobile overlay */
+.deck-app-shell .bg-black\/60 {
+  background: rgba(7, 11, 18, 0.72) !important;
+}
+
+/* Deck main content padding for standard pages */
+.deck-app-shell .deck-content-shell {
+  max-width: var(--dsd-content-max);
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .deck-app-header {
+    padding: 12px 16px;
+    min-height: 56px;
+  }
+}
+

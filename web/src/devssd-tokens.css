@@ -1,0 +1,36 @@
+/*
+ * DevSSD design tokens — mirrored from control-center/public/deck.css (v5).
+ * Keep values in sync manually; do not import across repos at runtime.
+ */
+:root {
+  --dsd-bg: #070B12;
+  --dsd-surface-1: #0C111C;
+  --dsd-surface-2: #121A28;
+  --dsd-surface-3: #1A2436;
+  --dsd-border-subtle: rgba(148, 163, 184, 0.1);
+  --dsd-border-strong: rgba(148, 163, 184, 0.2);
+  --dsd-text-primary: #E8ECF2;
+  --dsd-text-secondary: #A7B0C0;
+  --dsd-text-muted: #6B7280;
+  --dsd-sem-ok: #4ADE80;
+  --dsd-sem-info: #7DD3FC;
+  --dsd-sem-warning: #FBBF24;
+  --dsd-sem-degraded: #FB923C;
+  --dsd-sem-critical: #F87171;
+  --dsd-sem-unknown: #94A3B8;
+  --dsd-radius-lg: 18px;
+  --dsd-radius-md: 14px;
+  --dsd-radius-sm: 6px;
+  --dsd-sidebar-w: 248px;
+  --dsd-content-max: 1480px;
+  --dsd-header-h: 72px;
+  --dsd-block-gap: 28px;
+  --dsd-text-h1: 22px;
+  --dsd-text-h2: 16px;
+  --dsd-text-metric: 28px;
+  --dsd-text-body: 14px;
+  --dsd-text-caption: 12px;
+  --dsd-font-sans: "Segoe UI Variable", "Segoe UI", Inter, system-ui, sans-serif;
+  --dsd-font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --dsd-shadow-soft: 0 12px 40px rgba(0, 0, 0, 0.18);
+}
