@@ -1166,6 +1166,15 @@ def _build_child_agent(
     child_reasoning = parent_reasoning
     try:
         delegation_effort = str(delegation_cfg.get("reasoning_effort") or "").strip()
+        if not delegation_effort:
+            try:
+                from agent.smart_model_routing import get_routing_config, is_routing_enabled
+                if is_routing_enabled():
+                    delegation_effort = str(
+                        get_routing_config().get("delegation_reasoning_effort") or ""
+                    ).strip()
+            except Exception:
+                pass
         if delegation_effort:
             from hermes_constants import parse_reasoning_effort
 
@@ -2759,7 +2768,15 @@ def _resolve_delegation_credentials(cfg: dict, parent_agent) -> dict:
         }
 
     if not configured_provider:
-        # No provider override — child inherits everything from parent
+        # No provider override — child inherits everything from parent.
+        # smart_model_routing may pin an economy model while keeping the
+        # parent's provider/credentials.
+        if not configured_model:
+            try:
+                from agent.smart_model_routing import resolve_delegation_model
+                configured_model = resolve_delegation_model(parent_agent)
+            except Exception as exc:
+                logger.debug("smart_model_routing delegation resolve skipped: %s", exc)
         return {
             "model": configured_model,
             "provider": None,

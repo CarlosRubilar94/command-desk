@@ -124,7 +124,7 @@ _log = logging.getLogger(__name__)
 # when the same module is used across TestClient instances or uvicorn reloads.
 # ---------------------------------------------------------------------------
 
-def _start_desktop_cron_ticker(stop_event: "threading.Event", interval: int = 60) -> None:
+def _start_desktop_cron_ticker(stop_event: "threading.Event") -> None:
     """Tick the cron scheduler from inside the desktop dashboard backend.
 
     The scheduler tick loop normally lives in ``hermes gateway run`` — but the
@@ -139,8 +139,10 @@ def _start_desktop_cron_ticker(stop_event: "threading.Event", interval: int = 60
     first wins the tick.
     """
     from cron.scheduler_provider import resolve_cron_scheduler
+    from hermes_cli.config import get_cron_ticker_interval
 
     provider = resolve_cron_scheduler()
+    interval = get_cron_ticker_interval()
     _log.info("Desktop cron scheduler started (provider=%s, interval=%ds)", provider.name, interval)
     provider.start(stop_event, interval=interval)
 

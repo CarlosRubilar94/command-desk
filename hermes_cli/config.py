@@ -1311,21 +1311,6 @@ DEFAULT_CONFIG = {
                                       # after live validation.
     },
 
-    # Kanban subsystem (orchestrator workers + dispatcher-driven child tasks).
-    # See tools/kanban_tools.py and hermes_cli/kanban_db.py for the actual
-    # implementations. Per-platform notification opt-out is handled by the
-    # kanban dashboard (see ``hermes dashboard`` -> Notifications).
-    "kanban": {
-        # Auto-subscribe the originating gateway/TUI session to task
-        # completion + block events when ``kanban_create`` is called from
-        # inside a session that has a persistent delivery channel. The
-        # agent that dispatched the task will get notified automatically
-        # instead of having to poll. Disable to mirror pre-feature
-        # behaviour — e.g. for a profile that prefers explicit
-        # ``kanban_notify-subscribe`` calls per task.
-        "auto_subscribe_on_create": True,
-    },
-
     # Anthropic prompt caching (Claude via OpenRouter or native Anthropic API).
     # cache_ttl must be "5m" or "1h" (Anthropic-supported tiers); other values are ignored.
     "prompt_caching": {
@@ -1375,10 +1360,10 @@ DEFAULT_CONFIG = {
 
     # Auxiliary model config — provider:model for each side task.
     # Format: provider is the provider name, model is the model slug.
-    # "auto" for provider = auto-detect best available provider.
-    # Empty model = use provider's default auxiliary model.
-    # All tasks fall back to openrouter:google/gemini-3-flash-preview if
-    # the configured provider is unavailable.
+    # "auto" for provider = use main model when smart_model_routing is off;
+    # when smart_model_routing.enabled is true, economy-tier tasks route to
+    # the provider's cheap default_aux_model instead. Explicit per-task
+    # provider/model overrides always win.
     #
     # extra_body: forwarded verbatim as request body fields on every aux call
     # for that task. Use this to set provider-specific knobs (independent of
@@ -1533,6 +1518,17 @@ DEFAULT_CONFIG = {
             "base_url": "",
             "api_key": "",
             "timeout": 60,
+            "extra_body": {},
+        },
+        # Goal judge — lightweight yes/no classifier for the /goal loop.
+        # High-volume; economy routing sends this to a cheap model by default.
+        "goal_judge": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 30,
+            "max_tokens": 512,
             "extra_body": {},
         },
     },
@@ -1948,7 +1944,7 @@ DEFAULT_CONFIG = {
         # Orchestrator role controls (see tools/delegate_tool.py:_get_max_spawn_depth
         # and _get_orchestrator_enabled).  Floored at 1, no upper ceiling —
         # raise deliberately, each level multiplies API cost.
-        "max_spawn_depth": 1,        # depth (1 = flat [default], 2 = orchestrator→leaf, 3+ = deeper)
+        "max_spawn_depth": 2,        # depth (1 = flat, 2 = orchestrator→leaf, 3+ = deeper)
         "orchestrator_enabled": True,  # kill switch for role="orchestrator"
         # When a subagent hits a dangerous-command approval prompt, the parent's
         # prompt_toolkit TUI owns stdin — a thread-local input() call from the
@@ -2322,7 +2318,33 @@ DEFAULT_CONFIG = {
         # null/0 = unbounded (limited only by thread count).
         # 1 = serial (pre-v0.9 behaviour).
         # Also overridable via HERMES_CRON_MAX_PARALLEL env var.
-        "max_parallel_jobs": None,
+        "max_parallel_jobs": 4,
+        # Seconds between built-in cron ticker ticks (job pickup latency).
+        "ticker_interval_seconds": 30,
+    },
+
+    # Task-aware model tier routing — economy vs performance models for aux
+    # tasks and delegation. When enabled, high-volume side tasks (compression,
+    # titles, goal judge, …) route to a cheap model while quality-sensitive
+    # tasks (web_extract, kanban_decomposer, curator, vision) keep the main
+    # chat model. Subagents inherit economy tier when delegation.model is unset.
+    "smart_model_routing": {
+        "enabled": True,
+        # economy | inherit | performance — tier for delegate_task subagents
+        # when delegation.model/provider are empty.
+        "delegation_tier": "economy",
+        # Optional explicit economy model (empty = provider default_aux_model).
+        "economy_model": "",
+        "economy_provider": "",
+        # Subagent reasoning when delegation.reasoning_effort is empty and
+        # smart routing is enabled.
+        "delegation_reasoning_effort": "low",
+        # OpenRouter extras merged into economy-tier auxiliary calls.
+        "economy_extra_body": {
+            "provider": {
+                "sort": "price",
+            },
+        },
     },
 
     # Kanban multi-agent coordination — controls the dispatcher loop that
@@ -2340,7 +2362,7 @@ DEFAULT_CONFIG = {
         "dispatch_in_gateway": True,
         # Seconds between dispatcher ticks (idle or not). Lower = snappier
         # pickup of newly-ready tasks; higher = less SQL pressure.
-        "dispatch_interval_seconds": 60,
+        "dispatch_interval_seconds": 30,
         # Auto-block after this many consecutive non-success attempts for the
         # same task/profile (spawn_failed, timed_out, or crashed). Reassignment
         # resets the streak for the new profile.
@@ -2377,13 +2399,20 @@ DEFAULT_CONFIG = {
         # Max triage tasks to decompose per dispatcher tick. Prevents a
         # large bulk-load of triage tasks from spending a burst of aux
         # LLM calls in one tick. Excess tasks defer to the next tick.
-        "auto_decompose_per_tick": 3,
+        "auto_decompose_per_tick": 1,
         # Stale detection: running tasks that have exceeded this many
         # seconds without a heartbeat (since ``last_heartbeat_at``) are
         # auto-reclaimed to ``ready`` on the next dispatcher tick. The
         # worker process (if still running host-locally) is terminated
         # before the reclaim.  0 disables stale detection entirely.
         "dispatch_stale_timeout_seconds": 14400,
+        # Global concurrency caps — prevent unbounded subprocess spawn storms.
+        "max_in_progress": 4,
+        "max_spawn": 4,
+        # Auto-subscribe the originating gateway/TUI session to task
+        # completion + block events when ``kanban_create`` is called from
+        # inside a session that has a persistent delivery channel.
+        "auto_subscribe_on_create": True,
     },
 
     # execute_code settings — controls the tool used for programmatic tool calls.
@@ -2796,7 +2825,7 @@ DEFAULT_CONFIG = {
 
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 30,
+    "_config_version": 31,
 }
 
 # =============================================================================
@@ -5634,6 +5663,19 @@ def load_config_readonly() -> Dict[str, Any]:
     safety guarantee is purely documented, not enforced — be careful.
     """
     return _load_config_impl(want_deepcopy=False)
+
+
+def get_cron_ticker_interval() -> int:
+    """Built-in cron ticker interval in seconds (minimum 5)."""
+    try:
+        config = load_config_readonly()
+        cron = config.get("cron", {})
+        if not isinstance(cron, dict):
+            return 60
+        raw = cron.get("ticker_interval_seconds", 60)
+        return max(5, int(raw))
+    except (TypeError, ValueError):
+        return 60
 
 
 def write_platform_config_field(
