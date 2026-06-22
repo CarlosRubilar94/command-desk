@@ -1244,6 +1244,10 @@ export const api = {
   },
   getMission: (missionId: string) =>
     fetchJSON<MissionDetailResponse>(`/api/missions/${encodeURIComponent(missionId)}`),
+
+  // ── Command Deck Overview ──────────────────────────────────────────────────
+  getCommandDeckOverview: () =>
+    fetchJSON<CommandDeckOverviewResponse>("/api/command-deck/overview"),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -2673,4 +2677,28 @@ export interface MissionDetailResponse {
   delegation_tree: MissionDelegationNode[];
   timeline: MissionTimelineEvent[];
   top_runs: MissionTopRun[];
+}
+
+// ── Command Deck Overview ────────────────────────────────────────────────────
+
+export interface CommandDeckTracerSummary {
+  dropped_spans: number;
+  healthy: boolean;
+}
+
+export interface CommandDeckFleetSummary {
+  queue: number;
+  throughput: number;
+  bottlenecks: string[];
+  recurring_errors: string[];
+  cost_today_usd: number;
+  tracer: CommandDeckTracerSummary;
+}
+
+export interface CommandDeckOverviewResponse {
+  deck: { available: boolean; status: string };
+  fleet: CommandDeckFleetSummary;
+  costs: Record<string, unknown>;
+  missions: { count: number };
+  tracer: CommandDeckTracerSummary;
 }

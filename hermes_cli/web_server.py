@@ -15,7 +15,7 @@ import asyncio
 import base64
 import binascii
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hmac
 import importlib.util
 import json
@@ -11408,6 +11408,529 @@ async def get_models_analytics(days: int = 30, profile: Optional[str] = None):
         }
     finally:
         db.close()
+
+
+def _coerce_days_window(days: int, *, default: int = 30, max_days: int = 365) -> int:
+    try:
+        value = int(days)
+    except Exception:
+        value = default
+    return max(1, min(value, max_days))
+
+
+def _coerce_limit(limit: int, *, default: int = 50, max_limit: int = 200) -> int:
+    try:
+        value = int(limit)
+    except Exception:
+        value = default
+    return max(1, min(value, max_limit))
+
+
+def _percentile_from_sorted(values: List[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    if percentile <= 0:
+        return float(values[0])
+    if percentile >= 1:
+        return float(values[-1])
+    idx = int((len(values) - 1) * percentile)
+    return float(values[max(0, min(idx, len(values) - 1))])
+
+
+def _is_session_error_reason(reason: Any) -> bool:
+    normalized = str(reason or "").strip().lower()
+    if not normalized:
+        return False
+    return any(
+        token in normalized
+        for token in ("error", "fail", "crash", "abort", "timeout", "orphaned")
+    )
+
+
+@app.get("/api/analytics/overview")
+async def get_analytics_overview(days: int = 30, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+        import sqlite3
+
+        day_window = _coerce_days_window(days)
+        now_ts = time.time()
+        cutoff = now_ts - (day_window * 86400)
+        today = datetime.now().astimezone().date()
+        day_keys = [
+            (today - timedelta(days=offset)).isoformat()
+            for offset in range(day_window - 1, -1, -1)
+        ]
+
+        trace_rollups: Dict[str, Dict[str, Any]] = {}
+        span_durations: List[float] = []
+        token_by_day: Dict[str, Dict[str, int]] = {
+            day: {"input_tokens": 0, "output_tokens": 0}
+            for day in day_keys
+        }
+        traces_by_day: Dict[str, set[str]] = {day: set() for day in day_keys}
+        spans_total = 0
+
+        db_path = traces_store.traces_db_path()
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT trace_id, session_id, status, model, started_at,
+                           duration_ms, input_tokens, output_tokens, cost_usd, error
+                    FROM spans
+                    WHERE started_at >= ?
+                    ORDER BY started_at ASC
+                    """,
+                    (cutoff,),
+                ).fetchall()
+            finally:
+                conn.close()
+        else:
+            rows = []
+
+        for row in rows:
+            spans_total += 1
+            trace_id = str(row["trace_id"] or "").strip()
+            if not trace_id:
+                continue
+            started_at = _safe_float(row["started_at"])
+            started_day = datetime.fromtimestamp(started_at).astimezone().date().isoformat()
+            if started_day in token_by_day:
+                token_by_day[started_day]["input_tokens"] += _safe_int(row["input_tokens"])
+                token_by_day[started_day]["output_tokens"] += _safe_int(row["output_tokens"])
+            duration_ms_raw = row["duration_ms"]
+            duration_ms = _safe_float(duration_ms_raw)
+            if duration_ms_raw is not None and duration_ms >= 0:
+                span_durations.append(duration_ms)
+            rollup = trace_rollups.setdefault(
+                trace_id,
+                {
+                    "trace_id": trace_id,
+                    "day": started_day,
+                    "first_started_at": started_at,
+                    "model": "",
+                    "session_id": "",
+                    "has_error": False,
+                    "cost_usd": 0.0,
+                    "total_latency_ms": 0.0,
+                },
+            )
+            if started_at < _safe_float(rollup.get("first_started_at")):
+                rollup["first_started_at"] = started_at
+                rollup["day"] = started_day
+            model = str(row["model"] or "").strip()
+            if model and not rollup.get("model"):
+                rollup["model"] = model
+            session_id = str(row["session_id"] or "").strip()
+            if session_id and not rollup.get("session_id"):
+                rollup["session_id"] = session_id
+            rollup["cost_usd"] = _safe_float(rollup.get("cost_usd")) + _safe_float(row["cost_usd"])
+            if duration_ms_raw is not None and duration_ms >= 0:
+                rollup["total_latency_ms"] = _safe_float(rollup.get("total_latency_ms")) + duration_ms
+            status = str(row["status"] or "").strip().lower()
+            if status == "error" or bool(row["error"]):
+                rollup["has_error"] = True
+
+        session_error_ids: set[str] = set()
+        db = _open_session_db_for_profile(profile)
+        try:
+            try:
+                session_rows = db._conn.execute(
+                    """
+                    SELECT id, end_reason
+                    FROM sessions
+                    WHERE started_at >= ?
+                    """,
+                    (cutoff,),
+                ).fetchall()
+            except Exception:
+                session_rows = []
+            for row in session_rows:
+                sid = str(row["id"] or "").strip()
+                if sid and _is_session_error_reason(row["end_reason"]):
+                    session_error_ids.add(sid)
+        finally:
+            db.close()
+
+        traces_total = len(trace_rollups)
+        ok_count = 0
+        error_count = 0
+        by_model: Dict[str, Dict[str, Any]] = {}
+        for trace_id, rollup in trace_rollups.items():
+            trace_day = str(rollup.get("day") or "")
+            if trace_day in traces_by_day:
+                traces_by_day[trace_day].add(trace_id)
+            has_error = bool(rollup.get("has_error"))
+            session_id = str(rollup.get("session_id") or "")
+            if session_id and session_id in session_error_ids:
+                has_error = True
+            if has_error:
+                error_count += 1
+            else:
+                ok_count += 1
+            model_name = str(rollup.get("model") or "").strip()
+            if not model_name:
+                continue
+            model_entry = by_model.setdefault(
+                model_name,
+                {
+                    "model": model_name,
+                    "runs": 0,
+                    "total_cost_usd": 0.0,
+                    "ok": 0,
+                    "error": 0,
+                    "latency_total_ms": 0.0,
+                },
+            )
+            model_entry["runs"] += 1
+            model_entry["total_cost_usd"] = (
+                _safe_float(model_entry["total_cost_usd"]) + _safe_float(rollup.get("cost_usd"))
+            )
+            model_entry["latency_total_ms"] = (
+                _safe_float(model_entry["latency_total_ms"]) + _safe_float(rollup.get("total_latency_ms"))
+            )
+            if has_error:
+                model_entry["error"] += 1
+            else:
+                model_entry["ok"] += 1
+
+        rate = (ok_count / traces_total) if traces_total > 0 else 0.0
+        span_durations.sort()
+        avg_latency_ms = (sum(span_durations) / len(span_durations)) if span_durations else 0.0
+        p50_ms = _percentile_from_sorted(span_durations, 0.50)
+        p95_ms = _percentile_from_sorted(span_durations, 0.95)
+
+        traces_per_day = (
+            [
+                {"day": day, "count": len(traces_by_day.get(day, set()))}
+                for day in day_keys
+            ]
+            if traces_total > 0
+            else []
+        )
+        token_usage = (
+            [
+                {
+                    "day": day,
+                    "input_tokens": _safe_int(token_by_day.get(day, {}).get("input_tokens")),
+                    "output_tokens": _safe_int(token_by_day.get(day, {}).get("output_tokens")),
+                }
+                for day in day_keys
+            ]
+            if spans_total > 0
+            else []
+        )
+        model_efficiency = []
+        for item in by_model.values():
+            runs = _safe_int(item.get("runs"))
+            if runs <= 0:
+                continue
+            model_efficiency.append(
+                {
+                    "model": item.get("model"),
+                    "runs": runs,
+                    "total_cost_usd": round(_safe_float(item.get("total_cost_usd")), 6),
+                    "avg_cost_per_run": round(_safe_float(item.get("total_cost_usd")) / runs, 6),
+                    "success_rate": round(_safe_int(item.get("ok")) / runs, 6),
+                    "avg_latency_ms": round(_safe_float(item.get("latency_total_ms")) / runs, 3),
+                }
+            )
+        model_efficiency.sort(key=lambda row: row.get("total_cost_usd", 0.0), reverse=True)
+
+        return {
+            "throughput": {
+                "traces_per_day": traces_per_day,
+                "spans_total": spans_total,
+                "traces_total": traces_total,
+            },
+            "success_rate": {
+                "ok": ok_count,
+                "error": error_count,
+                "rate": round(rate, 6),
+            },
+            "latency": {
+                "avg_ms": round(avg_latency_ms, 3),
+                "p50_ms": round(p50_ms, 3),
+                "p95_ms": round(p95_ms, 3),
+            },
+            "token_usage": token_usage,
+            "model_efficiency": model_efficiency,
+        }
+
+
+@app.get("/api/observability/alerts")
+async def get_observability_alerts(profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+        import sqlite3
+
+        now_ts = time.time()
+        today_start = _today_start_epoch_local()
+        daily_cost_threshold = _safe_float(
+            cfg_get("analytics.observability.daily_cost_threshold_usd", 5.0),
+            5.0,
+        )
+        error_rate_threshold = _safe_float(
+            cfg_get("analytics.observability.error_rate_threshold", 0.20),
+            0.20,
+        )
+        latency_threshold_ms = _safe_float(
+            cfg_get("analytics.observability.latency_threshold_ms", 5000.0),
+            5000.0,
+        )
+
+        cost_today_usd = 0.0
+        traces_total = 0
+        trace_errors = 0
+        db_path = traces_store.traces_db_path()
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(SUM(cost_usd), 0.0) AS total_cost
+                    FROM spans
+                    WHERE started_at >= ?
+                    """,
+                    (today_start,),
+                ).fetchone()
+                if row is not None:
+                    cost_today_usd = _safe_float(row["total_cost"])
+                trace_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS traces_total,
+                           SUM(CASE WHEN has_error = 1 THEN 1 ELSE 0 END) AS trace_errors
+                    FROM (
+                        SELECT trace_id,
+                               MAX(CASE WHEN status = 'error' OR COALESCE(error, '') != '' THEN 1 ELSE 0 END) AS has_error
+                        FROM spans
+                        WHERE started_at >= ?
+                        GROUP BY trace_id
+                    )
+                    """,
+                    (today_start,),
+                ).fetchone()
+                if trace_row is not None:
+                    traces_total = _safe_int(trace_row["traces_total"])
+                    trace_errors = _safe_int(trace_row["trace_errors"])
+            finally:
+                conn.close()
+
+        alerts: List[Dict[str, Any]] = []
+
+        def _append_alert(
+            *,
+            severity: str,
+            kind: str,
+            title: str,
+            detail: str,
+            value: float,
+            threshold: float,
+            ts: float,
+        ) -> None:
+            alerts.append(
+                {
+                    "id": f"{kind}-{int(ts)}-{len(alerts) + 1}",
+                    "severity": severity,
+                    "kind": kind,
+                    "title": title,
+                    "detail": detail,
+                    "value": value,
+                    "threshold": threshold,
+                    "ts": ts,
+                }
+            )
+
+        if cost_today_usd > daily_cost_threshold:
+            severity = "critical" if cost_today_usd >= (daily_cost_threshold * 2.0) else "warning"
+            _append_alert(
+                severity=severity,
+                kind="cost",
+                title="Daily spend threshold exceeded",
+                detail=(
+                    f"Today's span cost is ${cost_today_usd:.3f}, above "
+                    f"configured threshold ${daily_cost_threshold:.3f}."
+                ),
+                value=round(cost_today_usd, 6),
+                threshold=round(daily_cost_threshold, 6),
+                ts=now_ts,
+            )
+
+        if traces_total > 0:
+            error_rate = trace_errors / float(traces_total)
+            if error_rate > error_rate_threshold:
+                severity = "critical" if error_rate >= (error_rate_threshold * 2.0) else "warning"
+                _append_alert(
+                    severity=severity,
+                    kind="errors",
+                    title="Trace error rate elevated",
+                    detail=(
+                        f"{trace_errors}/{traces_total} traces errored today "
+                        f"({error_rate:.1%}), threshold {error_rate_threshold:.1%}."
+                    ),
+                    value=round(error_rate, 6),
+                    threshold=round(error_rate_threshold, 6),
+                    ts=now_ts,
+                )
+
+        tracer = _tracer_health_payload()
+        dropped_spans = _safe_int(tracer.get("dropped_spans"))
+        tracer_healthy = bool(tracer.get("healthy"))
+        if dropped_spans > 0:
+            _append_alert(
+                severity="warning",
+                kind="tracer",
+                title="Tracer dropped spans",
+                detail=f"Recorder dropped {dropped_spans} spans due to queue/backpressure.",
+                value=float(dropped_spans),
+                threshold=0.0,
+                ts=now_ts,
+            )
+        if not tracer_healthy:
+            _append_alert(
+                severity="critical",
+                kind="tracer",
+                title="Tracer unhealthy",
+                detail="Recorder worker/watchdog is not healthy.",
+                value=0.0,
+                threshold=1.0,
+                ts=now_ts,
+            )
+
+        top_bottleneck = traces_store.fleet_bottlenecks(limit=1, window_minutes=60)
+        if top_bottleneck:
+            max_latency_ms = _safe_float(top_bottleneck[0].get("avg_duration_ms"))
+            if max_latency_ms > latency_threshold_ms:
+                severity = "critical" if max_latency_ms >= (latency_threshold_ms * 2.0) else "warning"
+                _append_alert(
+                    severity=severity,
+                    kind="latency",
+                    title="Latency bottleneck detected",
+                    detail=(
+                        f"Top 60m bottleneck averages {max_latency_ms:.1f} ms, "
+                        f"threshold {latency_threshold_ms:.1f} ms."
+                    ),
+                    value=round(max_latency_ms, 3),
+                    threshold=round(latency_threshold_ms, 3),
+                    ts=now_ts,
+                )
+
+        alerts.sort(key=lambda row: _safe_float(row.get("ts")), reverse=True)
+        return {"alerts": alerts}
+
+
+def _task_event_severity(kind: Any) -> str:
+    normalized = str(kind or "").strip().lower()
+    if any(token in normalized for token in ("error", "failed", "fail", "crash")):
+        return "critical"
+    if any(token in normalized for token in ("blocked", "retry", "timeout")):
+        return "warning"
+    return "info"
+
+
+@app.get("/api/observability/events")
+async def get_observability_events(limit: int = 50, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import kanban_db, traces_store
+        import sqlite3
+
+        max_events = _coerce_limit(limit, default=50, max_limit=200)
+        events: List[Dict[str, Any]] = []
+        span_scan_limit = max_events * 3
+
+        db_path = traces_store.traces_db_path()
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT trace_id, session_id, kind, status, error, started_at
+                    FROM spans
+                    WHERE status = 'error' OR kind = 'delegation'
+                    ORDER BY started_at DESC
+                    LIMIT ?
+                    """,
+                    (span_scan_limit,),
+                ).fetchall()
+            finally:
+                conn.close()
+        else:
+            rows = []
+
+        for row in rows:
+            is_error = str(row["status"] or "").strip().lower() == "error" or bool(row["error"])
+            trace_id = str(row["trace_id"] or "").strip()
+            session_id = str(row["session_id"] or "").strip()
+            kind = "error" if is_error else str(row["kind"] or "delegation")
+            label = (
+                f"Trace {trace_id}: {row['error'] or 'error span'}"
+                if is_error
+                else f"Delegation span in trace {trace_id}"
+            )
+            event_payload: Dict[str, Any] = {
+                "ts": _safe_float(row["started_at"]),
+                "kind": kind,
+                "label": label,
+                "severity": "critical" if is_error else "info",
+            }
+            if session_id:
+                event_payload["session_id"] = session_id
+            if trace_id:
+                event_payload["trace_id"] = trace_id
+            events.append(event_payload)
+
+        # Pull recent task events across all boards and interleave with span events.
+        try:
+            boards = kanban_db.list_boards(include_archived=True)
+        except Exception:
+            boards = []
+        board_slugs = [
+            str(board.get("slug") or "").strip()
+            for board in boards
+            if str(board.get("slug") or "").strip()
+        ]
+        per_board_limit = max(1, min(25, max_events))
+        for slug in board_slugs:
+            conn = None
+            try:
+                conn = kanban_db.connect(board=slug)
+                rows = conn.execute(
+                    """
+                    SELECT e.created_at, e.kind, e.task_id, t.title, t.session_id
+                    FROM task_events e
+                    LEFT JOIN tasks t ON t.id = e.task_id
+                    ORDER BY e.created_at DESC, e.id DESC
+                    LIMIT ?
+                    """,
+                    (per_board_limit,),
+                ).fetchall()
+                for row in rows:
+                    task_label = str(row["title"] or row["task_id"] or "task").strip()
+                    events.append(
+                        {
+                            "ts": _safe_float(row["created_at"]),
+                            "kind": "task_event",
+                            "label": f"{slug}: {task_label} ({row['kind']})",
+                            "session_id": (str(row["session_id"]).strip() if row["session_id"] else None),
+                            "severity": _task_event_severity(row["kind"]),
+                        }
+                    )
+            except Exception:
+                continue
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+        events.sort(key=lambda row: _safe_float(row.get("ts")), reverse=True)
+        return {"events": events[:max_events]}
 
 
 # ---------------------------------------------------------------------------

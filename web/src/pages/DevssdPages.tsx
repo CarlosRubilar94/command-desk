@@ -2,18 +2,25 @@ import { useCallback, useEffect, useLayoutEffect, useState, type ReactNode } fro
 import { Link } from "react-router-dom";
 import {
   Activity,
+  AlertTriangle,
   Bot,
+  DollarSign,
   ExternalLink,
   KeyRound,
   Play,
+  Radio,
   RefreshCw,
   ShieldCheck,
   Terminal,
+  Zap,
 } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { api } from "@/lib/api";
-import type { ActionResponse, DevssdStatusResponse } from "@/lib/api";
+import type { ActionResponse, CommandDeckOverviewResponse, DevssdStatusResponse } from "@/lib/api";
+import { SkeletonCard } from "@/components/ds/Skeleton";
+import { ErrorState } from "@/components/ds/ErrorState";
+import { EmptyState } from "@/components/ds/EmptyState";
 import { cn } from "@/lib/utils";
 import {
   computeOverallHealth,
@@ -532,47 +539,170 @@ export function GatewayStatusPage() {
   );
 }
 
+function useCommandDeckOverview() {
+  const [overview, setOverview] = useState<CommandDeckOverviewResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setOverview(await api.getCommandDeckOverview());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { overview, loading, error, refresh };
+}
+
+function fmtUsd(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n === 0) return "$0.00";
+  return `$${n.toFixed(2)}`;
+}
+
 export function CommandDeckOpsPage() {
-  const { status, loading, error, refresh } = useDevssdStatus();
-  const deck = status?.command_deck;
+  const { overview, loading, error, refresh } = useCommandDeckOverview();
 
   return (
     <DevssdShell
-      title="Command Deck Ops"
-      description="Command Deck continua separado em :8765, mas fica visível dentro do Command Desk."
+      title="Command Deck"
+      description="Operational overview — fleet, spend, missions, and tracer health."
       onRefresh={refresh}
       loading={loading}
     >
-      <LoadingOrError loading={loading} error={error} />
-      {deck ? (
+      {loading ? (
         <div className="deck-dashboard deck-animate gap-5">
-          <FleetOpsPanel compact />
-
-          <DeckCard title="Command Deck" colClass="col-12">
-            <MetricRow
-              label="Status"
-              value={deck.available ? `Online (${deck.latency_ms} ms)` : "Offline"}
-              tone={deck.available ? "ok" : "warn"}
-            />
-            <MetricRow label="URL" value={deck.url} tone="ok" />
-            <DeckToolbar>
-              <DeckBtnLink href={deck.app_url} target="_blank" rel="noopener noreferrer" primary>
-                <ExternalLink className="h-3.5 w-3.5" />
-                Open Deck :8765
-              </DeckBtnLink>
-            </DeckToolbar>
-            {deck.error ? <div className="mt-3 text-xs text-[var(--dsd-sem-critical)]">{deck.error}</div> : null}
-          </DeckCard>
-          {deck.available ? (
-            <iframe
-              title="Command Deck"
-              src={deck.app_url}
-              className="col-12 min-h-[560px] w-full rounded-[var(--dsd-radius-lg)] border border-[var(--dsd-border-glow)] bg-[var(--dsd-surface-1-solid)] shadow-[var(--dsd-shadow-glow)]"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-            />
-          ) : null}
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
         </div>
-      ) : null}
+      ) : error ? (
+        <ErrorState
+          title="Failed to load overview"
+          message={error}
+          onRetry={refresh}
+          compact
+        />
+      ) : !overview ? (
+        <EmptyState
+          icon={<Radio className="h-6 w-6" />}
+          title="No data yet"
+          description="The overview endpoint returned no data."
+          compact
+        />
+      ) : (
+        <div className="deck-dashboard deck-animate gap-5">
+          {/* Fleet + Deck status tiles */}
+          <DeckCard title="Deck Status" colClass="col-12">
+            <div className="flex flex-wrap gap-3">
+              <MetricTile
+                label="Deck"
+                value={overview.deck.available ? "Online" : "Offline"}
+                context={overview.deck.status}
+                state={overview.deck.available ? "ok" : "critical"}
+              />
+              <MetricTile
+                label="Queue"
+                value={overview.fleet.queue}
+                context="pending runs"
+                state={overview.fleet.queue > 10 ? "warning" : "ok"}
+              />
+              <MetricTile
+                label="Throughput"
+                value={overview.fleet.throughput}
+                context="runs/min"
+              />
+              <MetricTile
+                label="Spend Today"
+                value={fmtUsd(overview.fleet.cost_today_usd)}
+                context="USD"
+                state={overview.fleet.cost_today_usd > 10 ? "warning" : "ok"}
+              />
+              <MetricTile
+                label="Missions"
+                value={overview.missions.count}
+                context="total"
+              />
+              <MetricTile
+                label="Tracer"
+                value={overview.tracer.healthy ? "Healthy" : "Degraded"}
+                context={`${overview.tracer.dropped_spans} dropped spans`}
+                state={overview.tracer.healthy ? "ok" : "degraded"}
+              />
+            </div>
+          </DeckCard>
+
+          {/* Bottlenecks + Recurring errors */}
+          {(overview.fleet.bottlenecks.length > 0 ||
+            overview.fleet.recurring_errors.length > 0) && (
+            <DeckCard title="Alerts" colClass="col-12">
+              {overview.fleet.bottlenecks.length > 0 && (
+                <div className="mb-3">
+                  <div className="flex items-center gap-1.5 mb-1.5 text-xs font-medium text-[var(--dsd-text-secondary)] uppercase tracking-wide">
+                    <Zap className="h-3 w-3" />
+                    Bottlenecks
+                  </div>
+                  <ul className="flex flex-col gap-1">
+                    {overview.fleet.bottlenecks.map((b, i) => (
+                      <li key={i} className="text-xs font-mono text-[var(--dsd-status-warning)]">
+                        {b}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {overview.fleet.recurring_errors.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1.5 text-xs font-medium text-[var(--dsd-text-secondary)] uppercase tracking-wide">
+                    <AlertTriangle className="h-3 w-3" />
+                    Recurring Errors
+                  </div>
+                  <ul className="flex flex-col gap-1">
+                    {overview.fleet.recurring_errors.map((e, i) => (
+                      <li key={i} className="text-xs font-mono text-[var(--dsd-status-error)]">
+                        {e}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </DeckCard>
+          )}
+
+          {/* Deep-links */}
+          <DeckCard title="Navigate" colClass="col-12">
+            <DeckToolbar>
+              <Link to="/ops" className="deck-btn-sm">
+                <Activity className="h-3.5 w-3.5" />
+                Ops
+              </Link>
+              <Link to="/traces" className="deck-btn-sm">
+                <Radio className="h-3.5 w-3.5" />
+                Traces
+              </Link>
+              <Link to="/costs" className="deck-btn-sm">
+                <DollarSign className="h-3.5 w-3.5" />
+                Spend
+              </Link>
+              <Link to="/missions" className="deck-btn-sm">
+                <Zap className="h-3.5 w-3.5" />
+                Missions
+              </Link>
+            </DeckToolbar>
+          </DeckCard>
+
+          <FleetOpsPanel compact />
+        </div>
+      )}
     </DevssdShell>
   );
 }
