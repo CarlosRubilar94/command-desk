@@ -11466,6 +11466,422 @@ async def get_costs_savings(days: int = 30, profile: Optional[str] = None):
         db.close()
 
 
+def _parse_optional_epoch_param(value: Optional[str], *, field_name: str) -> Optional[float]:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    try:
+        normalized = raw.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return float(parsed.timestamp())
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {field_name}; use unix epoch seconds or ISO-8601.",
+        ) from exc
+
+
+def _today_start_epoch_local() -> float:
+    now = datetime.now().astimezone()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return float(today.timestamp())
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value or 0)
+    except Exception:
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value or 0.0)
+    except Exception:
+        return default
+
+
+def _trace_root_fields(spans: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not spans:
+        return {"root_kind": None, "agent": None, "model": None}
+    root = spans[0]
+    return {
+        "root_kind": root.get("kind"),
+        "agent": root.get("agent"),
+        "model": root.get("model"),
+    }
+
+
+def _mission_session_ids(board_slug: str) -> List[str]:
+    if not board_slug:
+        return []
+    try:
+        from hermes_cli.kanban_db import kanban_db_path
+        import sqlite3
+
+        board_db = kanban_db_path(board=board_slug)
+        if not board_db.exists():
+            return []
+        conn = sqlite3.connect(str(board_db))
+        try:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT session_id
+                FROM tasks
+                WHERE session_id IS NOT NULL AND TRIM(session_id) != ''
+                """
+            ).fetchall()
+            return [str(row[0]) for row in rows if row and row[0]]
+        finally:
+            conn.close()
+    except Exception:
+        return []
+
+
+def _tracer_health_payload() -> Dict[str, Any]:
+    payload = {
+        "dropped_spans": 0,
+        "queue_size": 0,
+        "healthy": False,
+    }
+    try:
+        from plugins.observability import sqlite_traces
+
+        payload["dropped_spans"] = _safe_int(sqlite_traces.get_dropped_spans())
+        runtime_getter = getattr(sqlite_traces, "_get_runtime", None)
+        if callable(runtime_getter):
+            runtime = runtime_getter()
+            recorder = getattr(runtime, "recorder", None)
+            queue_obj = getattr(recorder, "_queue", None)
+            worker = getattr(recorder, "_worker", None)
+            watchdog = getattr(recorder, "_watchdog", None)
+            if queue_obj is not None and hasattr(queue_obj, "qsize"):
+                payload["queue_size"] = _safe_int(queue_obj.qsize())
+            payload["healthy"] = bool(
+                worker is not None
+                and worker.is_alive()
+                and watchdog is not None
+                and watchdog.is_alive()
+            )
+    except Exception:
+        pass
+    return payload
+
+
+@app.get("/api/traces")
+async def get_traces(
+    limit: int = 50,
+    offset: int = 0,
+    model: Optional[str] = None,
+    agent: Optional[str] = None,
+    status: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    profile: Optional[str] = None,
+):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+
+        filters: Dict[str, Any] = {}
+        if model:
+            filters["model"] = model
+        if agent:
+            filters["agent"] = agent
+        if status:
+            filters["status"] = status
+        start_time = _parse_optional_epoch_param(since, field_name="since")
+        end_time = _parse_optional_epoch_param(until, field_name="until")
+        if start_time is not None:
+            filters["start_time"] = start_time
+        if end_time is not None:
+            filters["end_time"] = end_time
+
+        result = traces_store.query_traces(
+            filters=filters,
+            paging={"limit": limit, "offset": offset},
+        )
+        traces_payload: List[Dict[str, Any]] = []
+        for row in result.get("items", []):
+            spans = traces_store.get_trace(str(row.get("trace_id") or ""))
+            root_fields = _trace_root_fields(spans)
+            traces_payload.append(
+                {
+                    "trace_id": row.get("trace_id"),
+                    "root_kind": root_fields["root_kind"],
+                    "agent": root_fields["agent"],
+                    "model": root_fields["model"],
+                    "started_at": row.get("started_at"),
+                    "ended_at": row.get("ended_at"),
+                    "duration_ms": _safe_int(row.get("duration_ms")),
+                    "span_count": _safe_int(row.get("span_count")),
+                    "total_tokens": _safe_int(row.get("total_tokens")),
+                    "cost_usd": _safe_float(row.get("cost_usd")),
+                    "status": row.get("status") or "ok",
+                }
+            )
+
+        paging = result.get("paging", {})
+        return {
+            "traces": traces_payload,
+            "total": _safe_int(paging.get("total")),
+            "limit": _safe_int(paging.get("limit"), 50),
+            "offset": _safe_int(paging.get("offset"), 0),
+        }
+
+
+@app.get("/api/traces/{trace_id}")
+async def get_trace_detail(trace_id: str, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+
+        spans = traces_store.get_trace(trace_id)
+        if not spans:
+            raise HTTPException(status_code=404, detail="Trace not found")
+
+        formatted_spans: List[Dict[str, Any]] = []
+        total_duration = 0
+        total_tokens = 0
+        total_cost = 0.0
+        error_count = 0
+        for span in spans:
+            duration_ms = _safe_int(span.get("duration_ms"))
+            span_tokens = _safe_int(span.get("total_tokens"))
+            span_cost = _safe_float(span.get("cost_usd"))
+            is_error = (span.get("status") == "error") or bool(span.get("error"))
+            if is_error:
+                error_count += 1
+            total_duration += duration_ms
+            total_tokens += span_tokens
+            total_cost += span_cost
+            formatted_spans.append(
+                {
+                    "span_id": span.get("span_id"),
+                    "parent_id": span.get("parent_id"),
+                    "session_id": span.get("session_id"),
+                    "kind": span.get("kind"),
+                    "name": span.get("name"),
+                    "agent": span.get("agent"),
+                    "model": span.get("model"),
+                    "provider": span.get("provider"),
+                    "status": span.get("status"),
+                    "started_at": span.get("started_at"),
+                    "ended_at": span.get("ended_at"),
+                    "duration_ms": duration_ms,
+                    "input_tokens": _safe_int(span.get("input_tokens")),
+                    "output_tokens": _safe_int(span.get("output_tokens")),
+                    "total_tokens": span_tokens,
+                    "cost_usd": span_cost,
+                    "error": span.get("error"),
+                }
+            )
+
+        return {
+            "trace_id": trace_id,
+            "spans": formatted_spans,
+            "totals": {
+                "duration_ms": total_duration,
+                "total_tokens": total_tokens,
+                "cost_usd": total_cost,
+                "span_count": len(formatted_spans),
+                "error_count": error_count,
+            },
+        }
+
+
+@app.get("/api/ops/fleet-metrics")
+async def get_fleet_metrics(profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+
+        queue_payload = {"ready": 0, "in_progress": 0, "blocked": 0}
+        try:
+            from hermes_cli import kanban_db
+
+            conn = kanban_db.connect()
+            try:
+                stats = kanban_db.board_stats(conn)
+            finally:
+                conn.close()
+            by_status = stats.get("by_status", {}) if isinstance(stats, dict) else {}
+            queue_payload = {
+                "ready": _safe_int(by_status.get("ready")),
+                "in_progress": _safe_int(by_status.get("running")) + _safe_int(by_status.get("review")),
+                "blocked": _safe_int(by_status.get("blocked")),
+            }
+        except Exception:
+            pass
+
+        today_start = _today_start_epoch_local()
+        throughput_raw = traces_store.fleet_throughput(window_minutes=60)
+        traces_today_total = traces_store.query_traces(
+            filters={"start_time": today_start},
+            paging={"limit": 1, "offset": 0},
+        ).get("paging", {}).get("total", 0)
+
+        bottlenecks = [
+            {
+                "name": item.get("name"),
+                "kind": item.get("kind"),
+                "avg_duration_ms": _safe_float(item.get("avg_duration_ms")),
+                "count": _safe_int(item.get("samples")),
+            }
+            for item in traces_store.fleet_bottlenecks(limit=10, window_minutes=60)
+        ]
+
+        recurring_errors: List[Dict[str, Any]] = []
+        try:
+            import sqlite3
+
+            db_path = traces_store.traces_db_path()
+            if db_path.exists():
+                conn = sqlite3.connect(str(db_path))
+                conn.row_factory = sqlite3.Row
+                try:
+                    rows = conn.execute(
+                        """
+                        SELECT COALESCE(error, 'unknown') AS error,
+                               COUNT(*) AS count,
+                               MAX(started_at) AS last_seen
+                        FROM spans
+                        WHERE status = 'error' AND started_at >= ?
+                        GROUP BY error
+                        ORDER BY count DESC
+                        LIMIT 10
+                        """,
+                        (time.time() - (60 * 60),),
+                    ).fetchall()
+                finally:
+                    conn.close()
+                recurring_errors = [
+                    {
+                        "error": row["error"],
+                        "count": _safe_int(row["count"]),
+                        "last_seen": row["last_seen"],
+                    }
+                    for row in rows
+                ]
+        except Exception:
+            recurring_errors = []
+
+        if not recurring_errors:
+            recurring_errors = [
+                {
+                    "error": item.get("error_class") or "unknown",
+                    "count": _safe_int(item.get("hits")),
+                    "last_seen": None,
+                }
+                for item in traces_store.fleet_recurring_errors(limit=10, window_minutes=60)
+            ]
+
+        cost_today_usd = 0.0
+        try:
+            import sqlite3
+
+            db_path = traces_store.traces_db_path()
+            if db_path.exists():
+                conn = sqlite3.connect(str(db_path))
+                conn.row_factory = sqlite3.Row
+                try:
+                    row = conn.execute(
+                        """
+                        SELECT COALESCE(SUM(cost_usd), 0.0) AS total
+                        FROM spans
+                        WHERE started_at >= ?
+                        """,
+                        (today_start,),
+                    ).fetchone()
+                    if row is not None:
+                        cost_today_usd = _safe_float(row["total"])
+                finally:
+                    conn.close()
+        except Exception:
+            pass
+
+        return {
+            "queue": queue_payload,
+            "throughput": {
+                "spans_per_min": _safe_float(throughput_raw.get("spans_per_minute")),
+                "traces_today": _safe_int(traces_today_total),
+            },
+            "bottlenecks": bottlenecks,
+            "recurring_errors": recurring_errors,
+            "cost_today_usd": cost_today_usd,
+            "tracer": _tracer_health_payload(),
+        }
+
+
+@app.get("/api/costs/by-mission")
+async def get_costs_by_mission(days: int = 30, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+
+        db = _open_session_db_for_profile(profile)
+        try:
+            cutoff = time.time() - (max(1, int(days)) * 86400)
+            missions = traces_store.list_missions(include_rollup=False, limit=500, offset=0)
+            payload: List[Dict[str, Any]] = []
+            for mission in missions:
+                # Rollup is best-effort here: cost endpoint shouldn't fail if a
+                # board has an unexpected/partial schema.
+                try:
+                    _ = traces_store.mission_rollup(mission)
+                except Exception:
+                    pass
+                session_ids = _mission_session_ids(str(mission.get("board_slug") or ""))
+                rows: List[Dict[str, Any]] = []
+                if session_ids:
+                    placeholders = ",".join("?" for _ in session_ids)
+                    cur = db._conn.execute(
+                        f"""
+                        SELECT id AS session_id,
+                               COALESCE(estimated_cost_usd, 0) AS cost_usd,
+                               COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) AS total_tokens
+                        FROM sessions
+                        WHERE id IN ({placeholders}) AND started_at > ?
+                        ORDER BY COALESCE(estimated_cost_usd, 0) DESC
+                        """,
+                        [*session_ids, cutoff],
+                    )
+                    rows = [dict(r) for r in cur.fetchall()]
+
+                total_cost = sum(_safe_float(r.get("cost_usd")) for r in rows)
+                total_tokens = sum(_safe_int(r.get("total_tokens")) for r in rows)
+                top_runs = [
+                    {
+                        "session_id": r.get("session_id"),
+                        "cost_usd": _safe_float(r.get("cost_usd")),
+                    }
+                    for r in rows[:3]
+                ]
+                payload.append(
+                    {
+                        "mission_id": mission.get("id"),
+                        "title": mission.get("title"),
+                        "status": mission.get("status"),
+                        "cost_usd": total_cost,
+                        "total_tokens": total_tokens,
+                        "run_count": len(rows),
+                        "top_runs": top_runs,
+                    }
+                )
+
+            payload.sort(key=lambda item: item.get("cost_usd", 0.0), reverse=True)
+            return {
+                "missions": payload,
+                "is_estimate": True,
+            }
+        finally:
+            db.close()
+
+
 # ---------------------------------------------------------------------------
 # /api/pty — PTY-over-WebSocket bridge for the dashboard "Chat" tab.
 #

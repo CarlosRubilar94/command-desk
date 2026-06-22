@@ -31,6 +31,7 @@ import {
   Eye,
   FolderOpen,
   FileText,
+  GitBranch,
   Globe,
   Heart,
   KeyRound,
@@ -102,6 +103,7 @@ import {
 } from "@/pages/DevssdPages";
 import OpsFleetPage from "@/pages/OpsFleetPage";
 import CostsPage from "@/pages/CostsPage";
+import TracesPage from "@/pages/TracesPage";
 import RoutingPage from "@/pages/RoutingPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -147,6 +149,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/agent": AgentHomePage,
   "/ops": OpsFleetPage,
   "/costs": CostsPage,
+  "/traces": TracesPage,
   "/routing": RoutingPage,
   "/doctor": DevssdDoctorPage,
   "/bitwarden": BitwardenStatusPage,
@@ -184,6 +187,7 @@ const COMMAND_DESK_NAV: NavItem[] = [
   { path: "/agent", label: "Home", icon: Sparkles },
   { path: "/ops", label: "Fleet", icon: Activity },
   { path: "/costs", label: "Spend", icon: DollarSign },
+  { path: "/traces", label: "Runs", icon: GitBranch },
   { path: "/routing", label: "Routing", icon: Zap },
   { path: "/doctor", label: "Doctor", icon: ShieldCheck },
   { path: "/gateway", label: "Gateway", icon: Radio },
@@ -240,6 +244,7 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   Eye,
   FileText,
   FolderOpen,
+  GitBranch,
   KeyRound,
   MessageSquare,
   Package,
@@ -381,6 +386,8 @@ const SIDEBAR_COLLAPSED_KEY = "hermes-sidebar-collapsed";
 const DECK_LAYOUT_ROUTES = new Set([
   "/agent",
   "/ops",
+  "/costs",
+  "/traces",
   "/routing",
   "/doctor",
   "/bitwarden",

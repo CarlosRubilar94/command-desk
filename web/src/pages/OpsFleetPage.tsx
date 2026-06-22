@@ -5,7 +5,7 @@ import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { DeckPageShell } from "@/components/DeckPageShell";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { api } from "@/lib/api";
-import type { DelegationStatusResponse, FleetStatusResponse } from "@/lib/api";
+import type { DelegationStatusResponse, FleetStatusResponse, FleetMetricsResponse } from "@/lib/api";
 import {
   DeckCard,
   DeckToolbar,
@@ -13,6 +13,9 @@ import {
   MetricRow,
   MetricTile,
 } from "@/components/DeckOps";
+import { StatusPill } from "@/components/ds/StatusPill";
+import { DataTable } from "@/components/ds/DataTable";
+import type { ColDef } from "@/components/ds/DataTable";
 import { cn } from "@/lib/utils";
 
 function countStatus(stats: FleetStatusResponse["kanban"]["stats"], key: string): number {
@@ -27,9 +30,61 @@ function delegationPillClass(status?: string): string {
   return "";
 }
 
+function fmtUsd(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n === 0) return "$0.00";
+  if (n < 0.0001) return "<$0.0001";
+  return `$${n.toFixed(4)}`;
+}
+
+function fmtMs(ms: number): string {
+  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(2)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
+const BOTTLENECK_COLS: ColDef<FleetMetricsResponse["bottlenecks"][number]>[] = [
+  {
+    key: "name",
+    header: "Span",
+    cell: (r) => (
+      <span className="text-xs font-mono text-[var(--dsd-text-base)]">{r.name}</span>
+    ),
+  },
+  {
+    key: "kind",
+    header: "Kind",
+    width: 100,
+    cell: (r) => (
+      <StatusPill variant="trace" label={r.kind} size="sm" />
+    ),
+  },
+  {
+    key: "avg_duration_ms",
+    header: "Avg duration",
+    width: 110,
+    align: "right",
+    cell: (r) => (
+      <span className="text-xs font-mono text-[var(--dsd-text-dim)]">
+        {fmtMs(r.avg_duration_ms)}
+      </span>
+    ),
+  },
+  {
+    key: "count",
+    header: "Count",
+    width: 70,
+    align: "right",
+    cell: (r) => (
+      <span className="text-xs font-mono text-[var(--dsd-text-faint)]">{r.count}</span>
+    ),
+  },
+];
+
 export default function OpsFleetPage() {
   const [fleet, setFleet] = useState<FleetStatusResponse | null>(null);
   const [delegation, setDelegation] = useState<DelegationStatusResponse | null>(null);
+  const [metrics, setMetrics] = useState<FleetMetricsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,12 +92,14 @@ export default function OpsFleetPage() {
     setLoading(true);
     setError(null);
     try {
-      const [fleetData, delegationData] = await Promise.all([
+      const [fleetData, delegationData, metricsData] = await Promise.all([
         api.getFleetStatus(),
         api.getDelegationStatus(),
+        api.getFleetMetrics().catch(() => null),
       ]);
       setFleet(fleetData);
       setDelegation(delegationData);
+      setMetrics(metricsData);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -237,6 +294,154 @@ export default function OpsFleetPage() {
                 </DeckToolbar>
               </DeckCard>
             </LayoutGrid>
+
+            {/* ── Fleet Metrics / Incident Console ────────────────────────── */}
+            {metrics ? (
+              <>
+                <h2 className="mt-6 mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--dsd-text-faint)]">
+                  Fleet Metrics / Incident
+                </h2>
+
+                {/* Tracer health warning */}
+                {(!metrics.tracer.healthy || metrics.tracer.dropped_spans > 0) && (
+                  <div
+                    role="alert"
+                    className="mb-3 flex items-center gap-2 px-3 py-2 rounded-[var(--dsd-radius-sm)] bg-[var(--dsd-status-warning-bg)] border border-[var(--dsd-status-warning)]/30 text-[var(--dsd-status-warning)] text-xs"
+                  >
+                    <span aria-hidden className="text-base">⚠</span>
+                    <span>
+                      Tracer{" "}
+                      {!metrics.tracer.healthy ? "unhealthy" : "running"}
+                      {metrics.tracer.dropped_spans > 0
+                        ? ` — ${metrics.tracer.dropped_spans} dropped spans`
+                        : ""}
+                      {metrics.tracer.queue_size > 0
+                        ? `, queue: ${metrics.tracer.queue_size}`
+                        : ""}
+                    </span>
+                    <Link to="/traces" className="ml-auto underline hover:no-underline text-[var(--dsd-status-warning)]">
+                      View traces →
+                    </Link>
+                  </div>
+                )}
+
+                <div className="metrics-strip mb-4">
+                  <MetricTile
+                    label="Queue ready"
+                    value={metrics.queue.ready}
+                    state={metrics.queue.ready > 0 ? "warning" : "ok"}
+                  />
+                  <MetricTile
+                    label="In progress"
+                    value={metrics.queue.in_progress}
+                    state={metrics.queue.in_progress > 0 ? "warning" : "ok"}
+                  />
+                  <MetricTile
+                    label="Blocked"
+                    value={metrics.queue.blocked}
+                    state={metrics.queue.blocked > 0 ? "warning" : "ok"}
+                  />
+                  <MetricTile
+                    label="Spans / min"
+                    value={metrics.throughput.spans_per_min}
+                    state="ok"
+                  />
+                  <MetricTile
+                    label="Traces today"
+                    value={metrics.throughput.traces_today}
+                    state="ok"
+                  />
+                  <MetricTile
+                    label="Cost today"
+                    value={fmtUsd(metrics.cost_today_usd)}
+                    state="ok"
+                  />
+                </div>
+
+                <LayoutGrid>
+                  {/* Bottlenecks */}
+                  <DeckCard title="Bottlenecks (slowest spans)" colClass="col-6">
+                    {metrics.bottlenecks.length > 0 ? (
+                      <DataTable
+                        cols={BOTTLENECK_COLS}
+                        rows={metrics.bottlenecks}
+                        rowKey={(r) => r.name}
+                        dense
+                        stickyHeader={false}
+                        onRowClick={(r) => {
+                          window.location.href = `/traces?agent=${encodeURIComponent(r.name)}`;
+                        }}
+                        aria-label="Bottleneck spans"
+                      />
+                    ) : (
+                      <p className="text-sm text-[var(--dsd-text-secondary)]">
+                        No bottleneck data available.
+                      </p>
+                    )}
+                    <DeckToolbar>
+                      <Link to="/traces" className="deck-btn-sm ghost">
+                        All traces →
+                      </Link>
+                    </DeckToolbar>
+                  </DeckCard>
+
+                  {/* Recurring errors */}
+                  <DeckCard title="Recurring errors" colClass="col-6">
+                    {metrics.recurring_errors.length > 0 ? (
+                      <div className="space-y-1">
+                        {metrics.recurring_errors.map((e) => (
+                          <div
+                            key={e.error}
+                            className="deck-list-row flex items-start justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <p
+                                className="text-xs font-mono text-[var(--dsd-status-error)] truncate"
+                                title={e.error}
+                              >
+                                {e.error}
+                              </p>
+                              <p className="text-[10px] text-[var(--dsd-text-faint)] font-mono">
+                                last seen {e.last_seen}
+                              </p>
+                            </div>
+                            <div className="shrink-0 flex flex-col items-end gap-1">
+                              <span className="text-xs font-mono text-[var(--dsd-status-error)]">
+                                ×{e.count}
+                              </span>
+                              <Link
+                                to="/traces?status=error"
+                                className="text-[10px] text-[var(--dsd-text-faint)] hover:text-[var(--dsd-accent-primary)] transition-colors"
+                              >
+                                traces →
+                              </Link>
+                              <Link
+                                to="/sessions"
+                                className="text-[10px] text-[var(--dsd-text-faint)] hover:text-[var(--dsd-accent-primary)] transition-colors"
+                              >
+                                sessions →
+                              </Link>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-[var(--dsd-text-secondary)]">
+                        No recurring errors recorded.
+                      </p>
+                    )}
+                    <DeckToolbar>
+                      <Link to="/traces?status=error" className="deck-btn-sm ghost">
+                        Error traces →
+                      </Link>
+                      <Link to="/sessions" className="deck-btn-sm ghost">
+                        Sessions →
+                      </Link>
+                    </DeckToolbar>
+                  </DeckCard>
+                </LayoutGrid>
+              </>
+            ) : null}
           </>
         ) : null}
       </div>

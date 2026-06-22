@@ -1206,6 +1206,32 @@ export const api = {
     fetchJSON<CostsSavingsResponse>(
       appendProfileParam(`/api/costs/savings?days=${days}`, profile),
     ),
+
+  // ── Traces ──────────────────────────────────────────────────────────────
+  getTraces: (params?: TracesParams) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    if (params?.model) qs.set("model", params.model);
+    if (params?.agent) qs.set("agent", params.agent);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.since) qs.set("since", params.since);
+    if (params?.until) qs.set("until", params.until);
+    const q = qs.toString();
+    return fetchJSON<TracesResponse>(`/api/traces${q ? `?${q}` : ""}`);
+  },
+  getTrace: (traceId: string) =>
+    fetchJSON<TraceDetailResponse>(`/api/traces/${encodeURIComponent(traceId)}`),
+
+  // ── Fleet Metrics ─────────────────────────────────────────────────────
+  getFleetMetrics: () =>
+    fetchJSON<FleetMetricsResponse>("/api/ops/fleet-metrics"),
+
+  // ── Costs by Mission ──────────────────────────────────────────────────
+  getCostsByMission: (days: number, profile = getManagementProfile()) =>
+    fetchJSON<CostsByMissionResponse>(
+      appendProfileParam(`/api/costs/by-mission?days=${days}`, profile),
+    ),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -2448,4 +2474,120 @@ export interface CostsSavingsResponse {
   is_estimate: boolean;
   note: string;
   period_days: number;
+}
+
+// ── Traces types ─────────────────────────────────────────────────────────────
+
+export interface TracesParams {
+  limit?: number;
+  offset?: number;
+  model?: string;
+  agent?: string;
+  status?: string;
+  since?: string;
+  until?: string;
+}
+
+export interface TraceRow {
+  trace_id: string;
+  root_kind: string;
+  agent: string;
+  model: string;
+  started_at: number;
+  ended_at: number | null;
+  duration_ms: number;
+  span_count: number;
+  total_tokens: number;
+  cost_usd: number;
+  status: string;
+}
+
+export interface TracesResponse {
+  traces: TraceRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SpanRow {
+  span_id: string;
+  parent_id: string | null;
+  session_id: string | null;
+  kind: string;
+  name: string;
+  agent: string | null;
+  model: string | null;
+  provider: string | null;
+  status: string;
+  started_at: number;
+  ended_at: number | null;
+  duration_ms: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  cost_usd: number | null;
+  error: string | null;
+}
+
+export interface TraceDetailResponse {
+  trace_id: string;
+  spans: SpanRow[];
+  totals: {
+    duration_ms: number;
+    total_tokens: number;
+    cost_usd: number;
+    span_count: number;
+    error_count: number;
+  };
+}
+
+// ── Fleet Metrics types ───────────────────────────────────────────────────────
+
+export interface FleetMetricsResponse {
+  queue: {
+    ready: number;
+    in_progress: number;
+    blocked: number;
+  };
+  throughput: {
+    spans_per_min: number;
+    traces_today: number;
+  };
+  bottlenecks: Array<{
+    name: string;
+    kind: string;
+    avg_duration_ms: number;
+    count: number;
+  }>;
+  recurring_errors: Array<{
+    error: string;
+    count: number;
+    last_seen: string;
+  }>;
+  cost_today_usd: number;
+  tracer: {
+    dropped_spans: number;
+    queue_size: number;
+    healthy: boolean;
+  };
+}
+
+// ── Costs by Mission types ────────────────────────────────────────────────────
+
+export interface MissionCostRow {
+  mission_id: string;
+  title: string;
+  status: string;
+  cost_usd: number;
+  total_tokens: number;
+  run_count: number;
+  top_runs: Array<{
+    session_id: string;
+    cost_usd: number;
+  }>;
+}
+
+export interface CostsByMissionResponse {
+  missions: MissionCostRow[];
+  is_estimate: boolean;
 }
