@@ -2304,6 +2304,60 @@ def run_doctor(args):
     except Exception:
         pass
 
+    _section("Multi-Agent Operations")
+    try:
+        from agent.smart_model_routing import is_routing_enabled, routing_status_lines
+        if is_routing_enabled():
+            check_ok("Smart model routing: enabled")
+            for line in routing_status_lines()[1:4]:
+                check_info(f"  {line.strip()}")
+        else:
+            check_info("Smart model routing: disabled (enable: command-desk routing --enable)")
+    except Exception as exc:
+        check_info(f"Smart model routing: unavailable ({exc})")
+
+    try:
+        from hermes_cli.kanban import _check_dispatcher_presence
+        dispatch_running, dispatch_msg = _check_dispatcher_presence()
+        if dispatch_running:
+            check_ok(f"Kanban dispatcher: {dispatch_msg or 'active'}")
+        else:
+            check_warn(
+                dispatch_msg
+                or "Kanban dispatcher not running — ready tasks will not spawn workers"
+            )
+    except Exception as exc:
+        check_info(f"Kanban dispatcher: could not probe ({exc})")
+
+    try:
+        from tools.async_delegation import list_async_delegations
+        running_async = sum(
+            1 for d in list_async_delegations() if d.get("status") == "running"
+        )
+        if running_async:
+            check_info(f"Background delegations running: {running_async}")
+        else:
+            check_ok("Background delegations: none running")
+    except Exception:
+        pass
+
+    try:
+        from hermes_cli.config import load_config as _load_cfg
+        _cfg = _load_cfg()
+        _deleg = _cfg.get("delegation", {}) if isinstance(_cfg.get("delegation"), dict) else {}
+        _kanban = _cfg.get("kanban", {}) if isinstance(_cfg.get("kanban"), dict) else {}
+        check_info(
+            f"Delegation: max_concurrent={_deleg.get('max_concurrent_children', 3)}, "
+            f"max_async={_deleg.get('max_async_children', 3)}, "
+            f"spawn_depth={_deleg.get('max_spawn_depth', 1)}"
+        )
+        check_info(
+            f"Kanban: dispatch_interval={_kanban.get('dispatch_interval_seconds', 60)}s, "
+            f"max_in_progress={_kanban.get('max_in_progress', 'unbounded')}"
+        )
+    except Exception:
+        pass
+
     print()
     remaining_issues = issues + manual_issues
     if should_fix and fixed_count > 0:

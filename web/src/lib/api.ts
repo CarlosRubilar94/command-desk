@@ -1063,6 +1063,8 @@ export const api = {
     fetchJSON<ActionResponse>("/api/ops/doctor", { method: "POST" }),
   getDevssdStatus: () =>
     fetchJSON<DevssdStatusResponse>("/api/devssd/status"),
+  getFleetStatus: () => fetchJSON<FleetStatusResponse>("/api/ops/fleet-status"),
+  getRoutingStatus: () => fetchJSON<RoutingStatusResponse>("/api/ops/routing"),
   runSecurityAudit: () =>
     fetchJSON<ActionResponse>("/api/ops/security-audit", { method: "POST" }),
   runBackup: (output?: string) =>
@@ -1661,10 +1663,64 @@ export interface StatusResponse {
   gateway_running: boolean;
   gateway_state: string | null;
   gateway_updated_at: string | null;
+  /** In-flight gateway agent turns (delegation, cron, messaging). */
+  active_agents?: number;
+  gateway_busy?: boolean;
+  gateway_drainable?: boolean;
   hermes_home: string;
   latest_config_version: number;
   release_date: string;
   version: string;
+}
+
+export interface FleetStatusResponse {
+  gateway_running: boolean;
+  gateway_state: string | null;
+  active_agents: number;
+  gateway_busy: boolean;
+  gateway_drainable: boolean;
+  async_delegations_running: number;
+  async_delegations_total: number;
+  kanban: {
+    dispatcher: { running: boolean; message: string };
+    stats: {
+      by_status: Record<string, number>;
+      by_assignee: Record<string, Record<string, number>>;
+      oldest_ready_age_seconds: number | null;
+      now: number;
+    } | null;
+    dispatch_interval_seconds: number;
+    max_in_progress: number | null;
+  };
+  delegation: {
+    max_concurrent_children: number;
+    max_async_children: number;
+    max_spawn_depth: number;
+    orchestrator_enabled: boolean;
+    model: string | null;
+    provider: string | null;
+  };
+  cron: {
+    enabled_jobs: number;
+    paused_jobs: number;
+    due_now: number;
+  };
+  smart_model_routing: {
+    enabled: boolean;
+    delegation_tier: string;
+    lines: string[];
+  };
+}
+
+export interface RoutingStatusResponse {
+  enabled: boolean;
+  delegation_tier: string;
+  economy_model: string | null;
+  economy_provider: string | null;
+  economy_tasks: string[];
+  performance_tasks: string[];
+  lines: string[];
+  error?: string;
 }
 
 export interface SessionInfo {

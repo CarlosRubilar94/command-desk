@@ -3,7 +3,7 @@ import type { StatusResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/i18n";
 
-/** Gateway + session summary for the System sidebar block (no separate strip chrome). */
+/** Gateway + session + multi-agent summary for the sidebar. */
 export function SidebarStatusStrip({ status }: SidebarStatusStripProps) {
   const { t } = useI18n();
 
@@ -17,10 +17,11 @@ export function SidebarStatusStrip({ status }: SidebarStatusStripProps) {
 
   const gw = gatewayLine(status, t);
   const { activeSessionsLabel, gatewayStatusLabel } = t.app;
+  const busyAgents = status.active_agents ?? 0;
 
   return (
     <Link
-      to="/sessions"
+      to="/ops"
       title={t.app.statusOverview}
       className={cn(
         "block text-left",
@@ -42,6 +43,13 @@ export function SidebarStatusStrip({ status }: SidebarStatusStripProps) {
           <span className="tabular-nums text-text-secondary">
             {status.active_sessions}
           </span>
+          {busyAgents > 0 ? (
+            <>
+              {" · "}
+              <span className="text-text-tertiary">agents</span>{" "}
+              <span className="tabular-nums font-medium text-warning">{busyAgents}</span>
+            </>
+          ) : null}
         </p>
       </div>
     </Link>

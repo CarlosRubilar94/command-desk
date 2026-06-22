@@ -2147,6 +2147,143 @@ async def get_devssd_status():
     }
 
 
+def _build_fleet_status_payload() -> dict:
+    """Unified multi-agent ops snapshot for dashboard fleet views."""
+    cfg = load_config()
+    runtime = read_runtime_status() or {}
+    gateway_running, gateway_state = _resolve_gateway_liveness()
+    active_agents = parse_active_agents(runtime.get("active_agents", 0))
+    gateway_busy = derive_gateway_busy(
+        gateway_running=gateway_running,
+        gateway_state=gateway_state,
+        active_agents=active_agents,
+    )
+    gateway_drainable = derive_gateway_drainable(
+        gateway_running=gateway_running,
+        gateway_state=gateway_state,
+    )
+
+    delegation = cfg.get("delegation", {}) if isinstance(cfg.get("delegation"), dict) else {}
+    kanban_cfg = cfg.get("kanban", {}) if isinstance(cfg.get("kanban"), dict) else {}
+    routing_cfg = cfg.get("smart_model_routing", {}) if isinstance(cfg.get("smart_model_routing"), dict) else {}
+
+    async_delegations: list = []
+    async_running = 0
+    try:
+        from tools.async_delegation import list_async_delegations
+        async_delegations = list_async_delegations()
+        async_running = sum(1 for d in async_delegations if d.get("status") == "running")
+    except Exception:
+        pass
+
+    kanban_stats = None
+    kanban_dispatcher = {"running": False, "message": ""}
+    try:
+        from hermes_cli.kanban import _check_dispatcher_presence
+        running, message = _check_dispatcher_presence()
+        kanban_dispatcher = {"running": running, "message": message or ""}
+    except Exception:
+        pass
+    try:
+        from hermes_cli import kanban_db
+        conn = kanban_db.connect()
+        try:
+            kanban_stats = kanban_db.board_stats(conn)
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+    cron_enabled = 0
+    cron_paused = 0
+    cron_due = 0
+    try:
+        from cron.jobs import get_due_jobs, load_jobs
+        jobs = load_jobs()
+        cron_enabled = sum(1 for j in jobs if j.get("enabled", True))
+        cron_paused = sum(1 for j in jobs if not j.get("enabled", True))
+        cron_due = len(get_due_jobs())
+    except Exception:
+        pass
+
+    routing_lines: list[str] = []
+    try:
+        from agent.smart_model_routing import routing_status_lines
+        routing_lines = routing_status_lines()
+    except Exception:
+        pass
+
+    return {
+        "gateway_running": gateway_running,
+        "gateway_state": gateway_state,
+        "active_agents": active_agents,
+        "gateway_busy": gateway_busy,
+        "gateway_drainable": gateway_drainable,
+        "async_delegations_running": async_running,
+        "async_delegations_total": len(async_delegations),
+        "kanban": {
+            "dispatcher": kanban_dispatcher,
+            "stats": kanban_stats,
+            "dispatch_interval_seconds": kanban_cfg.get("dispatch_interval_seconds", 60),
+            "max_in_progress": kanban_cfg.get("max_in_progress"),
+        },
+        "delegation": {
+            "max_concurrent_children": delegation.get("max_concurrent_children", 3),
+            "max_async_children": delegation.get("max_async_children", 3),
+            "max_spawn_depth": delegation.get("max_spawn_depth", 1),
+            "orchestrator_enabled": delegation.get("orchestrator_enabled", True),
+            "model": str(delegation.get("model") or "").strip() or None,
+            "provider": str(delegation.get("provider") or "").strip() or None,
+        },
+        "cron": {
+            "enabled_jobs": cron_enabled,
+            "paused_jobs": cron_paused,
+            "due_now": cron_due,
+        },
+        "smart_model_routing": {
+            "enabled": bool(routing_cfg.get("enabled", False)),
+            "delegation_tier": str(routing_cfg.get("delegation_tier") or "economy"),
+            "lines": routing_lines,
+        },
+    }
+
+
+@app.get("/api/ops/fleet-status")
+async def get_fleet_status():
+    """Multi-agent fleet snapshot: gateway agents, kanban, cron, delegation."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _build_fleet_status_payload)
+
+
+@app.get("/api/ops/routing")
+async def get_routing_status():
+    """Read-only smart model routing status for dashboard."""
+    loop = asyncio.get_running_loop()
+
+    def _routing_payload() -> dict:
+        try:
+            from agent.smart_model_routing import (
+                ECONOMY_TASKS,
+                PERFORMANCE_TASKS,
+                get_routing_config,
+                routing_status_lines,
+            )
+            cfg = get_routing_config()
+            return {
+                "enabled": bool(cfg.get("enabled", False)),
+                "delegation_tier": str(cfg.get("delegation_tier") or "economy"),
+                "economy_model": str(cfg.get("economy_model") or "").strip() or None,
+                "economy_provider": str(cfg.get("economy_provider") or "").strip() or None,
+                "economy_tasks": sorted(ECONOMY_TASKS),
+                "performance_tasks": sorted(PERFORMANCE_TASKS),
+                "lines": routing_status_lines(),
+            }
+        except Exception as exc:
+            return {"enabled": False, "error": str(exc), "lines": []}
+
+    return await loop.run_in_executor(None, _routing_payload)
+
+
 _WINDOWS_11_MIN_BUILD = 22000
 
 

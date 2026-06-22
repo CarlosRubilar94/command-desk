@@ -27,6 +27,7 @@ import {
   OpsSummaryGrid,
   ServiceCell,
 } from "@/components/DeckOps";
+import { FleetOpsPanel } from "@/components/FleetOpsPanel";
 import { useI18n } from "@/i18n";
 
 function useDevssdStatus() {
@@ -291,6 +292,9 @@ export function AgentHomePage() {
                   <Terminal className="h-3.5 w-3.5" />
                   Chat / Run
                 </Link>
+                <Link to="/ops" className="deck-btn-sm ghost">
+                  Fleet
+                </Link>
                 <Link to="/skills" className="deck-btn-sm ghost">
                   Skills DevSSD
                 </Link>
@@ -299,6 +303,8 @@ export function AgentHomePage() {
                 </Link>
               </DeckToolbar>
             </DeckCard>
+
+            <FleetOpsPanel compact />
 
             <DeckCard title="Smoke commands" colClass="col-8">
               <CommandList commands={status.agent.commands} />
