@@ -74,7 +74,7 @@ const OPS_COLOR_OVERRIDES = {
 // Themes
 // ---------------------------------------------------------------------------
 
-/** Canonical DevSSD / Command Deck Ops dark console theme (#070B12 + cyan). */
+/** Canonical DevSSD / Command Deck Ops dark console theme (#060a10 + cyan glass). */
 export const commandDeckOpsTheme: DashboardTheme = {
   name: "command-desk-ops",
   label: "Command Deck Ops",
