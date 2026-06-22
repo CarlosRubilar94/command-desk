@@ -1,0 +1,42 @@
+# Multi-agent profile hints — copy into %COMMAND_DESK_HOME%\config.yaml
+# after creating profiles with: command-desk profile create <name> --clone
+
+# Profiles to create:
+#   orchestrator — planning root, kanban swarm coordinator
+#   coder        — implementation worker
+#   researcher   — web research worker
+#   reviewer     — spec/quality gate (verifier role)
+
+kanban:
+  orchestrator_profile: orchestrator
+  default_assignee: coder
+  auto_decompose: true
+  dispatch_in_gateway: true
+  dispatch_interval_seconds: 30
+  max_in_progress: 4
+
+delegation:
+  max_concurrent_children: 3
+  max_async_children: 3
+  max_spawn_depth: 2
+  orchestrator_enabled: true
+
+smart_model_routing:
+  enabled: true
+  delegation_tier: economy
+  delegation_reasoning_effort: low
+
+cron:
+  max_parallel_jobs: 4
+  ticker_interval_seconds: 30
+
+# Per-profile overrides (in ~/.command-desk/profiles/<name>/config.yaml):
+#
+# researcher:
+#   model:
+#     default: google/gemini-2.5-flash
+#
+# coder:
+#   tools:
+#     cli:
+#       enabled: [terminal, file, search, ...]

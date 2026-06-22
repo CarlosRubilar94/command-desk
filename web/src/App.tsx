@@ -100,6 +100,7 @@ import {
   GatewayStatusPage,
 } from "@/pages/DevssdPages";
 import OpsFleetPage from "@/pages/OpsFleetPage";
+import MultiAgentHubPage from "@/pages/MultiAgentHubPage";
 import RoutingPage from "@/pages/RoutingPage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -143,6 +144,7 @@ const CHAT_NAV_ITEM: NavItem = {
 const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/": RootRedirect,
   "/agent": AgentHomePage,
+  "/multi-agent": MultiAgentHubPage,
   "/ops": OpsFleetPage,
   "/routing": RoutingPage,
   "/doctor": DevssdDoctorPage,
@@ -179,6 +181,7 @@ function ChatRouteSink() {
 
 const COMMAND_DESK_NAV: NavItem[] = [
   { path: "/agent", label: "Home", icon: Sparkles },
+  { path: "/multi-agent", label: "Multi-agent", icon: Users },
   { path: "/ops", label: "Fleet", icon: Activity },
   { path: "/routing", label: "Routing", icon: Zap },
   { path: "/doctor", label: "Doctor", icon: ShieldCheck },
@@ -375,6 +378,7 @@ const SIDEBAR_COLLAPSED_KEY = "hermes-sidebar-collapsed";
 /** DevSSD deck pages use full-width layout without outer page padding. */
 const DECK_LAYOUT_ROUTES = new Set([
   "/agent",
+  "/multi-agent",
   "/ops",
   "/routing",
   "/doctor",

@@ -23,6 +23,7 @@ Main pages:
 | Page | URL |
 |------|-----|
 | Agent Home | http://127.0.0.1:9119/agent |
+| Multi-agent hub | http://127.0.0.1:9119/multi-agent |
 | Chat/Run | http://127.0.0.1:9119/run |
 | Skills DevSSD | http://127.0.0.1:9119/skills |
 | Config/Doctor | http://127.0.0.1:9119/doctor |
@@ -84,6 +85,7 @@ Enable `rtk-rewrite` in `%COMMAND_DESK_HOME%\config.yaml` under `plugins.enabled
 ## Docs
 
 - [COMMAND-DESK-ARCHITECTURE.md](docs/COMMAND-DESK-ARCHITECTURE.md) — ports, APIs, integration
+- [CURSOR-LOCAL-MULTI-AGENT.md](docs/CURSOR-LOCAL-MULTI-AGENT.md) — Cursor subagents + Hermes runtime
 - Upstream: https://hermes-agent.nousresearch.com/docs/
 
 ## DevSSD model setup (non-interactive)
