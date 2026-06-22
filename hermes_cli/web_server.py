@@ -1967,6 +1967,21 @@ async def get_status(profile: Optional[str] = None):
 
 _COMMAND_DECK_DEFAULT_BASE = "http://127.0.0.1:8765"
 _COMMAND_DECK_PROBE_TIMEOUT = 3.0
+_COMMAND_DECK_ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
+_COMMAND_DECK_ALLOWED_PORT = 8765
+
+
+@dataclass(frozen=True)
+class _CommandDeckProbeTarget:
+    app_url: str
+    probe_url: str
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Fail closed: Command Deck probes never follow redirects."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
 
 
 def _command_deck_base_url() -> str:
@@ -1975,19 +1990,48 @@ def _command_deck_base_url() -> str:
     return raw.rstrip("/")
 
 
+def _resolve_command_deck_target() -> tuple[_CommandDeckProbeTarget | None, str | None]:
+    """Validate COMMAND_DECK_URL against strict local SSRF guardrails."""
+    raw = _command_deck_base_url()
+    try:
+        parsed = urllib.parse.urlparse(raw)
+    except Exception:
+        return None, "unavailable"
+    if parsed.scheme not in {"http", "https"}:
+        return None, "unavailable"
+    if parsed.username or parsed.password:
+        return None, "unavailable"
+    if parsed.query or parsed.fragment:
+        return None, "unavailable"
+    host = (parsed.hostname or "").strip().lower()
+    if host not in _COMMAND_DECK_ALLOWED_HOSTS:
+        return None, "unavailable"
+    try:
+        parsed_port = parsed.port
+    except ValueError:
+        return None, "unavailable"
+    if parsed_port != _COMMAND_DECK_ALLOWED_PORT:
+        return None, "unavailable"
+    if parsed.path not in {"", "/"} or parsed.params:
+        return None, "unavailable"
+    app_url = f"{parsed.scheme}://{host}:{_COMMAND_DECK_ALLOWED_PORT}"
+    return _CommandDeckProbeTarget(app_url=app_url, probe_url=f"{app_url}/api/status"), None
+
+
 def _probe_http_get(url: str, *, timeout: float) -> tuple[bool, int, str | None]:
     """Blocking GET probe. Returns ``(ok, latency_ms, error)``."""
     started = time.perf_counter()
     try:
         req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(req, timeout=timeout) as resp:
             latency_ms = int((time.perf_counter() - started) * 1000)
             if 200 <= resp.status < 300:
                 return True, latency_ms, None
-            return False, latency_ms, f"HTTP {resp.status}"
-    except Exception as exc:  # noqa: BLE001 — probe must not raise
+            return False, latency_ms, "unavailable"
+    except Exception:  # noqa: BLE001 — probe must not raise
         latency_ms = int((time.perf_counter() - started) * 1000)
-        return False, latency_ms, str(exc)
+        return False, latency_ms, "unavailable"
 
 
 def _resolve_gateway_liveness() -> tuple[bool, str | None]:
@@ -2092,17 +2136,24 @@ def _build_bitwarden_status_payload(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _probe_command_deck_status() -> dict[str, Any]:
-    base = _command_deck_base_url()
-    probe_url = f"{base}/api/status"
+    target, target_error = _resolve_command_deck_target()
+    if target is None:
+        return {
+            "available": False,
+            "latency_ms": 0,
+            "url": None,
+            "app_url": None,
+            "error": target_error or "unavailable",
+        }
     available, latency_ms, error = _probe_http_get(
-        probe_url,
+        target.probe_url,
         timeout=_COMMAND_DECK_PROBE_TIMEOUT,
     )
     return {
         "available": available,
         "latency_ms": latency_ms,
-        "url": probe_url,
-        "app_url": base,
+        "url": target.probe_url,
+        "app_url": target.app_url,
         "error": error,
     }
 
@@ -2150,6 +2201,59 @@ async def get_devssd_status():
         },
         "command_deck": command_deck,
     }
+
+
+@app.get("/api/command-deck/overview")
+async def get_command_deck_overview(profile: Optional[str] = None):
+    """Authenticated profile-scoped overview for in-dashboard Command Deck."""
+    with _config_profile_scope(profile):
+        loop = asyncio.get_running_loop()
+        deck_probe = await loop.run_in_executor(None, _probe_command_deck_status)
+        deck_available = bool(deck_probe.get("available"))
+        deck_payload: Dict[str, Any] = {
+            "available": deck_available,
+            "status": "ok" if deck_available else "unavailable",
+        }
+
+        fleet_payload: Dict[str, Any] = {}
+        costs_payload: Dict[str, Any] = {}
+        missions_count = 0
+        tracer_payload: Dict[str, Any] = {"dropped_spans": 0, "healthy": False}
+
+        try:
+            maybe_fleet = await get_fleet_metrics(profile=profile)
+            if isinstance(maybe_fleet, dict):
+                fleet_payload = maybe_fleet
+                maybe_tracer = maybe_fleet.get("tracer")
+                if isinstance(maybe_tracer, dict):
+                    tracer_payload = {
+                        "dropped_spans": _safe_int(maybe_tracer.get("dropped_spans")),
+                        "healthy": bool(maybe_tracer.get("healthy")),
+                    }
+        except Exception:
+            fleet_payload = {}
+
+        try:
+            maybe_costs = await get_costs_summary(profile=profile)
+            if isinstance(maybe_costs, dict):
+                costs_payload = maybe_costs
+        except Exception:
+            costs_payload = {}
+
+        try:
+            maybe_missions = await get_missions(profile=profile)
+            if isinstance(maybe_missions, dict):
+                missions_count = _safe_int(maybe_missions.get("total"))
+        except Exception:
+            missions_count = 0
+
+        return {
+            "deck": deck_payload,
+            "fleet": fleet_payload,
+            "costs": costs_payload,
+            "missions": {"count": missions_count},
+            "tracer": tracer_payload,
+        }
 
 
 def _build_fleet_status_payload() -> dict:

@@ -12,9 +12,11 @@ import type {
   MissionTopRun,
 } from "@/lib/api";
 import { DeckPageShell } from "@/components/DeckPageShell";
-import { DeckCard, DeckBtn, LayoutGrid, MetricTile } from "@/components/DeckOps";
+import { DeckCard, DeckBtn, MetricTile } from "@/components/DeckOps";
 import { StatusPill } from "@/components/ds/StatusPill";
 import type { StatusVariant } from "@/components/ds/StatusPill";
+import { DataTable } from "@/components/ds/DataTable";
+import type { ColDef } from "@/components/ds/DataTable";
 import { Drawer } from "@/components/ds/Drawer";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn } from "@/lib/utils";
@@ -142,60 +144,94 @@ function ModelChips({ models }: { models: string[] }) {
   );
 }
 
-// ── Mission table row ──────────────────────────────────────────────────────────
+// ── Mission table column definitions ──────────────────────────────────────────
 
-function MissionRow({
-  mission,
-  onSelect,
-}: {
-  mission: MissionRow;
-  onSelect: (m: MissionRow) => void;
-}) {
-  return (
-    <tr
-      className="deck-table-row cursor-pointer hover:bg-[var(--dsd-layer-overlay)] transition-colors"
-      onClick={() => onSelect(mission)}
-      tabIndex={0}
-      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(mission); }}
-      role="button"
-      aria-label={`Open mission: ${mission.title}`}
-    >
-      <td className="px-3 py-2.5 max-w-[240px]">
-        <span className="block truncate text-sm font-medium text-[var(--dsd-text-primary)]">
-          {mission.title}
+function buildMissionCols(
+  onSelect: (m: MissionRow) => void,
+): ColDef<MissionRow>[] {
+  return [
+    {
+      key: "mission",
+      header: "Mission",
+      sortKey: "title",
+      width: "240px",
+      cell: (m) => (
+        <span
+          className="block cursor-pointer"
+          onClick={() => onSelect(m)}
+        >
+          <span className="block truncate text-sm font-medium text-[var(--dsd-text-primary)]">
+            {m.title}
+          </span>
+          <span className="block truncate text-[11px] text-[var(--dsd-text-faint)]">
+            {m.owner ?? m.board_slug}
+          </span>
         </span>
-        <span className="block truncate text-[11px] text-[var(--dsd-text-faint)]">
-          {mission.owner ?? mission.board_slug}
-        </span>
-      </td>
-      <td className="px-3 py-2.5">
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      sortKey: "status",
+      cell: (m) => (
         <StatusPill
-          variant={missionStatusVariant(mission.status)}
-          label={mission.status}
+          variant={missionStatusVariant(m.status)}
+          label={m.status}
           dot
         />
-      </td>
-      <td className="px-3 py-2.5 min-w-[120px]">
+      ),
+    },
+    {
+      key: "progress",
+      header: "Progress",
+      width: "140px",
+      cell: (m) => (
         <ProgressBar
-          pct={mission.progress.pct}
-          done={mission.progress.done}
-          total={mission.progress.total}
+          pct={m.progress.pct}
+          done={m.progress.done}
+          total={m.progress.total}
         />
-      </td>
-      <td className="px-3 py-2.5 max-w-[180px]">
-        <ModelChips models={mission.models} />
-      </td>
-      <td className="px-3 py-2.5 text-right tabular-nums text-sm text-[var(--dsd-cat-cost)]">
-        {fmtUsd(mission.cost_usd)}
-      </td>
-      <td className="px-3 py-2.5 text-right tabular-nums text-xs text-[var(--dsd-text-secondary)]">
-        {mission.run_count}
-      </td>
-      <td className="px-3 py-2.5 text-right text-xs text-[var(--dsd-text-faint)]">
-        {fmtRelTime(mission.updated_at)}
-      </td>
-    </tr>
-  );
+      ),
+    },
+    {
+      key: "models",
+      header: "Models",
+      width: "180px",
+      cell: (m) => <ModelChips models={m.models} />,
+    },
+    {
+      key: "cost",
+      header: "Spend",
+      sortKey: "cost_usd",
+      align: "right",
+      cell: (m) => (
+        <span className="tabular-nums text-sm text-[var(--dsd-cat-cost)]">
+          {fmtUsd(m.cost_usd)}
+        </span>
+      ),
+    },
+    {
+      key: "runs",
+      header: "Runs",
+      sortKey: "run_count",
+      align: "right",
+      cell: (m) => (
+        <span className="tabular-nums text-xs text-[var(--dsd-text-secondary)]">
+          {m.run_count}
+        </span>
+      ),
+    },
+    {
+      key: "updated",
+      header: "Updated",
+      align: "right",
+      cell: (m) => (
+        <span className="text-xs text-[var(--dsd-text-faint)]">
+          {fmtRelTime(m.updated_at)}
+        </span>
+      ),
+    },
+  ];
 }
 
 // ── Mission detail drawer ──────────────────────────────────────────────────────
@@ -586,7 +622,7 @@ function MissionsSummaryStrip({ missions }: { missions: MissionRow[] }) {
       <MetricTile
         label="Active"
         value={String(active)}
-        state={active > 0 ? "ok" : "neutral"}
+        state={active > 0 ? "ok" : undefined}
       />
       <MetricTile
         label="Total Spend"
@@ -665,26 +701,15 @@ export default function MissionsPage() {
           <MissionsSummaryStrip missions={missions} />
 
           <DeckCard title="All Missions" colClass="col-12">
-            <div className="overflow-x-auto -mx-1">
-              <table className="deck-table w-full min-w-[640px] text-xs">
-                <thead>
-                  <tr className="deck-table-head">
-                    <th className="px-3 py-2 text-left">Mission</th>
-                    <th className="px-3 py-2 text-left">Status</th>
-                    <th className="px-3 py-2 text-left min-w-[120px]">Progress</th>
-                    <th className="px-3 py-2 text-left">Models</th>
-                    <th className="px-3 py-2 text-right">Spend</th>
-                    <th className="px-3 py-2 text-right">Runs</th>
-                    <th className="px-3 py-2 text-right">Updated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {missions.map((m) => (
-                    <MissionRow key={m.mission_id} mission={m} onSelect={openMission} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable<MissionRow>
+              cols={buildMissionCols(openMission)}
+              rows={missions}
+              rowKey={(m) => m.mission_id}
+              onRowClick={openMission}
+              dense
+              aria-label="All missions"
+              emptyLabel="No missions found"
+            />
           </DeckCard>
         </div>
       </DeckPageShell>

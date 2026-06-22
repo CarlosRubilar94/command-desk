@@ -1,0 +1,5 @@
+name: sqlite_traces
+version: "1.0.0"
+description: "Built-in SQLite tracing for fleet metrics and mission observability."
+author: "Hermes Agent"
+kind: standalone

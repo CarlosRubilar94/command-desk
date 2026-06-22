@@ -119,7 +119,7 @@ export function MissionOverview() {
         <MetricTile
           label="Active Missions"
           value={String(activeMissions.length)}
-          state={activeMissions.length > 0 ? "ok" : "neutral"}
+          state={activeMissions.length > 0 ? "ok" : undefined}
         />
         <MetricTile
           label="Spend Today"

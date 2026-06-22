@@ -107,6 +107,7 @@ import CostsPage from "@/pages/CostsPage";
 import TracesPage from "@/pages/TracesPage";
 import RoutingPage from "@/pages/RoutingPage";
 import MissionsPage from "@/pages/MissionsPage";
+import { CommandDeckUX } from "@/components/CommandPalette";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
@@ -861,6 +862,7 @@ export default function App() {
       </div>
 
       <PluginSlot name="overlay" />
+      <CommandDeckUX />
     </div>
     </ProfileProvider>
   );

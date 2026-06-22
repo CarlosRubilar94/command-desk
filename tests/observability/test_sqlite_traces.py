@@ -248,3 +248,63 @@ def test_mission_rollup_from_seeded_board(monkeypatch, tmp_path):
     assert rollup["event_count"] == 3
     assert rollup["owners"] == ["alice", "bob"]
 
+
+def test_register_hook_bus_records_span(monkeypatch, tmp_path):
+    _reload_store(monkeypatch, tmp_path)
+    plugin = _reload_plugin(monkeypatch, tmp_path)
+    import hermes_cli.traces_store as store
+
+    class _Ctx:
+        def __init__(self) -> None:
+            self.hooks = {}
+
+        def register_hook(self, hook_name, callback):
+            self.hooks[hook_name] = callback
+
+    ctx = _Ctx()
+    plugin.register(ctx)
+
+    pre = ctx.hooks["pre_tool_call"]
+    post = ctx.hooks["post_tool_call"]
+    pre(
+        session_id="sess-hook",
+        turn_id="turn-hook",
+        tool_call_id="tool-hook",
+        tool_name="read_file",
+    )
+    post(
+        session_id="sess-hook",
+        turn_id="turn-hook",
+        tool_call_id="tool-hook",
+        tool_name="read_file",
+        status="ok",
+    )
+
+    time.sleep(0.3)
+    spans = store.get_trace("turn-hook")
+    assert any(
+        span.get("kind") == "tool_call" and span.get("name") == "read_file"
+        for span in spans
+    )
+    plugin.reset_for_tests()
+
+
+def test_sqlite_traces_plugin_default_enabled(monkeypatch, tmp_path):
+    hermes_home = tmp_path / "hermes_home"
+    hermes_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+    import hermes_cli.plugins as plugin_system
+
+    plugin_system = importlib.reload(plugin_system)
+    manager = plugin_system.PluginManager()
+    manager.discover_and_load(force=True)
+
+    listing = {item["key"]: item for item in manager.list_plugins()}
+    assert "observability/sqlite_traces" in listing
+    assert listing["observability/sqlite_traces"]["enabled"] is True
+
+    import plugins.observability.sqlite_traces as sqlite_traces
+
+    sqlite_traces.reset_for_tests()
+

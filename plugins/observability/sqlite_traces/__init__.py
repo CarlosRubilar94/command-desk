@@ -4,8 +4,8 @@ This plugin emits observability spans to ``traces.db`` using the existing
 Hermes plugin hook bus (no agent-loop edits required). It is intentionally
 best-effort: write failures never raise into the agent path.
 
-Enable:
-  `hermes plugins enable observability/sqlite_traces`
+Enablement:
+  bundled and enabled by default (can be disabled via plugins.disabled).
 
 Tracing config defaults (``~/.hermes/config.yaml``):
   tracing:

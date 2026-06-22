@@ -1,13 +1,15 @@
 # Tracing Enablement (Wave 1A)
 
-`sqlite_traces` follows the existing plugin opt-in flow and does not require
-agent-loop changes.
+`sqlite_traces` is now bundled and auto-enabled by default (no manual plugin
+toggle required), while still using the existing hook bus (no agent-loop
+changes).
 
-## Enable the plugin
+## Default enablement
 
-```powershell
-hermes plugins enable observability/sqlite_traces
-```
+- New installs and existing profiles load `observability/sqlite_traces`
+  automatically.
+- You can explicitly turn it off via `plugins.disabled` if needed for incident
+  isolation.
 
 ## Tracing defaults
 
@@ -26,3 +28,5 @@ Notes:
 - `capture_payloads` stays `false` by default for security.
 - Storage is `~/.hermes/traces.db` (separate from `state.db`).
 - Span attributes are allowlisted metadata only (no prompts/tool args/files).
+- `traces.db` permissions are tightened best-effort (`0600` on POSIX, owner ACL
+  tightening attempt on Windows via `icacls` when available).

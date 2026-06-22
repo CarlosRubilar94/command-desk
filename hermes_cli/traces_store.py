@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import stat
+import subprocess
 import sys
 import threading
 import time
@@ -91,12 +93,30 @@ def traces_db_path() -> Path:
 
 
 def _secure_owner_only(path: Path) -> None:
-    if sys.platform == "win32":
+    if not path.exists():
         return
     try:
-        if path.exists():
-            os.chmod(path, 0o600)
-    except (OSError, NotImplementedError):
+        if sys.platform == "win32":
+            # Best effort on Windows: keep the file writable for the current user
+            # and try to tighten ACL inheritance where icacls is available.
+            os.chmod(path, stat.S_IREAD | stat.S_IWRITE)
+            user = (os.environ.get("USERNAME") or "").strip()
+            if user:
+                subprocess.run(
+                    [
+                        "icacls",
+                        str(path),
+                        "/inheritance:r",
+                        "/grant:r",
+                        f"{user}:(R,W)",
+                    ],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            return
+        os.chmod(path, 0o600)
+    except (OSError, NotImplementedError, ValueError):
         pass
 
 
