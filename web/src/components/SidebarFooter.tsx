@@ -25,11 +25,10 @@ export function SidebarFooter({ status }: SidebarFooterProps) {
         target="_blank"
         rel="noopener noreferrer"
         className={cn(
-          "font-mondwest text-display text-xs tracking-[0.12em] text-midground",
-          "transition-opacity hover:opacity-90",
-          "focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground/40",
+          "text-xs font-medium tracking-wide text-[var(--dsd-text-secondary)]",
+          "transition-colors hover:text-[var(--dsd-text-primary)]",
+          "focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--dsd-border-glow)]",
         )}
-        style={{ mixBlendMode: "plus-lighter" }}
       >
         {t.app.footer.org}
       </a>

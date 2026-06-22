@@ -796,7 +796,7 @@ export default function CronPage() {
         </div>
 
         {jobs.length === 0 && (
-          <Card>
+          <Card className="deck-cron-job">
             <CardContent className="py-8 text-center text-sm text-muted-foreground">
               {t.cron.noJobs}
             </CardContent>
@@ -813,7 +813,7 @@ export default function CronPage() {
           const jobKey = getJobKey(job);
 
           return (
-            <Card key={jobKey}>
+            <Card key={jobKey} className="deck-cron-job">
               <CardContent className="flex items-start gap-4 py-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">

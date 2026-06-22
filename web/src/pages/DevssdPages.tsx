@@ -24,6 +24,7 @@ import {
   LayoutGrid,
   MetricRow,
   OperationalStatus,
+  MetricTile,
   OpsSummaryGrid,
   ServiceCell,
 } from "@/components/DeckOps";
@@ -257,6 +258,30 @@ export function AgentHomePage() {
                 ) : null}
               </div>
             </div>
+          </div>
+
+          <div className="metrics-strip col-12">
+            <MetricTile
+              label="Model"
+              value={(status.agent.model || "—").split("/").pop() ?? "—"}
+              context={status.agent.provider || undefined}
+              state="ok"
+            />
+            <MetricTile
+              label="Gateway"
+              value={gatewayOk ? "online" : "offline"}
+              state={gatewayOk ? "ok" : "warning"}
+            />
+            <MetricTile
+              label="Command Deck"
+              value={deckOk ? `${status.command_deck.latency_ms} ms` : "offline"}
+              state={deckOk ? "ok" : "warning"}
+            />
+            <MetricTile
+              label="Secrets"
+              value={bwOk ? "configured" : "pending"}
+              state={bwOk ? "ok" : "warning"}
+            />
           </div>
 
           <div className="service-matrix col-12">

@@ -9,8 +9,8 @@ export function SidebarStatusStrip({ status }: SidebarStatusStripProps) {
 
   if (status === null) {
     return (
-      <div className="px-5 py-1.5" aria-hidden>
-        <div className="h-2 w-[80%] max-w-full animate-pulse rounded-sm bg-midground/10" />
+      <div className="deck-sidebar-status deck-sidebar-status--loading" aria-hidden>
+        <div className="h-8 w-full animate-pulse rounded-md bg-[var(--dsd-surface-3-solid)]" />
       </div>
     );
   }
@@ -23,37 +23,36 @@ export function SidebarStatusStrip({ status }: SidebarStatusStripProps) {
     <Link
       to="/ops"
       title={t.app.statusOverview}
-      className={cn(
-        "block text-left",
-        "px-5 pb-2 pt-0.5",
-        "text-text-secondary",
-        "transition-colors hover:text-midground",
-        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground/40",
-        "focus-visible:ring-inset",
-      )}
+      className={cn("deck-sidebar-status deck-sidebar-status-link")}
     >
-      <div className="flex flex-col gap-1 font-mondwest text-xs leading-snug tracking-[0.08em]">
-        <p className="break-words">
-          <span className="text-text-tertiary">{gatewayStatusLabel}</span>{" "}
-          <span className={cn("font-medium", gw.tone)}>{gw.label}</span>
-        </p>
-
-        <p className="break-words">
-          <span className="text-text-tertiary">{activeSessionsLabel}</span>{" "}
-          <span className="tabular-nums text-text-secondary">
-            {status.active_sessions}
-          </span>
-          {busyAgents > 0 ? (
-            <>
-              {" · "}
-              <span className="text-text-tertiary">agents</span>{" "}
-              <span className="tabular-nums font-medium text-warning">{busyAgents}</span>
-            </>
-          ) : null}
-        </p>
+      <div className="status-line">
+        <span className={cn("deck-status-dot", gw.tone.includes("success") ? "ok" : gw.tone.includes("warning") ? "warning" : "critical")} aria-hidden />
+        <span className="truncate">
+          <span className="text-[var(--dsd-text-muted)]">{gatewayStatusLabel}</span>{" "}
+          <span className={cn("font-semibold", gw.tone)}>{gw.label}</span>
+        </span>
+      </div>
+      <div className="status-sub">
+        <span>{activeSessionsLabel}</span>{" "}
+        <span className="tabular-nums font-medium text-[var(--dsd-text-primary)]">
+          {status.active_sessions}
+        </span>
+        {busyAgents > 0 ? (
+          <>
+            {" · "}
+            <span className="text-[var(--dsd-text-muted)]">agents</span>{" "}
+            <span className="tabular-nums font-semibold text-[var(--dsd-sem-warning)]">
+              {busyAgents}
+            </span>
+          </>
+        ) : null}
       </div>
     </Link>
   );
+}
+
+interface SidebarStatusStripProps {
+  status: StatusResponse | null;
 }
 
 export function gatewayLine(
@@ -73,8 +72,4 @@ export function gatewayLine(
   return status.gateway_running
     ? { label: g.running, tone: "text-success" }
     : { label: g.off, tone: "text-muted-foreground" };
-}
-
-interface SidebarStatusStripProps {
-  status: StatusResponse | null;
 }

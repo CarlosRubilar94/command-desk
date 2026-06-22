@@ -338,24 +338,19 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   }, []);
 
   const agentActivityToggle = (
-    <Button
-      ghost
+    <button
+      type="button"
       onClick={toggleAgentActivity}
       aria-pressed={showAgentActivity}
       title="Show delegate_task activity in the sidebar"
       className={cn(
-        "shrink-0 rounded border border-current/20",
-        "px-2 py-1 text-xs font-medium tracking-wide",
-        showAgentActivity
-          ? "text-primary border-primary/40"
-          : "text-text-secondary hover:text-midground hover:bg-midground/5",
+        "deck-btn-sm",
+        showAgentActivity ? "primary" : "ghost",
       )}
     >
-      <span className="inline-flex items-center gap-1.5">
-        <GitBranch className="h-3 w-3 shrink-0" />
-        Delegation
-      </span>
-    </Button>
+      <GitBranch className="h-3.5 w-3.5 shrink-0" />
+      Delegation
+    </button>
   );
 
   useEffect(() => {
@@ -377,16 +372,10 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           onClick={() => setMobilePanelOpenRaw(true)}
           aria-expanded={mobilePanelOpen}
           aria-controls="chat-side-panel"
-          className={cn(
-            "shrink-0 rounded border border-current/20",
-            "px-2 py-1 text-xs font-medium tracking-wide",
-            "text-text-secondary hover:text-midground hover:bg-midground/5",
-          )}
+          className="deck-btn-sm ghost shrink-0"
         >
-          <span className="inline-flex items-center gap-1.5">
-            <PanelRight className="h-3 w-3 shrink-0" />
-            {modelToolsLabel}
-          </span>
+          <PanelRight className="h-3.5 w-3.5 shrink-0" />
+          {modelToolsLabel}
         </Button>
       </div>,
     );

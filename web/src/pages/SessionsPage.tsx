@@ -45,6 +45,7 @@ import { Toast } from "@nous-research/ui/ui/components/toast";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Checkbox } from "@nous-research/ui/ui/components/checkbox";
 import { ListItem } from "@nous-research/ui/ui/components/list-item";
+import { DeckFilterChips } from "@/components/DeckFilterChips";
 import { Segmented } from "@nous-research/ui/ui/components/segmented";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Badge } from "@nous-research/ui/ui/components/badge";
@@ -1506,7 +1507,7 @@ export default function SessionsPage() {
       )}
 
       {(showOverviewTab && !isSearching) || showList ? (
-        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:gap-3">
+        <div className="deck-session-toolbar flex w-full min-w-0 flex-wrap items-center gap-2 sm:gap-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:gap-3">
             {showOverviewTab && !isSearching && (
               <Segmented
@@ -1549,13 +1550,10 @@ export default function SessionsPage() {
             )}
 
             {showList && !isSearching && (
-              <Segmented
+              <DeckFilterChips
                 className="w-fit shrink-0"
-                size="sm"
                 value={sessionKindFilter}
-                onChange={(v) =>
-                  setSessionKindFilter(v as "all" | "delegation" | "cron")
-                }
+                onChange={setSessionKindFilter}
                 options={[
                   { value: "all", label: "All" },
                   { value: "delegation", label: "Delegation" },
@@ -1596,7 +1594,7 @@ export default function SessionsPage() {
 
       {showList && selectedIds.size > 0 && (
         <div
-          className="flex flex-wrap items-center gap-2 border border-primary/30 bg-primary/[0.06] px-3 py-2"
+          className="deck-bulk-bar flex flex-wrap items-center gap-2 px-3 py-2"
           role="region"
           aria-label={t.sessions.selectedCount.replace(
             "{count}",
