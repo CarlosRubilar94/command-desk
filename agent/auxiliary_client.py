@@ -3387,6 +3387,13 @@ def _resolve_auto(
     main_model = str(runtime_model or _read_main_model() or "")
     if (main_provider and main_model
             and main_provider not in {"auto", ""}):
+        try:
+            from agent.smart_model_routing import resolve_aux_routing
+            main_provider, main_model = resolve_aux_routing(
+                task, main_provider, main_model,
+            )
+        except Exception as exc:
+            logger.debug("smart_model_routing aux resolve skipped: %s", exc)
         resolved_provider = main_provider
         explicit_base_url = runtime_base_url or None
         explicit_api_key = None
@@ -5035,9 +5042,26 @@ def _get_task_extra_body(task: str) -> Dict[str, Any]:
     """Read auxiliary.<task>.extra_body and return a shallow copy when valid."""
     task_config = _get_auxiliary_task_config(task)
     raw = task_config.get("extra_body")
-    if isinstance(raw, dict):
-        return dict(raw)
-    return {}
+    extra = dict(raw) if isinstance(raw, dict) else {}
+    try:
+        from agent.smart_model_routing import (
+            get_economy_extra_body,
+            get_task_tier,
+            is_routing_enabled,
+        )
+        if is_routing_enabled() and get_task_tier(task) == "economy":
+            routing_extra = get_economy_extra_body()
+            if routing_extra:
+                for key, value in routing_extra.items():
+                    if key not in extra:
+                        extra[key] = value
+                    elif isinstance(extra[key], dict) and isinstance(value, dict):
+                        merged = dict(value)
+                        merged.update(extra[key])
+                        extra[key] = merged
+    except Exception as exc:
+        logger.debug("smart_model_routing extra_body merge skipped: %s", exc)
+    return extra
 
 
 # ---------------------------------------------------------------------------

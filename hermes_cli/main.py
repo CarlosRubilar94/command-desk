@@ -278,6 +278,7 @@ from hermes_cli.subcommands.status import build_status_parser
 from hermes_cli.subcommands.webhook import build_webhook_parser
 from hermes_cli.subcommands.hooks import build_hooks_parser
 from hermes_cli.subcommands.doctor import build_doctor_parser
+from hermes_cli.subcommands.routing import build_routing_parser, handle_routing
 from hermes_cli.subcommands.security import build_security_parser
 from hermes_cli.subcommands.dump import build_dump_parser
 from hermes_cli.subcommands.debug import build_debug_parser
@@ -3192,6 +3193,8 @@ _AUX_TASKS: list[tuple[str, str, str]] = [
     ("skills_hub", "Skills hub", "skills search/install"),
     ("triage_specifier", "Triage specifier", "kanban spec fleshing"),
     ("kanban_decomposer", "Kanban decomposer", "task decomposition"),
+    ("goal_judge", "Goal judge", "/goal loop classifier"),
+    ("monitor", "Monitor", "mail/monitor item scoring"),
     ("profile_describer", "Profile describer", "auto profile descriptions"),
     ("curator", "Curator", "skill-usage review pass"),
 ]
@@ -12167,6 +12170,11 @@ def main():
     # doctor command  (parser built in hermes_cli/subcommands/doctor.py)
     # =========================================================================
     build_doctor_parser(subparsers, cmd_doctor=cmd_doctor)
+
+    # =========================================================================
+    # routing command — smart model tier routing
+    # =========================================================================
+    build_routing_parser(subparsers, cmd_routing=handle_routing)
 
     # =========================================================================
     # security command — on-demand supply-chain audit

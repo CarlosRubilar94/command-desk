@@ -17679,12 +17679,18 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # may arm a schedule and return. Pass the event loop so cron delivery can
     # use live adapters (E2EE support).
     from cron.scheduler_provider import resolve_cron_scheduler
+    from hermes_cli.config import get_cron_ticker_interval
     cron_stop = threading.Event()
     cron_provider = resolve_cron_scheduler()
+    cron_interval = get_cron_ticker_interval()
     cron_thread = threading.Thread(
         target=cron_provider.start,
         args=(cron_stop,),
-        kwargs={"adapters": runner.adapters, "loop": asyncio.get_running_loop()},
+        kwargs={
+            "adapters": runner.adapters,
+            "loop": asyncio.get_running_loop(),
+            "interval": cron_interval,
+        },
         daemon=True,
         name="cron-scheduler",
     )
