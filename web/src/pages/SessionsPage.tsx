@@ -472,7 +472,7 @@ function SessionRow({
         size="icon"
         className="text-muted-foreground hover:text-foreground"
         aria-label="View trace"
-        title="View trace (trace_id = session_id)"
+        title="View trace"
         onClick={(e) => {
           e.stopPropagation();
           onViewTrace(session.id);
@@ -1816,7 +1816,15 @@ export default function SessionsPage() {
                   onDelete={() => sessionDelete.requestDelete(s.id)}
                   onRename={handleRename}
                   onExport={handleExport}
-                  onViewTrace={(traceId) => setTraceDrawerId(traceId)}
+                  onViewTrace={async (sessionId) => {
+                    try {
+                      const r = await api.getTracesBySession(sessionId);
+                      const resolvedId = r.traces.length > 0 ? r.traces[0].trace_id : sessionId;
+                      setTraceDrawerId(resolvedId);
+                    } catch {
+                      setTraceDrawerId(sessionId);
+                    }
+                  }}
                   resumeInChatEnabled={resumeInChatEnabled}
                   childSessions={sessions.filter(
                     (c) => c.parent_session_id === s.id,

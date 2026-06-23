@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { RefreshCw, Target } from "lucide-react";
+import { Plus, RefreshCw, Target } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { api } from "@/lib/api";
 import type {
@@ -10,6 +10,7 @@ import type {
   MissionDelegationNode,
   MissionTimelineEvent,
   MissionTopRun,
+  TemplateRow,
 } from "@/lib/api";
 import { DeckPageShell } from "@/components/DeckPageShell";
 import { DeckCard, DeckBtn, MetricTile } from "@/components/DeckOps";
@@ -18,6 +19,7 @@ import type { StatusVariant } from "@/components/ds/StatusPill";
 import { DataTable } from "@/components/ds/DataTable";
 import type { ColDef } from "@/components/ds/DataTable";
 import { Drawer } from "@/components/ds/Drawer";
+import { EmptyState, ErrorState, SkeletonTable } from "@/components/ds";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn } from "@/lib/utils";
 
@@ -639,6 +641,135 @@ function MissionsSummaryStrip({ missions }: { missions: MissionRow[] }) {
   );
 }
 
+// ── Templates Drawer (Wave 6) ─────────────────────────────────────────────────
+
+interface TemplatesDrawerProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+function TemplatesDrawer({ open, onClose }: TemplatesDrawerProps) {
+  const navigate = useNavigate();
+  const [templates, setTemplates] = useState<TemplateRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<TemplateRow | null>(null);
+  const [title, setTitle] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api
+      .getTemplates()
+      .then((r) => setTemplates(r.templates))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (open) load();
+  }, [open, load]);
+
+  function handleClose() {
+    setSelected(null);
+    setTitle("");
+    setSubmitError(null);
+    onClose();
+  }
+
+  async function handleInstantiate() {
+    if (!selected) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const result = await api.instantiateTemplate(selected.id, title ? { title } : undefined);
+      handleClose();
+      navigate(`/missions?mission=${encodeURIComponent(result.mission_id)}`);
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Drawer open={open} onClose={handleClose} title="New Mission from Template" width={480}>
+      <div className="flex flex-col gap-4 p-1">
+        {loading && <SkeletonTable rows={3} cols={1} />}
+        {error && <ErrorState error={new Error(error)} onRetry={load} />}
+        {!loading && !error && templates.length === 0 && (
+          <EmptyState
+            icon="📋"
+            title="No templates available"
+            description="Ask an admin to create mission templates."
+          />
+        )}
+        {!loading && !error && templates.length > 0 && (
+          <div className="flex flex-col gap-2">
+            {templates.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setSelected(selected?.id === t.id ? null : t)}
+                className={cn(
+                  "text-left rounded-lg border p-3 transition-colors focus-visible:outline-none focus-visible:ring-2",
+                  selected?.id === t.id
+                    ? "border-[var(--dsd-accent-primary)] bg-[var(--dsd-layer-overlay)]"
+                    : "border-[var(--dsd-border-subtle)] hover:border-[var(--dsd-border-emphasis)] bg-[var(--dsd-layer-surface)]",
+                )}
+              >
+                <p className="text-sm font-semibold text-[var(--dsd-text-primary)]">{t.name}</p>
+                <p className="text-xs text-[var(--dsd-text-secondary)] mt-0.5">{t.description}</p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--dsd-layer-overlay)] border border-[var(--dsd-border-subtle)] text-[var(--dsd-text-faint)]">
+                    board: {t.creates.board}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--dsd-layer-overlay)] border border-[var(--dsd-border-subtle)] text-[var(--dsd-text-faint)]">
+                    {t.creates.tasks_count} tasks
+                  </span>
+                  {t.creates.cron && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--dsd-layer-overlay)] border border-[var(--dsd-border-subtle)] text-[var(--dsd-text-faint)]">
+                      cron: {t.creates.cron}
+                    </span>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selected && (
+          <div className="flex flex-col gap-2 pt-2 border-t border-[var(--dsd-border-subtle)]">
+            <label className="text-xs font-medium text-[var(--dsd-text-secondary)]">
+              Mission title (optional)
+            </label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={selected.name}
+              className="rounded border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-surface)] px-3 py-1.5 text-sm text-[var(--dsd-text-primary)] placeholder:text-[var(--dsd-text-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dsd-border-focus)]"
+            />
+            {submitError && (
+              <p className="text-xs text-[var(--dsd-status-error)]">{submitError}</p>
+            )}
+            <DeckBtn
+              onClick={handleInstantiate}
+              disabled={submitting}
+              className="mt-1"
+            >
+              {submitting ? <Spinner className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+              Create Mission
+            </DeckBtn>
+          </div>
+        )}
+      </div>
+    </Drawer>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function MissionsPage() {
@@ -649,6 +780,7 @@ export default function MissionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<MissionRow | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -668,13 +800,19 @@ export default function MissionsPage() {
 
   useLayoutEffect(() => {
     setEnd(
-      <DeckBtn onClick={load} disabled={loading} ghost>
-        {loading ? <Spinner className="h-3.5 w-3.5" /> : <RefreshCw className="h-3.5 w-3.5" />}
-        Refresh
-      </DeckBtn>,
+      <div className="flex items-center gap-2">
+        <DeckBtn onClick={() => setTemplatesOpen(true)}>
+          <Plus className="h-3.5 w-3.5" />
+          New Mission
+        </DeckBtn>
+        <DeckBtn onClick={load} disabled={loading} ghost>
+          {loading ? <Spinner className="h-3.5 w-3.5" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          Refresh
+        </DeckBtn>
+      </div>,
     );
     return () => setEnd(null);
-  }, [loading, load, setEnd]);
+  }, [loading, load, setEnd, setTemplatesOpen]);
 
   function openMission(m: MissionRow) {
     setSelected(m);
@@ -718,6 +856,11 @@ export default function MissionsPage() {
         mission={selected}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
+      />
+
+      <TemplatesDrawer
+        open={templatesOpen}
+        onClose={() => setTemplatesOpen(false)}
       />
     </>
   );

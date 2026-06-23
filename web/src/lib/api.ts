@@ -1245,9 +1245,35 @@ export const api = {
   getMission: (missionId: string) =>
     fetchJSON<MissionDetailResponse>(`/api/missions/${encodeURIComponent(missionId)}`),
 
-  // ── Command Deck Overview ──────────────────────────────────────────────────
+  // ── Command Desk Overview ──────────────────────────────────────────────────
   getCommandDeckOverview: () =>
     fetchJSON<CommandDeckOverviewResponse>("/api/command-deck/overview"),
+
+  // ── Analytics Overview (Wave 6) ────────────────────────────────────────────
+  getAnalyticsOverview: (days: number) =>
+    fetchJSON<AnalyticsOverviewResponse>(`/api/analytics/overview?days=${days}`),
+
+  // ── Observability Alerts ───────────────────────────────────────────────────
+  getAlerts: () =>
+    fetchJSON<AlertsResponse>("/api/observability/alerts"),
+
+  // ── Mission Templates ──────────────────────────────────────────────────────
+  getTemplates: () =>
+    fetchJSON<TemplatesResponse>("/api/templates"),
+
+  instantiateTemplate: (id: string, body?: { title?: string; owner?: string }) =>
+    fetchJSON<InstantiateTemplateResponse>(
+      `/api/templates/${encodeURIComponent(id)}/instantiate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+      },
+    ),
+
+  // ── Traces by session ─────────────────────────────────────────────────────
+  getTracesBySession: (sessionId: string) =>
+    fetchJSON<TracesResponse>(`/api/traces?session_id=${encodeURIComponent(sessionId)}`),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -2701,4 +2727,95 @@ export interface CommandDeckOverviewResponse {
   costs: Record<string, unknown>;
   missions: { count: number };
   tracer: CommandDeckTracerSummary;
+}
+
+// ── Analytics Overview (Wave 6) ──────────────────────────────────────────────
+
+export interface AnalyticsOverviewThroughputDay {
+  day: string;
+  count: number;
+}
+
+export interface AnalyticsOverviewThroughput {
+  traces_per_day: AnalyticsOverviewThroughputDay[];
+  spans_total: number;
+  traces_total: number;
+}
+
+export interface AnalyticsOverviewSuccessRate {
+  ok: number;
+  error: number;
+  rate: number;
+}
+
+export interface AnalyticsOverviewLatency {
+  avg_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+}
+
+export interface AnalyticsOverviewTokenDay {
+  day: string;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface AnalyticsModelEfficiency {
+  model: string;
+  runs: number;
+  total_cost_usd: number;
+  avg_cost_per_run: number;
+  success_rate: number;
+  avg_latency_ms: number;
+}
+
+export interface AnalyticsOverviewResponse {
+  throughput: AnalyticsOverviewThroughput;
+  success_rate: AnalyticsOverviewSuccessRate;
+  latency: AnalyticsOverviewLatency;
+  token_usage: AnalyticsOverviewTokenDay[];
+  model_efficiency: AnalyticsModelEfficiency[];
+}
+
+// ── Observability Alerts ─────────────────────────────────────────────────────
+
+export type AlertSeverity = "critical" | "warning" | "info";
+
+export interface AlertRow {
+  id: string;
+  severity: AlertSeverity;
+  kind: string;
+  title: string;
+  detail: string;
+  value: number;
+  threshold: number;
+  ts: string;
+}
+
+export interface AlertsResponse {
+  alerts: AlertRow[];
+}
+
+// ── Mission Templates ────────────────────────────────────────────────────────
+
+export interface TemplateCreates {
+  board: string;
+  tasks_count: number;
+  cron?: string;
+}
+
+export interface TemplateRow {
+  id: string;
+  name: string;
+  description: string;
+  creates: TemplateCreates;
+}
+
+export interface TemplatesResponse {
+  templates: TemplateRow[];
+}
+
+export interface InstantiateTemplateResponse {
+  mission_id: string;
+  board_slug: string;
 }

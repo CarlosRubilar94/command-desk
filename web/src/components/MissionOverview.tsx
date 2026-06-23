@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { AlertTriangle, Info } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
   MissionRow,
   FleetMetricsResponse,
   CostsSummaryResponse,
+  AlertRow,
+  AlertSeverity,
 } from "@/lib/api";
 import { MetricTile } from "@/components/DeckOps";
 import { StatusPill } from "@/components/ds/StatusPill";
@@ -27,6 +30,107 @@ function missionStatusVariant(status: string): StatusVariant {
   if (s === "blocked" || s === "error" || s === "failed") return "error";
   if (s === "paused" || s === "waiting") return "warning";
   return "neutral";
+}
+
+// ── Alerts Strip (Wave 6) ──────────────────────────────────────────────────────
+
+const SEVERITY_STYLES: Record<AlertSeverity, { border: string; bg: string; text: string; dot: string }> = {
+  critical: {
+    border: "border-[var(--dsd-status-error)]",
+    bg: "bg-[var(--dsd-status-error-bg)]",
+    text: "text-[var(--dsd-status-error)]",
+    dot: "bg-[var(--dsd-status-error)]",
+  },
+  warning: {
+    border: "border-[var(--dsd-status-warning)]",
+    bg: "bg-[var(--dsd-status-warning-bg)]",
+    text: "text-[var(--dsd-status-warning)]",
+    dot: "bg-[var(--dsd-status-warning)]",
+  },
+  info: {
+    border: "border-[var(--dsd-status-info)]",
+    bg: "bg-[var(--dsd-status-info-bg)]",
+    text: "text-[var(--dsd-status-info)]",
+    dot: "bg-[var(--dsd-status-info)]",
+  },
+};
+
+function AlertsStrip() {
+  const [alerts, setAlerts] = useState<AlertRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api
+      .getAlerts()
+      .then((r) => setAlerts(r.alerts))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading || alerts.length === 0) return null;
+
+  const critical = alerts.filter((a) => a.severity === "critical");
+  const warning = alerts.filter((a) => a.severity === "warning");
+  const info = alerts.filter((a) => a.severity === "info");
+
+  const topAlerts = [
+    ...critical.slice(0, 2),
+    ...warning.slice(0, 2),
+    ...info.slice(0, 1),
+  ].slice(0, 4);
+
+  const dominantSeverity: AlertSeverity =
+    critical.length > 0 ? "critical" : warning.length > 0 ? "warning" : "info";
+  const styles = SEVERITY_STYLES[dominantSeverity];
+
+  return (
+    <div
+      role="alert"
+      className={`col-12 rounded-lg border px-3 py-2 flex flex-col gap-1.5 ${styles.border} ${styles.bg}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          {dominantSeverity === "info" ? (
+            <Info className={`h-3.5 w-3.5 shrink-0 ${styles.text}`} />
+          ) : (
+            <AlertTriangle className={`h-3.5 w-3.5 shrink-0 ${styles.text}`} />
+          )}
+          <span className={`text-xs font-semibold ${styles.text}`}>
+            {alerts.length} alert{alerts.length !== 1 ? "s" : ""}
+            {critical.length > 0 && ` · ${critical.length} critical`}
+            {warning.length > 0 && ` · ${warning.length} warning`}
+          </span>
+        </div>
+        <Link
+          to="/ops"
+          className={`text-[10px] hover:underline shrink-0 ${styles.text}`}
+        >
+          View in Ops →
+        </Link>
+      </div>
+      <div className="flex flex-col gap-0.5">
+        {topAlerts.map((a) => {
+          const s = SEVERITY_STYLES[a.severity];
+          return (
+            <div key={a.id} className="flex items-start gap-1.5 text-xs">
+              <span className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${s.dot}`} />
+              <span className="text-[var(--dsd-text-secondary)] truncate">
+                <span className={`font-medium ${s.text}`}>{a.title}</span>
+                {a.detail && (
+                  <span className="text-[var(--dsd-text-faint)] ml-1">— {a.detail}</span>
+                )}
+              </span>
+            </div>
+          );
+        })}
+        {alerts.length > topAlerts.length && (
+          <p className="text-[10px] text-[var(--dsd-text-faint)] pl-3">
+            +{alerts.length - topAlerts.length} more
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── Mission Overview panel ─────────────────────────────────────────────────────
@@ -94,7 +198,9 @@ export function MissionOverview() {
   }
 
   return (
-    <div className="col-12 flex flex-col gap-3 rounded-[var(--dsd-radius-lg)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-base)] p-4">
+    <div className="col-12 flex flex-col gap-3">
+      <AlertsStrip />
+    <div className="rounded-[var(--dsd-radius-lg)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-base)] p-4">
       {/* Header row */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -190,6 +296,7 @@ export function MissionOverview() {
           </Link>
         </p>
       )}
+    </div>
     </div>
   );
 }

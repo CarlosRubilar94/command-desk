@@ -12468,6 +12468,75 @@ class MissionUpsertRequest(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class TemplateInstantiateRequest(BaseModel):
+    title: Optional[str] = None
+    owner: Optional[str] = None
+
+
+def _slugify_board_name(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    if not slug:
+        return "mission"
+    return slug[:48]
+
+
+def _allocate_template_board_slug(base_slug: str) -> str:
+    from hermes_cli import kanban_db
+
+    candidate = _slugify_board_name(base_slug)
+    if not kanban_db.board_exists(candidate):
+        return candidate
+    suffix = 2
+    while True:
+        bounded = candidate[:44]
+        trial = f"{bounded}-{suffix}"
+        if not kanban_db.board_exists(trial):
+            return trial
+        suffix += 1
+
+
+def _seed_template_tasks(
+    *,
+    conn: Any,
+    kanban_db: Any,
+    board_slug: str,
+    template: Dict[str, Any],
+    owner: Optional[str],
+) -> int:
+    tasks = template.get("creates", {}).get("tasks", [])
+    if not isinstance(tasks, list):
+        return 0
+    created = 0
+    for item in tasks:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        requested_status = str(item.get("status") or "todo").strip().lower() or "todo"
+        task_owner = str(item.get("assignee") or owner or "").strip() or None
+        body = item.get("body")
+        if body is not None:
+            body = str(body)
+        task_id = kanban_db.create_task(
+            conn,
+            title=title,
+            body=body,
+            assignee=task_owner,
+            initial_status="running",
+            board=board_slug,
+        )
+        if requested_status != "running":
+            try:
+                valid_statuses = set(getattr(kanban_db, "VALID_STATUSES", set()))
+                status_to_write = requested_status if requested_status in valid_statuses else "todo"
+                conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status_to_write, task_id))
+            except Exception:
+                conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (task_id,))
+        created += 1
+    return created
+
+
 def _tracer_health_payload() -> Dict[str, Any]:
     payload = {
         "dropped_spans": 0,
@@ -12498,6 +12567,98 @@ def _tracer_health_payload() -> Dict[str, Any]:
     return payload
 
 
+@app.get("/api/templates")
+async def get_templates(profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import mission_templates
+
+        return {"templates": mission_templates.list_template_catalog()}
+
+
+@app.post("/api/templates/{template_id}/instantiate")
+async def instantiate_template(
+    template_id: str,
+    body: Optional[TemplateInstantiateRequest] = None,
+    profile: Optional[str] = None,
+):
+    with _config_profile_scope(profile):
+        from hermes_cli import kanban_db, mission_templates, traces_store
+
+        template = mission_templates.get_template(template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail=f"Unknown template: {template_id}")
+
+        default_board_name = str(template.get("creates", {}).get("board") or template.get("name") or "Mission")
+        requested_title = str(body.title).strip() if body and body.title is not None else ""
+        board_title = requested_title or default_board_name
+
+        default_owner = str(template.get("defaults", {}).get("assignee") or "").strip()
+        requested_owner = str(body.owner).strip() if body and body.owner is not None else ""
+        owner = requested_owner or default_owner or None
+
+        board_slug = _allocate_template_board_slug(board_title)
+        kanban_db.create_board(
+            board_slug,
+            name=board_title,
+            description=str(template.get("description") or board_title),
+        )
+
+        conn = kanban_db.connect(board=board_slug)
+        try:
+            _seed_template_tasks(
+                conn=conn,
+                kanban_db=kanban_db,
+                board_slug=board_slug,
+                template=template,
+                owner=owner,
+            )
+        finally:
+            conn.close()
+
+        mission_id = _derived_mission_id(board_slug)
+        model_tier = str(template.get("defaults", {}).get("model_tier") or "").strip()
+        mission = traces_store.upsert_mission(
+            {
+                "id": mission_id,
+                "board_slug": board_slug,
+                "title": board_title,
+                "status": "todo",
+                "owner": owner,
+                "tags": [
+                    f"template:{template['id']}",
+                    *([f"model-tier:{model_tier}"] if model_tier else []),
+                ],
+            }
+        )
+
+        response: Dict[str, Any] = {
+            "mission_id": str(mission.get("id") or mission_id),
+            "board_slug": board_slug,
+        }
+        cron_spec = template.get("cron")
+        if isinstance(cron_spec, dict):
+            try:
+                cron_job = _call_cron_for_profile(
+                    profile,
+                    "create_job",
+                    prompt=str(cron_spec.get("prompt") or f"Watch mission {board_slug}"),
+                    schedule=str(cron_spec.get("schedule") or "every 30m"),
+                    name=str(cron_spec.get("name") or f"{board_title} automation"),
+                    deliver=str(cron_spec.get("deliver") or "local"),
+                )
+                if isinstance(cron_job, dict):
+                    response["cron_job_id"] = cron_job.get("id")
+            except HTTPException as exc:
+                if profile:
+                    raise
+                _log.warning("Template %s cron unavailable for default profile: %s", template_id, exc.detail)
+                response["warning"] = f"Cron skipped: {exc.detail}"
+            except Exception as exc:
+                _log.warning("Template %s instantiated without cron job: %s", template_id, exc)
+                response["warning"] = f"Cron skipped: {exc}"
+        return response
+
+
 @app.get("/api/traces")
 async def get_traces(
     limit: int = 50,
@@ -12505,6 +12666,7 @@ async def get_traces(
     model: Optional[str] = None,
     agent: Optional[str] = None,
     status: Optional[str] = None,
+    session_id: Optional[str] = None,
     since: Optional[str] = None,
     until: Optional[str] = None,
     profile: Optional[str] = None,
@@ -12519,6 +12681,8 @@ async def get_traces(
             filters["agent"] = agent
         if status:
             filters["status"] = status
+        if session_id:
+            filters["session_id"] = session_id
         start_time = _parse_optional_epoch_param(since, field_name="since")
         end_time = _parse_optional_epoch_param(until, field_name="until")
         if start_time is not None:
