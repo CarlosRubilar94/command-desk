@@ -12780,6 +12780,12 @@ class MissionUpsertRequest(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class OpsAutopilotDiagnoseRequest(BaseModel):
+    incident_id: Optional[str] = None
+    incident: Optional[Dict[str, Any]] = None
+    assignee_profile: Optional[str] = None
+
+
 class TemplateInstantiateRequest(BaseModel):
     title: Optional[str] = None
     owner: Optional[str] = None
@@ -13413,8 +13419,7 @@ async def post_mission(body: MissionUpsertRequest, profile: Optional[str] = None
         return {"mission": payload}
 
 
-@app.get("/api/ops/fleet-metrics")
-async def get_fleet_metrics(profile: Optional[str] = None):
+def _build_fleet_metrics_payload(profile: Optional[str]) -> Dict[str, Any]:
     with _config_profile_scope(profile):
         from hermes_cli import traces_store
 
@@ -13533,6 +13538,184 @@ async def get_fleet_metrics(profile: Optional[str] = None):
             "cost_today_usd": cost_today_usd,
             "tracer": _tracer_health_payload(),
         }
+
+
+def _autopilot_report_scaffold(incident: Dict[str, Any]) -> Dict[str, Any]:
+    title = str(incident.get("title") or "Operational incident").strip() or "Operational incident"
+    detail = str(incident.get("detail") or "").strip()
+    suggested = str(incident.get("suggested_action") or "Investigate traces and queue state.").strip()
+    severity = str(incident.get("severity") or "warning").strip()
+    return {
+        "summary": f"{title} ({severity})",
+        "suspected_cause": detail or "Signal thresholds were exceeded in recent fleet telemetry.",
+        "suggested_fix": suggested,
+        "next_steps": [
+            "Review evidence attached to the incident.",
+            "Validate queue and trace state for affected runs.",
+            "Apply the suggested fix and monitor recurrence.",
+        ],
+    }
+
+
+def _resolve_autopilot_incident(
+    incidents: List[Dict[str, Any]],
+    body: OpsAutopilotDiagnoseRequest,
+) -> Dict[str, Any]:
+    if body.incident_id:
+        target_id = str(body.incident_id).strip()
+        if not target_id:
+            raise HTTPException(status_code=400, detail="incident_id cannot be empty")
+        target = next((item for item in incidents if str(item.get("id")) == target_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return target
+    if isinstance(body.incident, dict):
+        raw_id = str(body.incident.get("id") or "").strip()
+        raw_kind = str(body.incident.get("kind") or "custom").strip() or "custom"
+        if not raw_id:
+            raw_id = f"{raw_kind}:{int(time.time())}"
+        return {
+            "id": raw_id,
+            "kind": raw_kind,
+            "severity": str(body.incident.get("severity") or "warning"),
+            "title": str(body.incident.get("title") or "Operational incident"),
+            "detail": str(body.incident.get("detail") or "Manual incident submitted by operator."),
+            "evidence": body.incident.get("evidence") if isinstance(body.incident.get("evidence"), dict) else {},
+            "suggested_action": str(body.incident.get("suggested_action") or "Open a diagnostic mission."),
+        }
+    raise HTTPException(status_code=400, detail="Provide incident_id or incident payload")
+
+
+def _create_autopilot_diagnostic(
+    *,
+    profile: Optional[str],
+    incident: Dict[str, Any],
+    assignee_profile: Optional[str],
+) -> Dict[str, Any]:
+    from hermes_cli import kanban_db, mission_templates, traces_store
+
+    assignee = str(assignee_profile or profile or "").strip() or "ops"
+    template = mission_templates.get_template("ops-watchdog") or {
+        "id": "ops-watchdog",
+        "name": "Ops Watchdog",
+        "description": "Operator-triggered diagnostics for operational incidents.",
+        "creates": {"tasks": []},
+    }
+
+    board_title = f"Diagnostic — {str(incident.get('title') or 'ops incident').strip()}"
+    board_slug = _allocate_template_board_slug(board_title)
+    kanban_task_id: Optional[str] = None
+    kanban_warning: Optional[str] = None
+    try:
+        kanban_db.create_board(
+            board_slug,
+            name=board_title,
+            description=str(template.get("description") or board_title),
+        )
+        conn = kanban_db.connect(board=board_slug)
+        try:
+            _seed_template_tasks(
+                conn=conn,
+                kanban_db=kanban_db,
+                board_slug=board_slug,
+                template=template,
+                owner=assignee,
+            )
+            detail = str(incident.get("detail") or "").strip()
+            evidence = incident.get("evidence")
+            evidence_blob = json.dumps(evidence, ensure_ascii=False, indent=2) if isinstance(evidence, dict) else "{}"
+            task_body = (
+                f"Incident ID: {incident.get('id')}\n"
+                f"Kind: {incident.get('kind')}\n"
+                f"Severity: {incident.get('severity')}\n"
+                f"Detail: {detail}\n\n"
+                f"Evidence:\n{evidence_blob}\n"
+            )
+            kanban_task_id = kanban_db.create_task(
+                conn,
+                title=f"Diagnose incident: {incident.get('title') or incident.get('id')}",
+                body=task_body,
+                assignee=assignee,
+                initial_status="running",
+                board=board_slug,
+            )
+            conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (kanban_task_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        kanban_warning = str(exc)
+
+    mission_id = _derived_mission_id(board_slug)
+    mission = traces_store.upsert_mission(
+        {
+            "id": mission_id,
+            "board_slug": board_slug,
+            "title": board_title,
+            "status": "todo",
+            "owner": assignee,
+            "tags": [
+                "template:ops-watchdog",
+                "diagnostic",
+                f"incident:{incident.get('kind') or 'unknown'}",
+                f"incident-id:{incident.get('id') or 'unknown'}",
+            ],
+        }
+    )
+    report = _autopilot_report_scaffold(incident)
+    response: Dict[str, Any] = {
+        "mission_id": str(mission.get("id") or mission_id),
+        "kanban_task_id": kanban_task_id,
+        "report": report,
+    }
+    if kanban_warning:
+        response["kanban_warning"] = f"Kanban task creation failed, mission registry kept: {kanban_warning}"
+    return response
+
+
+@app.get("/api/ops/fleet-metrics")
+async def get_fleet_metrics(profile: Optional[str] = None):
+    return _build_fleet_metrics_payload(profile)
+
+
+@app.get("/api/ops/autopilot/incidents")
+async def get_autopilot_incidents(profile: Optional[str] = None):
+    from hermes_cli.ops_autopilot import detect_incidents
+
+    with _config_profile_scope(profile):
+        config = load_config()
+        fleet_metrics = _build_fleet_metrics_payload(profile)
+        cost_status = _cost_guardrails_payload(profile).get("status", {})
+        incidents = detect_incidents(
+            fleet_metrics=fleet_metrics,
+            cost_status=cost_status if isinstance(cost_status, dict) else {},
+            config=config.get("ops_autopilot") if isinstance(config, dict) else {},
+        )
+        return {"incidents": incidents}
+
+
+@app.post("/api/ops/autopilot/diagnose")
+async def post_autopilot_diagnose(
+    body: OpsAutopilotDiagnoseRequest,
+    profile: Optional[str] = None,
+):
+    from hermes_cli.ops_autopilot import detect_incidents
+
+    with _config_profile_scope(profile):
+        config = load_config()
+        fleet_metrics = _build_fleet_metrics_payload(profile)
+        cost_status = _cost_guardrails_payload(profile).get("status", {})
+        incidents = detect_incidents(
+            fleet_metrics=fleet_metrics,
+            cost_status=cost_status if isinstance(cost_status, dict) else {},
+            config=config.get("ops_autopilot") if isinstance(config, dict) else {},
+        )
+        incident = _resolve_autopilot_incident(incidents, body)
+        return _create_autopilot_diagnostic(
+            profile=profile,
+            incident=incident,
+            assignee_profile=body.assignee_profile,
+        )
 
 
 @app.get("/api/costs/by-mission")

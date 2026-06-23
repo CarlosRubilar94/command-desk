@@ -1242,6 +1242,26 @@ export const api = {
   // ── Fleet Metrics ─────────────────────────────────────────────────────
   getFleetMetrics: () =>
     fetchJSON<FleetMetricsResponse>("/api/ops/fleet-metrics"),
+  getAutopilotIncidents: (profile = getManagementProfile()) =>
+    fetchJSON<AutopilotIncidentsResponse>(
+      appendProfileParam("/api/ops/autopilot/incidents", profile),
+    ),
+  createAutopilotDiagnostic: (
+    body: {
+      incident_id?: string;
+      incident?: AutopilotIncident;
+      assignee_profile?: string;
+    },
+    profile = getManagementProfile(),
+  ) =>
+    fetchJSON<AutopilotDiagnoseResponse>(
+      appendProfileParam("/api/ops/autopilot/diagnose", profile),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
 
   // ── Costs by Mission ──────────────────────────────────────────────────
   getCostsByMission: (days: number, profile = getManagementProfile()) =>
@@ -2707,6 +2727,34 @@ export interface FleetMetricsResponse {
     queue_size: number;
     healthy: boolean;
   };
+}
+
+export interface AutopilotIncident {
+  id: string;
+  kind: string;
+  severity: "critical" | "warning" | "info" | string;
+  title: string;
+  detail: string;
+  evidence: Record<string, unknown>;
+  suggested_action: string;
+}
+
+export interface AutopilotIncidentsResponse {
+  incidents: AutopilotIncident[];
+}
+
+export interface AutopilotDiagnoseReport {
+  summary: string;
+  suspected_cause: string;
+  suggested_fix: string;
+  next_steps: string[];
+}
+
+export interface AutopilotDiagnoseResponse {
+  mission_id: string;
+  kanban_task_id: string | null;
+  report: AutopilotDiagnoseReport;
+  kanban_warning?: string;
 }
 
 // ── Costs by Mission types ────────────────────────────────────────────────────
