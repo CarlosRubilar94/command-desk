@@ -83,7 +83,7 @@ import type { SystemAction } from "@/contexts/system-actions-context";
 import ChatPage from "@/pages/ChatPage";
 // AgentHomePage stays eager — it is the landing page; making it lazy
 // would cause a skeleton flash on every fresh load.
-import { AgentHomePage } from "@/pages/DevssdPages";
+import { AgentHomePage } from "@/pages/AgentHomePage";
 import { SkeletonTable } from "@/components/ds/Skeleton";
 
 // ── Lazy page imports ──────────────────────────────────────────────────────────
@@ -115,18 +115,18 @@ const RoutingPage = lazy(() => import("@/pages/RoutingPage")) as unknown as Comp
 const MissionsPage = lazy(() => import("@/pages/MissionsPage")) as unknown as ComponentType;
 const MissionBuilderPage = lazy(() => import("@/pages/MissionBuilderPage")) as unknown as ComponentType;
 const ReplayPage = lazy(() => import("@/pages/ReplayPage")) as unknown as ComponentType;
-// Named exports from DevssdPages — shim to default export for React.lazy
+// Named exports from DevssdDeckPages — shim to default export for React.lazy
 const BitwardenStatusPage = lazy(() =>
-  import("@/pages/DevssdPages").then((m) => ({ default: m.BitwardenStatusPage })),
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.BitwardenStatusPage })),
 ) as unknown as ComponentType;
 const CommandDeckOpsPage = lazy(() =>
-  import("@/pages/DevssdPages").then((m) => ({ default: m.CommandDeckOpsPage })),
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.CommandDeckOpsPage })),
 ) as unknown as ComponentType;
 const DevssdDoctorPage = lazy(() =>
-  import("@/pages/DevssdPages").then((m) => ({ default: m.DevssdDoctorPage })),
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.DevssdDoctorPage })),
 ) as unknown as ComponentType;
 const GatewayStatusPage = lazy(() =>
-  import("@/pages/DevssdPages").then((m) => ({ default: m.GatewayStatusPage })),
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.GatewayStatusPage })),
 ) as unknown as ComponentType;
 import { CommandDeckUX } from "@/components/CommandPalette";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";

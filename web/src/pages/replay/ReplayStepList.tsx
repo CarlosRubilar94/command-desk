@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SpanRow } from "@/lib/api";
 import { StatusPill } from "@/components/ds/StatusPill";
 import { cn } from "@/lib/utils";
@@ -19,12 +19,51 @@ export function ReplayStepList({
   totalMs,
   onJumpTo,
 }: ReplayStepListProps) {
+  const listRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<HTMLButtonElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
   const depthMap = buildDepthMap(spans);
+  const ROW_ESTIMATE = 88;
+  const OVERSCAN_ROWS = 8;
+
+  useEffect(() => {
+    const node = listRef.current;
+    if (!node) return;
+    const measure = () => setViewportHeight(node.clientHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [currentStep]);
+
+  const { start, end, topPad, bottomPad } = useMemo(() => {
+    const total = spans.length;
+    const visibleCount = Math.max(1, Math.ceil(viewportHeight / ROW_ESTIMATE));
+    let nextStart = Math.max(0, Math.floor(scrollTop / ROW_ESTIMATE) - OVERSCAN_ROWS);
+    let nextEnd = Math.min(total, nextStart + visibleCount + OVERSCAN_ROWS * 2);
+
+    if (currentStep < nextStart) {
+      nextStart = Math.max(0, currentStep - OVERSCAN_ROWS);
+      nextEnd = Math.min(total, nextStart + visibleCount + OVERSCAN_ROWS * 2);
+    } else if (currentStep >= nextEnd) {
+      nextEnd = Math.min(total, currentStep + OVERSCAN_ROWS + 1);
+      nextStart = Math.max(0, nextEnd - visibleCount - OVERSCAN_ROWS * 2);
+    }
+
+    return {
+      start: nextStart,
+      end: nextEnd,
+      topPad: nextStart * ROW_ESTIMATE,
+      bottomPad: Math.max(0, (total - nextEnd) * ROW_ESTIMATE),
+    };
+  }, [currentStep, scrollTop, spans.length, viewportHeight]);
+
+  const visible = spans.slice(start, end);
 
   if (spans.length === 0) {
     return (
@@ -40,8 +79,12 @@ export function ReplayStepList({
       aria-label="Trace steps"
       className="flex flex-col overflow-y-auto"
       style={{ maxHeight: "100%" }}
+      ref={listRef}
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
     >
-      {spans.map((span, i) => {
+      {topPad > 0 ? <div aria-hidden style={{ height: topPad }} /> : null}
+      {visible.map((span, idx) => {
+        const i = start + idx;
         const isActive = i === currentStep;
         const isFuture = i > currentStep;
         const depth = depthMap.get(span.span_id) ?? 0;
@@ -69,7 +112,7 @@ export function ReplayStepList({
                   ? "bg-transparent opacity-50 hover:opacity-70 hover:bg-[var(--dsd-layer-overlay)]/20"
                   : "bg-transparent hover:bg-[var(--dsd-layer-overlay)]/30",
             )}
-            style={{ paddingLeft: `${depth * 12 + 12}px` }}
+            style={{ minHeight: ROW_ESTIMATE, paddingLeft: `${depth * 12 + 12}px` }}
           >
             {/* Top row: step number + kind + name + status */}
             <div className="flex items-center gap-2 min-w-0">
@@ -136,6 +179,7 @@ export function ReplayStepList({
           </button>
         );
       })}
+      {bottomPad > 0 ? <div aria-hidden style={{ height: bottomPad }} /> : null}
     </div>
   );
 }
