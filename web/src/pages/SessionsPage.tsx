@@ -25,6 +25,7 @@ import {
   Hash,
   X,
   Play,
+  Film,
   Eraser,
   Download,
   Pencil,
@@ -479,6 +480,20 @@ function SessionRow({
         }}
       >
         <Eye />
+      </Button>
+
+      <Button
+        ghost
+        size="icon"
+        className="text-muted-foreground hover:text-success"
+        aria-label="Open in Replay"
+        title="Open in Replay"
+        onClick={(e) => {
+          e.stopPropagation();
+          navigate(`/replay?session=${encodeURIComponent(session.id)}`);
+        }}
+      >
+        <Film />
       </Button>
 
       <Button

@@ -78,12 +78,9 @@ import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { ProfileScopeBanner } from "@/components/ProfileScopeBanner";
 import { useSystemActions } from "@/contexts/useSystemActions";
 import type { SystemAction } from "@/contexts/system-actions-context";
-// ChatPage stays eager — it mounts persistently outside <Routes> and
-// must survive route changes without unmounting.
-import ChatPage from "@/pages/ChatPage";
 // AgentHomePage stays eager — it is the landing page; making it lazy
 // would cause a skeleton flash on every fresh load.
-import { AgentHomePage } from "@/pages/DevssdPages";
+import { AgentHomePage } from "@/pages/AgentHomePage";
 import { SkeletonTable } from "@/components/ds/Skeleton";
 
 // ── Lazy page imports ──────────────────────────────────────────────────────────
@@ -94,6 +91,9 @@ const ConfigPage = lazy(() => import("@/pages/ConfigPage")) as unknown as Compon
 const DocsPage = lazy(() => import("@/pages/DocsPage")) as unknown as ComponentType;
 const EnvPage = lazy(() => import("@/pages/EnvPage")) as unknown as ComponentType;
 const FilesPage = lazy(() => import("@/pages/FilesPage")) as unknown as ComponentType;
+const ChatPage = lazy(() => import("@/pages/ChatPage")) as unknown as ComponentType<{
+  isActive?: boolean;
+}>;
 const SessionsPage = lazy(() => import("@/pages/SessionsPage")) as unknown as ComponentType;
 const LogsPage = lazy(() => import("@/pages/LogsPage")) as unknown as ComponentType;
 const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage")) as unknown as ComponentType;
@@ -113,22 +113,26 @@ const CostsPage = lazy(() => import("@/pages/CostsPage")) as unknown as Componen
 const TracesPage = lazy(() => import("@/pages/TracesPage")) as unknown as ComponentType;
 const RoutingPage = lazy(() => import("@/pages/RoutingPage")) as unknown as ComponentType;
 const MissionsPage = lazy(() => import("@/pages/MissionsPage")) as unknown as ComponentType;
-// Named exports from DevssdPages — shim to default export for React.lazy
+const MissionBuilderPage = lazy(() => import("@/pages/MissionBuilderPage")) as unknown as ComponentType;
+const ReplayPage = lazy(() => import("@/pages/ReplayPage")) as unknown as ComponentType;
+// Named exports from DevssdDeckPages — shim to default export for React.lazy
 const BitwardenStatusPage = lazy(() =>
-  import("@/pages/DevssdPages").then((m) => ({ default: m.BitwardenStatusPage })),
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.BitwardenStatusPage })),
 ) as unknown as ComponentType;
 const CommandDeckOpsPage = lazy(() =>
-  import("@/pages/DevssdPages").then((m) => ({ default: m.CommandDeckOpsPage })),
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.CommandDeckOpsPage })),
 ) as unknown as ComponentType;
 const DevssdDoctorPage = lazy(() =>
-  import("@/pages/DevssdPages").then((m) => ({ default: m.DevssdDoctorPage })),
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.DevssdDoctorPage })),
 ) as unknown as ComponentType;
 const GatewayStatusPage = lazy(() =>
-  import("@/pages/DevssdPages").then((m) => ({ default: m.GatewayStatusPage })),
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.GatewayStatusPage })),
 ) as unknown as ComponentType;
 import { CommandDeckUX } from "@/components/CommandPalette";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import { ErrorBoundary } from "@/components/ds/ErrorBoundary";
+import { DensityProvider, useDensity } from "@/contexts/DensityContext";
 import { useI18n } from "@/i18n";
 import type { Translations } from "@/i18n/types";
 import { PluginPage, PluginSlot, usePlugins } from "@/plugins";
@@ -142,11 +146,52 @@ function RootRedirect() {
   return <Navigate to="/agent" replace />;
 }
 
+/** Compact/comfortable density toggle rendered in the sidebar footer. */
+function DensityToggle({ collapsed }: { collapsed: boolean }) {
+  const { density, toggleDensity } = useDensity();
+  const isCompact = density === "compact";
+  return (
+    <button
+      type="button"
+      onClick={toggleDensity}
+      aria-label={isCompact ? "Switch to comfortable density" : "Switch to compact density"}
+      aria-pressed={isCompact}
+      title={isCompact ? "Comfortable" : "Compact"}
+      className={cn(
+        "flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors",
+        "text-text-secondary hover:text-midground",
+        isCompact && "text-[var(--dsd-accent-primary)]",
+      )}
+    >
+      <span aria-hidden className="text-[13px] leading-none">{isCompact ? "⊟" : "⊞"}</span>
+      {!collapsed && (
+        <span className="hidden lg:inline">{isCompact ? "Compact" : "Cozy"}</span>
+      )}
+    </button>
+  );
+}
+
 /** Shown while a lazy-loaded page chunk is being fetched. */
 function PageLoadFallback() {
   return (
     <div className="deck-dashboard px-5 pt-6" aria-busy="true" aria-live="polite">
       <SkeletonTable rows={6} cols={5} />
+    </div>
+  );
+}
+
+function EmbeddedChatLoadFallback({ isChatRoute }: { isChatRoute: boolean }) {
+  if (!isChatRoute) return null;
+  return (
+    <div
+      className="flex min-h-0 min-w-0 flex-1 items-center justify-center"
+      aria-busy="true"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner />
+        <span>Loading chat…</span>
+      </div>
     </div>
   );
 }
@@ -182,6 +227,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/costs": CostsPage,
   "/traces": TracesPage,
   "/missions": MissionsPage,
+  "/missions/builder": MissionBuilderPage,
   "/routing": RoutingPage,
   "/doctor": DevssdDoctorPage,
   "/bitwarden": BitwardenStatusPage,
@@ -205,6 +251,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/config": ConfigPage,
   "/env": EnvPage,
   "/docs": DocsPage,
+  "/replay": ReplayPage,
 };
 
 // Route placeholder for /chat.  The persistent ChatPage host (rendered
@@ -420,6 +467,7 @@ const SIDEBAR_COLLAPSED_KEY = "hermes-sidebar-collapsed";
 const DECK_LAYOUT_ROUTES = new Set([
   "/agent",
   "/missions",
+  "/missions/builder",
   "/ops",
   "/costs",
   "/traces",
@@ -565,6 +613,7 @@ export default function App() {
   }, []);
 
   return (
+    <DensityProvider>
     <ProfileProvider>
     <div
       data-deck-theme="ops"
@@ -801,6 +850,14 @@ export default function App() {
                 >
                   <LanguageSwitcher collapsed={isDesktopCollapsed} dropUp />
                 </SidebarIconWithTooltip>
+
+                <SidebarIconWithTooltip
+                  collapsed={isDesktopCollapsed}
+                  label="Toggle density"
+                  tooltipWarmRef={tooltipWarmRef}
+                >
+                  <DensityToggle collapsed={isDesktopCollapsed} />
+                </SidebarIconWithTooltip>
               </div>
             </div>
 
@@ -842,6 +899,7 @@ export default function App() {
                 )}
               >
                 <ProfileKeyedRoutes>
+                  <ErrorBoundary>
                   <Suspense fallback={<PageLoadFallback />}>
                     <Routes>
                       {routes.map(({ key, path, element }) => (
@@ -855,6 +913,7 @@ export default function App() {
                       />
                     </Routes>
                   </Suspense>
+                  </ErrorBoundary>
                 </ProfileKeyedRoutes>
 
                 {embeddedChat &&
@@ -881,7 +940,9 @@ export default function App() {
                       )}
                       aria-hidden={!isChatRoute}
                     >
-                      <ChatPage isActive={isChatRoute} />
+                      <Suspense fallback={<EmbeddedChatLoadFallback isChatRoute={isChatRoute} />}>
+                        <ChatPage isActive={isChatRoute} />
+                      </Suspense>
                     </div>
                   ))}
               </div>
@@ -895,6 +956,7 @@ export default function App() {
       <CommandDeckUX />
     </div>
     </ProfileProvider>
+    </DensityProvider>
   );
 }
 

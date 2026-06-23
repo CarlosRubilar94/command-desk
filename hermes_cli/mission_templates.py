@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 
@@ -137,9 +140,47 @@ TEMPLATES: list[TemplateRecord] = [
 _TEMPLATES_BY_ID: dict[str, TemplateRecord] = {item["id"]: item for item in TEMPLATES}
 
 
+def _custom_templates_path() -> Path | None:
+    home = os.environ.get("HERMES_HOME", "").strip()
+    if not home:
+        return None
+    return Path(home) / "custom_templates.json"
+
+
+def load_custom_templates() -> list[TemplateRecord]:
+    path = _custom_templates_path()
+    if path is None or not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [t for t in data if isinstance(t, dict) and t.get("id")]
+    except Exception:
+        return []
+
+
+def save_custom_template(template: TemplateRecord) -> None:
+    path = _custom_templates_path()
+    if path is None:
+        raise RuntimeError("HERMES_HOME not set; cannot persist custom template")
+    existing: list[TemplateRecord] = []
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8")) or []
+        except Exception:
+            existing = []
+    # Replace if id already exists, else append
+    ids = {t.get("id") for t in existing}
+    if template.get("id") in ids:
+        existing = [t if t.get("id") != template.get("id") else template for t in existing]
+    else:
+        existing.append(template)
+    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def list_template_catalog() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for template in TEMPLATES:
+    all_templates = TEMPLATES + load_custom_templates()
+    for template in all_templates:
         creates = template.get("creates", {})
         tasks = creates.get("tasks", [])
         items.append(
@@ -158,7 +199,19 @@ def list_template_catalog() -> list[dict[str, Any]]:
 
 
 def get_template(template_id: str) -> dict[str, Any] | None:
-    template = _TEMPLATES_BY_ID.get(str(template_id or "").strip())
+    tid = str(template_id or "").strip()
+    template = _TEMPLATES_BY_ID.get(tid)
+    if template is None:
+        # Check custom templates
+        for t in load_custom_templates():
+            if t.get("id") == tid:
+                template = t
+                break
     if template is None:
         return None
     return deepcopy(template)
+
+
+def get_template_full(template_id: str) -> dict[str, Any] | None:
+    """Return the full template record including tasks (not just catalog summary)."""
+    return get_template(template_id)

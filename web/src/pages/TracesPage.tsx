@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { RefreshCw } from "lucide-react";
-import { useSearchParams } from "react-router-dom";
+import { RefreshCw, Play } from "lucide-react";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { DeckPageShell } from "@/components/DeckPageShell";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { api } from "@/lib/api";
@@ -86,7 +86,7 @@ function sinceForTimeFilter(t: string): string | undefined {
 
 // ── Column definitions ────────────────────────────────────────────────────────
 
-const COLS: ColDef<TraceRow>[] = [
+const BASE_COLS: ColDef<TraceRow>[] = [
   {
     key: "started_at",
     header: "Started",
@@ -182,6 +182,34 @@ const COLS: ColDef<TraceRow>[] = [
   },
 ];
 
+const REPLAY_COL: ColDef<TraceRow> = {
+  key: "replay",
+  header: "",
+  width: 80,
+  cell: (r) => <ReplayRowAction traceId={r.trace_id} />,
+};
+
+// ── Replay action per row (needs useNavigate, so it's a component) ────────────
+
+function ReplayRowAction({ traceId }: { traceId: string }) {
+  const navigate = useNavigate();
+  return (
+    <button
+      type="button"
+      aria-label={`Replay trace ${traceId}`}
+      title="Open in Replay"
+      onClick={(e) => {
+        e.stopPropagation();
+        navigate(`/replay?trace=${encodeURIComponent(traceId)}`);
+      }}
+      className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-transparent text-[var(--dsd-text-faint)] hover:text-[var(--dsd-accent-primary)] hover:border-[var(--dsd-accent-primary)]/40 transition-colors duration-[var(--dsd-dur-fast)] focus-visible:outline-2 focus-visible:outline-[var(--dsd-border-focus)]"
+    >
+      <Play className="h-2.5 w-2.5" />
+      Replay
+    </button>
+  );
+}
+
 // ── Filter chip component ─────────────────────────────────────────────────────
 
 const FilterChip = memo(function FilterChip({
@@ -217,6 +245,8 @@ const FilterChip = memo(function FilterChip({
 // ── TracesPage ────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 50;
+
+const COLS: ColDef<TraceRow>[] = [...BASE_COLS, REPLAY_COL];
 
 export default function TracesPage() {
   const [searchParams, setSearchParams] = useSearchParams();

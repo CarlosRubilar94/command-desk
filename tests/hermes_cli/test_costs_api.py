@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import sqlite3
+import time
 
 import pytest
 
@@ -131,6 +132,36 @@ def _seed_missions_with_board_sessions() -> None:
         conn.close()
 
 
+def _seed_span_costs() -> None:
+    from hermes_cli import traces_store
+
+    now = time.time()
+    traces_store.insert_span(
+        {
+            "span_id": "span-run-1",
+            "trace_id": "trace-run-1",
+            "session_id": "run-1",
+            "kind": "llm_call",
+            "name": "post_api_request",
+            "status": "ok",
+            "model": "gpt-4o",
+            "started_at": now - 5,
+            "ended_at": now - 4.5,
+            "input_tokens": 120,
+            "output_tokens": 30,
+            "total_tokens": 150,
+            "cost_usd": 0.42,
+            "savings_usd": 0.18,
+            "attributes": {
+                "baseline_model": "anthropic/claude-opus-4",
+                "baseline_tier": "premium",
+                "selected_tier": "economy",
+                "savings_usd": 0.18,
+            },
+        }
+    )
+
+
 def test_costs_endpoints_shape(clients):
     auth_client, _ = clients
     _seed_session_costs()
@@ -192,6 +223,31 @@ def test_costs_endpoints_shape(clients):
         "run_count",
         "top_runs",
     }.issubset(mission.keys())
+
+
+def test_costs_endpoints_prefer_recorded_spans(clients):
+    auth_client, _ = clients
+    _seed_session_costs()
+    _seed_missions_with_board_sessions()
+    _seed_span_costs()
+
+    summary = auth_client.get("/api/costs/summary")
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["spend_total"] > 0
+    assert payload["actual_total"] == payload["spend_total"]
+
+    savings = auth_client.get("/api/costs/savings", params={"days": 30})
+    assert savings.status_code == 200
+    savings_payload = savings.json()
+    assert savings_payload["is_estimate"] is False
+    assert savings_payload["estimated_savings_usd"] > 0
+
+    by_mission = auth_client.get("/api/costs/by-mission", params={"days": 30})
+    assert by_mission.status_code == 200
+    by_mission_payload = by_mission.json()
+    assert by_mission_payload["is_estimate"] is False
+    assert any(mission.get("is_estimate") is False for mission in by_mission_payload["missions"])
 
 
 def test_costs_endpoints_require_auth(clients):

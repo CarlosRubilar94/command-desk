@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { RefreshCw } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { DeckPageShell } from "@/components/DeckPageShell";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { api } from "@/lib/api";
-import type { DelegationStatusResponse, FleetStatusResponse, FleetMetricsResponse } from "@/lib/api";
+import type {
+  AutopilotDiagnoseResponse,
+  AutopilotIncident,
+  DelegationStatusResponse,
+  FleetMetricsResponse,
+  FleetStatusResponse,
+} from "@/lib/api";
 import {
   DeckCard,
   DeckToolbar,
@@ -13,6 +19,8 @@ import {
   MetricRow,
   MetricTile,
 } from "@/components/DeckOps";
+import { EmptyState } from "@/components/ds/EmptyState";
+import { ErrorState } from "@/components/ds/ErrorState";
 import { StatusPill } from "@/components/ds/StatusPill";
 import { DataTable } from "@/components/ds/DataTable";
 import type { ColDef } from "@/components/ds/DataTable";
@@ -41,6 +49,14 @@ function fmtMs(ms: number): string {
   if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
   if (ms >= 1_000) return `${(ms / 1_000).toFixed(2)}s`;
   return `${Math.round(ms)}ms`;
+}
+
+function severityVariant(severity: string): "error" | "warning" | "info" | "neutral" {
+  const normalized = severity.toLowerCase();
+  if (normalized === "critical") return "error";
+  if (normalized === "warning") return "warning";
+  if (normalized === "info") return "info";
+  return "neutral";
 }
 
 const BOTTLENECK_COLS: ColDef<FleetMetricsResponse["bottlenecks"][number]>[] = [
@@ -82,24 +98,38 @@ const BOTTLENECK_COLS: ColDef<FleetMetricsResponse["bottlenecks"][number]>[] = [
 ];
 
 export default function OpsFleetPage() {
+  const [searchParams] = useSearchParams();
+  const [dismissedSource, setDismissedSource] = useState(false);
   const [fleet, setFleet] = useState<FleetStatusResponse | null>(null);
   const [delegation, setDelegation] = useState<DelegationStatusResponse | null>(null);
   const [metrics, setMetrics] = useState<FleetMetricsResponse | null>(null);
+  const [incidents, setIncidents] = useState<AutopilotIncident[]>([]);
+  const [incidentsError, setIncidentsError] = useState<string | null>(null);
+  const [diagnosingId, setDiagnosingId] = useState<string | null>(null);
+  const [diagnoseResultByIncident, setDiagnoseResultByIncident] = useState<
+    Record<string, AutopilotDiagnoseResponse>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setIncidentsError(null);
     try {
-      const [fleetData, delegationData, metricsData] = await Promise.all([
+      const [fleetData, delegationData, metricsData, incidentsData] = await Promise.all([
         api.getFleetStatus(),
         api.getDelegationStatus(),
         api.getFleetMetrics().catch(() => null),
+        api.getAutopilotIncidents().catch((err: unknown) => {
+          setIncidentsError(err instanceof Error ? err.message : String(err));
+          return { incidents: [] };
+        }),
       ]);
       setFleet(fleetData);
       setDelegation(delegationData);
       setMetrics(metricsData);
+      setIncidents(incidentsData.incidents ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -110,6 +140,21 @@ export default function OpsFleetPage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const createDiagnostic = useCallback(
+    async (incident: AutopilotIncident) => {
+      setDiagnosingId(incident.id);
+      try {
+        const response = await api.createAutopilotDiagnostic({ incident_id: incident.id });
+        setDiagnoseResultByIncident((prev) => ({ ...prev, [incident.id]: response }));
+      } catch (err) {
+        setIncidentsError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setDiagnosingId(null);
+      }
+    },
+    [],
+  );
 
   const { setEnd } = usePageHeader();
   useLayoutEffect(() => {
@@ -139,6 +184,14 @@ export default function OpsFleetPage() {
   return (
     <DeckPageShell>
       <div className="deck-dashboard deck-animate">
+        {searchParams.get("source") === "command-deck" && !dismissedSource ? (
+          <div className="mb-3 flex items-center justify-between gap-2 rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-bg-muted)] px-3 py-2 text-xs text-[var(--dsd-text-secondary)]">
+            <span>From Command Deck: fleet detail opened via integration overview.</span>
+            <button type="button" className="deck-btn-sm ghost" onClick={() => setDismissedSource(true)}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
         {error ? (
           <p className="mb-4 text-sm text-[var(--dsd-sem-critical)]">{error}</p>
         ) : null}
@@ -438,6 +491,93 @@ export default function OpsFleetPage() {
                         Sessions →
                       </Link>
                     </DeckToolbar>
+                  </DeckCard>
+                </LayoutGrid>
+
+                <LayoutGrid>
+                  <DeckCard title="Ops Autopilot (operator-triggered)" colClass="col-12">
+                    <p className="mb-3 text-xs text-[var(--dsd-text-faint)]">
+                      Detection is read-only. Diagnostics are created only when you click
+                      <span className="mx-1 font-semibold">Create diagnostic</span>
+                      for an incident.
+                    </p>
+
+                    {incidentsError ? (
+                      <ErrorState
+                        compact
+                        title="Autopilot unavailable"
+                        message={incidentsError}
+                        onRetry={() => void refresh()}
+                      />
+                    ) : incidents.length === 0 ? (
+                      <EmptyState
+                        compact
+                        icon={<AlertTriangle className="h-4 w-4" />}
+                        title="No incidents detected"
+                        description="Current telemetry is healthy for configured thresholds."
+                      />
+                    ) : (
+                      <div className="space-y-2">
+                        {incidents.map((incident) => {
+                          const result = diagnoseResultByIncident[incident.id];
+                          const isRunning = diagnosingId === incident.id;
+                          return (
+                            <div key={incident.id} className="deck-list-row">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <StatusPill
+                                    variant={severityVariant(incident.severity)}
+                                    label={incident.severity}
+                                  />
+                                  <StatusPill variant="fleet" label={incident.kind} />
+                                </div>
+                                <button
+                                  type="button"
+                                  className="deck-btn-sm primary"
+                                  onClick={() => void createDiagnostic(incident)}
+                                  disabled={isRunning}
+                                  aria-label={`Create diagnostic for ${incident.title}`}
+                                >
+                                  {isRunning ? "Creating…" : "Create diagnostic"}
+                                </button>
+                              </div>
+                              <p className="mt-2 text-sm text-[var(--dsd-text-base)]">{incident.title}</p>
+                              <p className="mt-1 text-xs text-[var(--dsd-text-secondary)]">{incident.detail}</p>
+                              <p className="mt-1 text-xs text-[var(--dsd-text-faint)]">
+                                Suggested action: {incident.suggested_action}
+                              </p>
+
+                              {result ? (
+                                <div className="mt-3 rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] p-3">
+                                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                                    <Link to="/missions" className="deck-btn-sm ghost">
+                                      Mission {result.mission_id}
+                                    </Link>
+                                    <span className="font-mono text-[var(--dsd-text-faint)]">
+                                      Kanban task: {result.kanban_task_id ?? "not created"}
+                                    </span>
+                                  </div>
+                                  <div className="mt-2 space-y-1 text-xs">
+                                    <p>
+                                      <span className="font-semibold">Summary:</span>{" "}
+                                      {result.report.summary}
+                                    </p>
+                                    <p>
+                                      <span className="font-semibold">Suspected cause:</span>{" "}
+                                      {result.report.suspected_cause}
+                                    </p>
+                                    <p>
+                                      <span className="font-semibold">Suggested fix:</span>{" "}
+                                      {result.report.suggested_fix}
+                                    </p>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </DeckCard>
                 </LayoutGrid>
               </>

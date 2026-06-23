@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef, type ReactNode, type CSSProperties } from "react";
+import { useState, useMemo, useRef, type ChangeEvent, type ReactNode, type CSSProperties } from "react";
+import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /* ── Types ────────────────────────────────────────────────────────── */
@@ -30,6 +31,20 @@ export interface DataTableProps<T> {
   emptyLabel?: string;
   className?: string;
   "aria-label"?: string;
+  /**
+   * When true, renders a search input above the table that filters rows
+   * by matching any string value in any column's cell output.
+   * The filter is applied client-side via `filterField` or falls back to
+   * JSON-stringifying each row.
+   */
+  quickFilter?: boolean;
+  /** Placeholder text for the quick-filter input. */
+  filterPlaceholder?: string;
+  /**
+   * Optional function that returns a searchable string for a row.
+   * If omitted, `JSON.stringify(row).toLowerCase()` is used.
+   */
+  filterFn?: (row: T, query: string) => boolean;
 }
 
 /* ── Component ────────────────────────────────────────────────────── */
@@ -46,17 +61,34 @@ export function DataTable<T>({
   emptyLabel = "No data",
   className,
   "aria-label": ariaLabel,
+  quickFilter = false,
+  filterPlaceholder = "Filter…",
+  filterFn,
 }: DataTableProps<T>) {
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>(null);
+  const [filterQuery, setFilterQuery] = useState("");
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
 
+  const filtered = useMemo(() => {
+    if (!quickFilter || !filterQuery.trim()) return rows;
+    const q = filterQuery.toLowerCase();
+    if (filterFn) return rows.filter((r) => filterFn(r, q));
+    return rows.filter((r) => {
+      try {
+        return JSON.stringify(r).toLowerCase().includes(q);
+      } catch {
+        return true;
+      }
+    });
+  }, [rows, quickFilter, filterQuery, filterFn]);
+
   const sorted = useMemo(() => {
-    if (!sortCol || !sortDir) return rows;
+    if (!sortCol || !sortDir) return filtered;
     const col = cols.find((c) => c.key === sortCol);
-    if (!col?.sortKey) return rows;
+    if (!col?.sortKey) return filtered;
     const sk = col.sortKey;
-    return [...rows].sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       const av = a[sk];
       const bv = b[sk];
       const cmp =
@@ -65,7 +97,7 @@ export function DataTable<T>({
           : Number(av) - Number(bv);
       return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [rows, sortCol, sortDir, cols]);
+  }, [filtered, sortCol, sortDir, cols]);
 
   function handleSort(col: ColDef<T>) {
     if (!col.sortKey) return;
@@ -86,8 +118,31 @@ export function DataTable<T>({
     : {};
 
   return (
+    <div className={cn("ds-data-table-wrapper flex flex-col gap-2", className)}>
+      {quickFilter && (
+        <div className="relative flex items-center">
+          <Search
+            aria-hidden
+            className="pointer-events-none absolute left-2.5 h-3.5 w-3.5 text-[var(--dsd-text-faint)]"
+          />
+          <input
+            type="search"
+            value={filterQuery}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => setFilterQuery(e.target.value)}
+            placeholder={filterPlaceholder}
+            aria-label={filterPlaceholder}
+            className={cn(
+              "w-full rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)]",
+              "bg-[var(--dsd-layer-surface)] pl-8 pr-3 text-[var(--dsd-text-sm)] text-[var(--dsd-text-base)]",
+              "placeholder:text-[var(--dsd-text-faint)] outline-none",
+              "focus-visible:border-[var(--dsd-accent-primary)] focus-visible:ring-1 focus-visible:ring-[var(--dsd-border-focus)]",
+              dense ? "py-1" : "py-1.5",
+            )}
+          />
+        </div>
+      )}
     <div
-      className={cn("ds-data-table relative overflow-auto rounded-[var(--dsd-radius-md)]", className)}
+      className="ds-data-table relative overflow-auto rounded-[var(--dsd-radius-md)]"
       style={containerStyle}
     >
       <table
@@ -189,6 +244,7 @@ export function DataTable<T>({
           )}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }

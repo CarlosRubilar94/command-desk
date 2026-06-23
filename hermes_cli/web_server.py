@@ -714,6 +714,19 @@ class RoutingUpdate(BaseModel):
     delegation_tier: Optional[str] = None
 
 
+class CostGuardrailsUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    daily_budget_usd: Optional[float] = None
+    mission_budgets_usd: Optional[Dict[str, Optional[float]]] = None
+    premium_alert: Optional[bool] = None
+    block_expensive: Optional[bool] = None
+    auto_fallback: Optional[bool] = None
+    fallback_model: Optional[str] = None
+    fallback_provider: Optional[str] = None
+    premium_model_prefixes: Optional[List[str]] = None
+    profile: Optional[str] = None
+
+
 class EnvVarUpdate(BaseModel):
     key: str
     value: str
@@ -11942,44 +11955,513 @@ async def get_observability_events(limit: int = 50, profile: Optional[str] = Non
 # No dependency on traces.db or spans (Wave 1B scope).
 # ---------------------------------------------------------------------------
 
+def _cost_guardrails_defaults() -> Dict[str, Any]:
+    raw = DEFAULT_CONFIG.get("cost_guardrails", {})
+    if not isinstance(raw, dict):
+        return {
+            "enabled": False,
+            "daily_budget_usd": None,
+            "mission_budgets_usd": {},
+            "premium_alert": False,
+            "block_expensive": False,
+            "auto_fallback": False,
+            "fallback_model": "",
+            "fallback_provider": "",
+            "premium_model_prefixes": [],
+        }
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "daily_budget_usd": raw.get("daily_budget_usd"),
+        "mission_budgets_usd": dict(raw.get("mission_budgets_usd") or {}),
+        "premium_alert": bool(raw.get("premium_alert", False)),
+        "block_expensive": bool(raw.get("block_expensive", False)),
+        "auto_fallback": bool(raw.get("auto_fallback", False)),
+        "fallback_model": str(raw.get("fallback_model") or "").strip(),
+        "fallback_provider": str(raw.get("fallback_provider") or "").strip(),
+        "premium_model_prefixes": list(raw.get("premium_model_prefixes") or []),
+    }
+
+
+def _normalize_cost_guardrails_config(raw: Any) -> Dict[str, Any]:
+    defaults = _cost_guardrails_defaults()
+    section = raw if isinstance(raw, dict) else {}
+    mission_budgets = section.get("mission_budgets_usd", defaults["mission_budgets_usd"])
+    if not isinstance(mission_budgets, dict):
+        mission_budgets = {}
+    normalized_mission_budgets: Dict[str, float] = {}
+    for mission_id, budget in mission_budgets.items():
+        mission_key = str(mission_id or "").strip()
+        if not mission_key:
+            continue
+        parsed = _budget_value(budget)
+        if parsed is None:
+            continue
+        normalized_mission_budgets[mission_key] = parsed
+    prefixes_raw = section.get("premium_model_prefixes", defaults["premium_model_prefixes"])
+    prefixes: List[str] = []
+    if isinstance(prefixes_raw, list):
+        for item in prefixes_raw:
+            value = str(item or "").strip().lower()
+            if value:
+                prefixes.append(value)
+    return {
+        "enabled": bool(section.get("enabled", defaults["enabled"])),
+        "daily_budget_usd": _budget_value(section.get("daily_budget_usd", defaults["daily_budget_usd"])),
+        "mission_budgets_usd": normalized_mission_budgets,
+        "premium_alert": bool(section.get("premium_alert", defaults["premium_alert"])),
+        "block_expensive": bool(section.get("block_expensive", defaults["block_expensive"])),
+        "auto_fallback": bool(section.get("auto_fallback", defaults["auto_fallback"])),
+        "fallback_model": str(section.get("fallback_model", defaults["fallback_model"]) or "").strip(),
+        "fallback_provider": str(section.get("fallback_provider", defaults["fallback_provider"]) or "").strip(),
+        "premium_model_prefixes": prefixes,
+    }
+
+
+def _cost_guardrails_payload(profile: Optional[str]) -> Dict[str, Any]:
+    from hermes_cli.cost_guardrails import decision_to_dict, evaluate_guardrails, is_premium_model
+
+    with _config_profile_scope(profile):
+        config = load_config()
+        guardrails = _normalize_cost_guardrails_config(config.get("cost_guardrails"))
+        db = _open_session_db_for_profile(profile)
+        try:
+            today_start = _today_start_epoch_local()
+            now_ts = time.time()
+            spend_row = db._conn.execute(
+                """
+                SELECT COALESCE(SUM(estimated_cost_usd), 0.0) AS spend_today
+                FROM sessions
+                WHERE started_at >= ?
+                """,
+                (today_start,),
+            ).fetchone()
+            spend_today = _safe_float(spend_row["spend_today"] if spend_row is not None else 0.0)
+
+            premium_rows = db._conn.execute(
+                """
+                SELECT model,
+                       COALESCE(SUM(estimated_cost_usd), 0.0) AS spend,
+                       COUNT(*) AS runs
+                FROM sessions
+                WHERE started_at >= ? AND model IS NOT NULL AND model != ''
+                GROUP BY model
+                """,
+                (today_start,),
+            ).fetchall()
+            premium_models: List[Dict[str, Any]] = []
+            premium_runs = 0
+            premium_spend = 0.0
+            for row in premium_rows:
+                model_name = str(row["model"] or "").strip()
+                if not model_name:
+                    continue
+                if not is_premium_model(model_name, guardrails):
+                    continue
+                runs = _safe_int(row["runs"])
+                spend = _safe_float(row["spend"])
+                premium_runs += runs
+                premium_spend += spend
+                premium_models.append(
+                    {
+                        "model": model_name,
+                        "runs": runs,
+                        "spend_usd": round(spend, 6),
+                    }
+                )
+            premium_models.sort(key=lambda item: item.get("spend_usd", 0.0), reverse=True)
+
+            mission_status: List[Dict[str, Any]] = []
+            for mission_id, budget in guardrails.get("mission_budgets_usd", {}).items():
+                mission_title = mission_id
+                spend = 0.0
+                try:
+                    from hermes_cli import traces_store
+
+                    mission = traces_store.get_mission(mission_id) or {}
+                    mission_title = str(mission.get("title") or mission_id)
+                    board_slug = str(mission.get("board_slug") or "").strip()
+                    session_ids = _mission_session_ids(board_slug)
+                    if session_ids:
+                        placeholders = ",".join("?" for _ in session_ids)
+                        row = db._conn.execute(
+                            f"""
+                            SELECT COALESCE(SUM(estimated_cost_usd), 0.0) AS spend
+                            FROM sessions
+                            WHERE id IN ({placeholders}) AND started_at >= ?
+                            """,
+                            [*session_ids, today_start],
+                        ).fetchone()
+                        spend = _safe_float(row["spend"] if row is not None else 0.0)
+                except Exception:
+                    spend = 0.0
+                pct = (spend / budget * 100.0) if budget > 0 else 0.0
+                mission_status.append(
+                    {
+                        "mission_id": mission_id,
+                        "title": mission_title,
+                        "budget_usd": budget,
+                        "spend_usd": round(spend, 6),
+                        "remaining_usd": round(max(0.0, budget - spend), 6),
+                        "pct_used": round(pct, 2),
+                        "over_budget": spend > budget,
+                    }
+                )
+            mission_status.sort(key=lambda item: item.get("spend_usd", 0.0), reverse=True)
+
+            current_model = str(config.get("model") or "").strip()
+            over_budget_mission = next((m for m in mission_status if m.get("over_budget")), None)
+            mission_for_decision = over_budget_mission or (mission_status[0] if mission_status else None)
+            mission_spend = _safe_float((mission_for_decision or {}).get("spend_usd"))
+            mission_budget = _budget_value((mission_for_decision or {}).get("budget_usd"))
+            decision = evaluate_guardrails(
+                spend_today=spend_today,
+                daily_budget=guardrails.get("daily_budget_usd"),
+                mission_spend=mission_spend,
+                mission_budget=mission_budget,
+                model=current_model,
+                is_premium=is_premium_model(current_model, guardrails),
+                config=guardrails,
+            )
+
+            elapsed = max(1.0, now_ts - today_start)
+            projected_spend = spend_today * (86400.0 / elapsed)
+            daily_budget = guardrails.get("daily_budget_usd")
+            remaining = (
+                round(max(0.0, daily_budget - spend_today), 6)
+                if daily_budget is not None
+                else None
+            )
+
+            return {
+                "cost_guardrails": guardrails,
+                "status": {
+                    "spend_today_usd": round(spend_today, 6),
+                    "daily_budget_usd": daily_budget,
+                    "daily_budget_remaining_usd": remaining,
+                    "projected_spend_today_usd": round(projected_spend, 6),
+                    "mission_budgets": mission_status,
+                    "premium_usage_today": {
+                        "runs": premium_runs,
+                        "spend_usd": round(premium_spend, 6),
+                        "models": premium_models,
+                    },
+                    "current_model": current_model,
+                    "current_decision": decision_to_dict(decision),
+                },
+            }
+        finally:
+            db.close()
+
+
+def _payload_to_dict(payload: Any) -> Dict[str, Any]:
+    if hasattr(payload, "model_dump"):
+        return payload.model_dump(exclude_unset=True)
+    return payload.dict(exclude_unset=True)
+
+
+@app.get("/api/costs/guardrails")
+async def get_costs_guardrails(profile: Optional[str] = None):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: _cost_guardrails_payload(profile))
+
+
+@app.put("/api/costs/guardrails")
+async def put_costs_guardrails(body: CostGuardrailsUpdate, profile: Optional[str] = None):
+    payload = _payload_to_dict(body)
+    scoped_profile = str(payload.pop("profile", "") or "").strip() or profile
+    loop = asyncio.get_running_loop()
+
+    def _write() -> Dict[str, Any]:
+        with _config_profile_scope(scoped_profile):
+            config = load_config()
+            current = _normalize_cost_guardrails_config(config.get("cost_guardrails"))
+
+            for key in (
+                "enabled",
+                "premium_alert",
+                "block_expensive",
+                "auto_fallback",
+            ):
+                if key in payload:
+                    current[key] = bool(payload[key])
+
+            if "daily_budget_usd" in payload:
+                raw = payload.get("daily_budget_usd")
+                if raw is None:
+                    current["daily_budget_usd"] = None
+                else:
+                    parsed = _budget_value(raw)
+                    if parsed is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="daily_budget_usd must be null or a positive number",
+                        )
+                    current["daily_budget_usd"] = parsed
+
+            if "mission_budgets_usd" in payload:
+                raw_missions = payload.get("mission_budgets_usd")
+                if not isinstance(raw_missions, dict):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="mission_budgets_usd must be an object map",
+                    )
+                mission_budgets: Dict[str, float] = {}
+                for mission_id, raw_budget in raw_missions.items():
+                    mission_key = str(mission_id or "").strip()
+                    if not mission_key:
+                        continue
+                    if raw_budget is None:
+                        continue
+                    parsed = _budget_value(raw_budget)
+                    if parsed is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"mission budget for '{mission_key}' must be null or a positive number",
+                        )
+                    mission_budgets[mission_key] = parsed
+                current["mission_budgets_usd"] = mission_budgets
+
+            if "fallback_model" in payload:
+                current["fallback_model"] = str(payload.get("fallback_model") or "").strip()
+            if "fallback_provider" in payload:
+                current["fallback_provider"] = str(payload.get("fallback_provider") or "").strip()
+            if "premium_model_prefixes" in payload:
+                raw_prefixes = payload.get("premium_model_prefixes")
+                if not isinstance(raw_prefixes, list):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="premium_model_prefixes must be an array",
+                    )
+                cleaned = []
+                for item in raw_prefixes:
+                    value = str(item or "").strip().lower()
+                    if value:
+                        cleaned.append(value)
+                current["premium_model_prefixes"] = cleaned
+
+            config["cost_guardrails"] = current
+            save_config(config)
+        return _cost_guardrails_payload(scoped_profile)
+
+    return await loop.run_in_executor(None, _write)
+
+
+def _session_rows_for_costs(
+    db: Any,
+    *,
+    cutoff: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    where_sql = "WHERE started_at > ?" if cutoff is not None else ""
+    params: List[Any] = [float(cutoff)] if cutoff is not None else []
+    rows = db._conn.execute(
+        f"""
+        SELECT id,
+               model,
+               started_at,
+               COALESCE(estimated_cost_usd, 0.0) AS estimated_cost_usd,
+               COALESCE(actual_cost_usd, 0.0) AS actual_cost_usd,
+               COALESCE(input_tokens, 0) AS input_tokens,
+               COALESCE(output_tokens, 0) AS output_tokens,
+               COALESCE(api_call_count, 0) AS api_call_count
+        FROM sessions
+        {where_sql}
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _span_cost_views_for_sessions(
+    *,
+    session_ids: List[str],
+    cutoff: Optional[float],
+) -> Dict[str, Any]:
+    from hermes_cli import traces_store
+    import sqlite3
+
+    traces_store.ensure_initialized()
+    db_path = traces_store.traces_db_path()
+    empty = {
+        "has_data": False,
+        "sessions_with_spans": set(),
+        "by_session": {},
+        "by_model": {},
+        "by_day": {},
+        "savings": {
+            "total_savings_usd": 0.0,
+            "premium_spend_usd": 0.0,
+            "premium_runs": 0,
+            "savings_spans": 0,
+        },
+    }
+    if not db_path.exists():
+        return empty
+    clean_ids = [str(sid).strip() for sid in session_ids if str(sid).strip()]
+    if not clean_ids:
+        return empty
+
+    placeholders = ",".join("?" for _ in clean_ids)
+    cutoff_sql = "AND started_at > ?" if cutoff is not None else ""
+    params = list(clean_ids)
+    if cutoff is not None:
+        params.append(float(cutoff))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        by_session_rows = conn.execute(
+            f"""
+            SELECT session_id,
+                   COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            GROUP BY session_id
+            """,
+            params,
+        ).fetchall()
+        by_model_rows = conn.execute(
+            f"""
+            SELECT COALESCE(NULLIF(model, ''), 'unknown') AS model,
+                   COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                   COUNT(DISTINCT session_id) AS runs
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            GROUP BY COALESCE(NULLIF(model, ''), 'unknown')
+            """,
+            params,
+        ).fetchall()
+        by_day_rows = conn.execute(
+            f"""
+            SELECT date(started_at, 'unixepoch') AS day,
+                   COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                   COUNT(DISTINCT session_id) AS runs
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            GROUP BY day
+            ORDER BY day
+            """,
+            params,
+        ).fetchall()
+        savings_rows = conn.execute(
+            f"""
+            SELECT COALESCE(SUM(savings_usd), 0.0) AS total_savings_usd,
+                   COALESCE(SUM(COALESCE(cost_usd, 0.0) + COALESCE(savings_usd, 0.0)), 0.0) AS premium_spend_usd,
+                   COUNT(*) AS savings_spans
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND savings_usd IS NOT NULL
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            """,
+            params,
+        ).fetchone()
+    finally:
+        conn.close()
+
+    by_session: Dict[str, Dict[str, Any]] = {}
+    sessions_with_spans: set[str] = set()
+    for row in by_session_rows:
+        sid = str(row["session_id"] or "").strip()
+        if not sid:
+            continue
+        sessions_with_spans.add(sid)
+        by_session[sid] = {
+            "cost_usd": _safe_float(row["cost_usd"]),
+            "input_tokens": _safe_int(row["input_tokens"]),
+            "output_tokens": _safe_int(row["output_tokens"]),
+        }
+
+    by_model = {
+        str(row["model"]): {
+            "cost_usd": _safe_float(row["cost_usd"]),
+            "input_tokens": _safe_int(row["input_tokens"]),
+            "output_tokens": _safe_int(row["output_tokens"]),
+            "runs": _safe_int(row["runs"]),
+        }
+        for row in by_model_rows
+    }
+    by_day = {
+        str(row["day"]): {
+            "cost_usd": _safe_float(row["cost_usd"]),
+            "input_tokens": _safe_int(row["input_tokens"]),
+            "output_tokens": _safe_int(row["output_tokens"]),
+            "runs": _safe_int(row["runs"]),
+        }
+        for row in by_day_rows
+        if row["day"] is not None
+    }
+    savings_payload = {
+        "total_savings_usd": _safe_float(savings_rows["total_savings_usd"] if savings_rows is not None else 0.0),
+        "premium_spend_usd": _safe_float(savings_rows["premium_spend_usd"] if savings_rows is not None else 0.0),
+        "premium_runs": _safe_int(savings_rows["savings_spans"] if savings_rows is not None else 0),
+        "savings_spans": _safe_int(savings_rows["savings_spans"] if savings_rows is not None else 0),
+    }
+    return {
+        "has_data": bool(sessions_with_spans),
+        "sessions_with_spans": sessions_with_spans,
+        "by_session": by_session,
+        "by_model": by_model,
+        "by_day": by_day,
+        "savings": savings_payload,
+    }
+
+
 @app.get("/api/costs/summary")
 async def get_costs_summary(profile: Optional[str] = None):
     """Spend summary: today + all-time totals, token counts, run count."""
     db = _open_session_db_for_profile(profile)
     try:
-        today_start = time.mktime(time.strptime(time.strftime("%Y-%m-%d"), "%Y-%m-%d"))
-        cur = db._conn.execute(
-            """
-            SELECT COALESCE(SUM(estimated_cost_usd), 0) AS spend_today,
-                   SUM(input_tokens)                    AS tokens_input_today,
-                   SUM(output_tokens)                   AS tokens_output_today,
-                   COUNT(*)                             AS runs_today
-            FROM sessions WHERE started_at >= ?
-            """,
-            (today_start,),
-        )
-        today = dict(cur.fetchone())
+        today_start = _today_start_epoch_local()
+        total_rows = _session_rows_for_costs(db)
+        today_rows = [row for row in total_rows if _safe_float(row.get("started_at")) >= today_start]
 
-        cur2 = db._conn.execute(
-            """
-            SELECT COALESCE(SUM(estimated_cost_usd), 0) AS spend_total,
-                   COALESCE(SUM(actual_cost_usd), 0)    AS actual_total,
-                   SUM(input_tokens)                    AS tokens_input_total,
-                   SUM(output_tokens)                   AS tokens_output_total,
-                   COUNT(*)                             AS runs_total
-            FROM sessions
-            """
+        total_span = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in total_rows],
+            cutoff=None,
         )
-        totals = dict(cur2.fetchone())
+        today_span = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in today_rows],
+            cutoff=today_start,
+        )
+
+        def _preferred_totals(rows: List[Dict[str, Any]], span_view: Dict[str, Any]) -> tuple[float, int]:
+            by_session = span_view.get("by_session", {}) if isinstance(span_view, dict) else {}
+            cost_total = 0.0
+            token_total = 0
+            for row in rows:
+                sid = str(row.get("id") or "").strip()
+                if sid and sid in by_session:
+                    span_row = by_session[sid]
+                    cost_total += _safe_float(span_row.get("cost_usd"))
+                    token_total += _safe_int(span_row.get("input_tokens")) + _safe_int(span_row.get("output_tokens"))
+                    continue
+                cost_total += _safe_float(row.get("estimated_cost_usd"))
+                token_total += _safe_int(row.get("input_tokens")) + _safe_int(row.get("output_tokens"))
+            return cost_total, token_total
+
+        spend_today, tokens_today = _preferred_totals(today_rows, today_span)
+        spend_total, tokens_total = _preferred_totals(total_rows, total_span)
 
         return {
-            "spend_today": today["spend_today"],
-            "runs_today": today["runs_today"],
-            "tokens_today": (today["tokens_input_today"] or 0) + (today["tokens_output_today"] or 0),
-            "spend_total": totals["spend_total"],
-            "actual_total": totals["actual_total"],
-            "tokens_total": (totals["tokens_input_total"] or 0) + (totals["tokens_output_total"] or 0),
-            "runs_total": totals["runs_total"],
+            "spend_today": round(spend_today, 6),
+            "runs_today": len(today_rows),
+            "tokens_today": tokens_today,
+            "spend_total": round(spend_total, 6),
+            "actual_total": round(spend_total, 6),
+            "tokens_total": tokens_total,
+            "runs_total": len(total_rows),
         }
     finally:
         db.close()
@@ -11990,24 +12472,65 @@ async def get_costs_by_model(days: int = 30, profile: Optional[str] = None):
     """Per-model cost breakdown for the given lookback window."""
     db = _open_session_db_for_profile(profile)
     try:
-        cutoff = time.time() - (days * 86400)
-        cur = db._conn.execute(
-            """
-            SELECT model,
-                   COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost,
-                   COALESCE(SUM(actual_cost_usd), 0)    AS actual_cost,
-                   SUM(input_tokens)                    AS input_tokens,
-                   SUM(output_tokens)                   AS output_tokens,
-                   COUNT(*)                             AS runs,
-                   SUM(COALESCE(api_call_count, 0))     AS api_calls
-            FROM sessions
-            WHERE started_at > ? AND model IS NOT NULL AND model != ''
-            GROUP BY model
-            ORDER BY SUM(COALESCE(estimated_cost_usd, 0)) DESC
-            """,
-            (cutoff,),
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        session_rows = _session_rows_for_costs(db, cutoff=cutoff)
+        span_view = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in session_rows],
+            cutoff=cutoff,
         )
-        rows = [dict(r) for r in cur.fetchall()]
+        by_model: Dict[str, Dict[str, Any]] = {}
+        for model, row in (span_view.get("by_model") or {}).items():
+            by_model[model] = {
+                "model": model,
+                "estimated_cost": _safe_float(row.get("cost_usd")),
+                "actual_cost": _safe_float(row.get("cost_usd")),
+                "input_tokens": _safe_int(row.get("input_tokens")),
+                "output_tokens": _safe_int(row.get("output_tokens")),
+                "runs": _safe_int(row.get("runs")),
+                "api_calls": 0,
+            }
+
+        sessions_with_spans = span_view.get("sessions_with_spans", set())
+        for row in session_rows:
+            sid = str(row.get("id") or "").strip()
+            if sid in sessions_with_spans:
+                model = str(row.get("model") or "").strip() or "unknown"
+                target = by_model.get(model)
+                if target:
+                    target["api_calls"] += _safe_int(row.get("api_call_count"))
+                continue
+            model = str(row.get("model") or "").strip() or "unknown"
+            target = by_model.setdefault(
+                model,
+                {
+                    "model": model,
+                    "estimated_cost": 0.0,
+                    "actual_cost": 0.0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "runs": 0,
+                    "api_calls": 0,
+                },
+            )
+            target["estimated_cost"] += _safe_float(row.get("estimated_cost_usd"))
+            target["actual_cost"] += _safe_float(row.get("actual_cost_usd"))
+            target["input_tokens"] += _safe_int(row.get("input_tokens"))
+            target["output_tokens"] += _safe_int(row.get("output_tokens"))
+            target["runs"] += 1
+            target["api_calls"] += _safe_int(row.get("api_call_count"))
+
+        rows = sorted(
+            (
+                {
+                    **entry,
+                    "estimated_cost": round(_safe_float(entry.get("estimated_cost")), 6),
+                    "actual_cost": round(_safe_float(entry.get("actual_cost")), 6),
+                }
+                for entry in by_model.values()
+            ),
+            key=lambda item: _safe_float(item.get("estimated_cost")),
+            reverse=True,
+        )
         return {"by_model": rows, "period_days": days}
     finally:
         db.close()
@@ -12018,22 +12541,47 @@ async def get_costs_by_day(days: int = 30, profile: Optional[str] = None):
     """Daily cost trend for sparkline rendering."""
     db = _open_session_db_for_profile(profile)
     try:
-        cutoff = time.time() - (days * 86400)
-        cur = db._conn.execute(
-            """
-            SELECT date(started_at, 'unixepoch') AS day,
-                   COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost,
-                   SUM(input_tokens)                    AS input_tokens,
-                   SUM(output_tokens)                   AS output_tokens,
-                   COUNT(*)                             AS runs
-            FROM sessions
-            WHERE started_at > ?
-            GROUP BY day
-            ORDER BY day
-            """,
-            (cutoff,),
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        session_rows = _session_rows_for_costs(db, cutoff=cutoff)
+        span_view = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in session_rows],
+            cutoff=cutoff,
         )
-        rows = [dict(r) for r in cur.fetchall()]
+        by_day: Dict[str, Dict[str, Any]] = {
+            day: {
+                "day": day,
+                "estimated_cost": _safe_float(values.get("cost_usd")),
+                "input_tokens": _safe_int(values.get("input_tokens")),
+                "output_tokens": _safe_int(values.get("output_tokens")),
+                "runs": _safe_int(values.get("runs")),
+            }
+            for day, values in (span_view.get("by_day") or {}).items()
+        }
+        sessions_with_spans = span_view.get("sessions_with_spans", set())
+        for row in session_rows:
+            sid = str(row.get("id") or "").strip()
+            if sid in sessions_with_spans:
+                continue
+            day = datetime.fromtimestamp(_safe_float(row.get("started_at"))).strftime("%Y-%m-%d")
+            target = by_day.setdefault(
+                day,
+                {"day": day, "estimated_cost": 0.0, "input_tokens": 0, "output_tokens": 0, "runs": 0},
+            )
+            target["estimated_cost"] += _safe_float(row.get("estimated_cost_usd"))
+            target["input_tokens"] += _safe_int(row.get("input_tokens"))
+            target["output_tokens"] += _safe_int(row.get("output_tokens"))
+            target["runs"] += 1
+
+        rows = [
+            {
+                "day": day,
+                "estimated_cost": round(_safe_float(entry.get("estimated_cost")), 6),
+                "input_tokens": _safe_int(entry.get("input_tokens")),
+                "output_tokens": _safe_int(entry.get("output_tokens")),
+                "runs": _safe_int(entry.get("runs")),
+            }
+            for day, entry in sorted(by_day.items(), key=lambda item: item[0])
+        ]
         return {"by_day": rows, "period_days": days}
     finally:
         db.close()
@@ -12042,43 +12590,40 @@ async def get_costs_by_day(days: int = 30, profile: Optional[str] = None):
 @app.get("/api/costs/savings")
 async def get_costs_savings(days: int = 30, profile: Optional[str] = None):
     """
-    Routing downgrade savings estimate.
-
-    No per-call savings are recorded in Wave 1B (smart_model_routing does not
-    persist this yet). We compute a best-effort estimate: sessions run on known
-    premium-tier models are compared against an estimated mid-tier cost ratio.
-    The ``is_estimate: true`` flag lets the UI clearly mark the result.
+    Routing downgrade savings (real when recorded, estimate as fallback).
     """
-    PREMIUM_PREFIXES = (
-        "claude-3-5-sonnet", "claude-3-opus", "gpt-4o", "gpt-4-turbo",
-        "gpt-4", "o1", "o3",
-    )
-    MID_COST_FACTOR = 0.30  # approximate mid-tier / premium cost ratio
+    MID_COST_FACTOR = 0.30
 
     db = _open_session_db_for_profile(profile)
     try:
-        cutoff = time.time() - (days * 86400)
-        cur = db._conn.execute(
-            """
-            SELECT model,
-                   COALESCE(SUM(estimated_cost_usd), 0) AS spend,
-                   COUNT(*) AS runs
-            FROM sessions
-            WHERE started_at > ? AND model IS NOT NULL AND model != ''
-            GROUP BY model
-            """,
-            (cutoff,),
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        session_rows = _session_rows_for_costs(db, cutoff=cutoff)
+        span_view = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in session_rows],
+            cutoff=cutoff,
         )
-        rows = [dict(r) for r in cur.fetchall()]
+        savings = span_view.get("savings", {}) if isinstance(span_view, dict) else {}
+        savings_spans = _safe_int(savings.get("savings_spans"))
+        if savings_spans > 0:
+            return {
+                "estimated_savings_usd": round(_safe_float(savings.get("total_savings_usd")), 6),
+                "premium_spend_usd": round(_safe_float(savings.get("premium_spend_usd")), 6),
+                "premium_runs": _safe_int(savings.get("premium_runs")),
+                "mid_cost_factor": MID_COST_FACTOR,
+                "is_estimate": False,
+                "note": "Savings from recorded per-call baseline metadata.",
+                "period_days": days,
+            }
+
+        from hermes_cli.cost_guardrails import is_premium_model
 
         premium_spend = 0.0
         premium_runs = 0
-        for row in rows:
-            m = (row.get("model") or "").lower()
-            if any(m.startswith(p) for p in PREMIUM_PREFIXES):
-                premium_spend += row["spend"]
-                premium_runs += row["runs"]
-
+        for row in session_rows:
+            model_name = str(row.get("model") or "")
+            if is_premium_model(model_name):
+                premium_spend += _safe_float(row.get("estimated_cost_usd"))
+                premium_runs += 1
         estimated_savings = premium_spend * (1.0 - MID_COST_FACTOR)
         return {
             "estimated_savings_usd": round(estimated_savings, 6),
@@ -12086,7 +12631,7 @@ async def get_costs_savings(days: int = 30, profile: Optional[str] = None):
             "premium_runs": premium_runs,
             "mid_cost_factor": MID_COST_FACTOR,
             "is_estimate": True,
-            "note": "Best-effort estimate; no per-call savings recorded in Wave 1B.",
+            "note": "Best-effort estimate; no recorded baseline savings in window.",
             "period_days": days,
         }
     finally:
@@ -12134,6 +12679,14 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value or 0.0)
     except Exception:
         return default
+
+
+def _budget_value(value: Any) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _trace_root_fields(spans: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -12468,6 +13021,12 @@ class MissionUpsertRequest(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class OpsAutopilotDiagnoseRequest(BaseModel):
+    incident_id: Optional[str] = None
+    incident: Optional[Dict[str, Any]] = None
+    assignee_profile: Optional[str] = None
+
+
 class TemplateInstantiateRequest(BaseModel):
     title: Optional[str] = None
     owner: Optional[str] = None
@@ -12657,6 +13216,136 @@ async def instantiate_template(
                 _log.warning("Template %s instantiated without cron job: %s", template_id, exc)
                 response["warning"] = f"Cron skipped: {exc}"
         return response
+
+
+# ── Mission Builder endpoints (Wave 9) ────────────────────────────────────────
+
+
+class DraftInstantiateTask(BaseModel):
+    title: str
+    description: Optional[str] = None
+    assignee: Optional[str] = None
+    status: Optional[str] = "todo"
+
+
+class DraftInstantiateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    board: Optional[str] = None
+    owner: Optional[str] = None
+    tasks: List[DraftInstantiateTask] = []
+    defaults: Optional[Dict[str, Any]] = None
+
+
+class CustomTemplateSaveRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    board: Optional[str] = None
+    owner: Optional[str] = None
+    tasks: List[DraftInstantiateTask] = []
+    defaults: Optional[Dict[str, Any]] = None
+
+
+@app.get("/api/templates/{template_id}")
+async def get_template_detail(template_id: str, profile: Optional[str] = None):
+    """Return the full template record including tasks list (not just the catalog summary)."""
+    with _config_profile_scope(profile):
+        from hermes_cli import mission_templates
+
+        template = mission_templates.get_template(template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail=f"Unknown template: {template_id}")
+
+        creates = template.get("creates", {})
+        tasks_raw = creates.get("tasks", [])
+        return {
+            "id": template["id"],
+            "name": template["name"],
+            "description": template.get("description", ""),
+            "defaults": template.get("defaults", {}),
+            "creates": {
+                "board": creates.get("board") or template["name"],
+                "tasks": tasks_raw if isinstance(tasks_raw, list) else [],
+                "cron": bool(template.get("cron")),
+            },
+        }
+
+
+@app.post("/api/templates")
+async def save_custom_template(body: CustomTemplateSaveRequest, profile: Optional[str] = None):
+    """Persist a custom mission template so it appears in the template catalog."""
+    with _config_profile_scope(profile):
+        import uuid as _uuid
+        from hermes_cli import mission_templates
+
+        template_id = f"custom-{_uuid.uuid4().hex[:8]}"
+        tasks_dicts = [t.model_dump(exclude_none=True) for t in body.tasks]
+        template: Dict[str, Any] = {
+            "id": template_id,
+            "name": body.name,
+            "description": body.description or body.name,
+            "defaults": body.defaults or {},
+            "creates": {
+                "board": body.board or body.name,
+                "tasks": tasks_dicts,
+            },
+        }
+        mission_templates.save_custom_template(template)
+        return {"id": template_id, "name": body.name}
+
+
+@app.post("/api/templates/instantiate-draft")
+async def instantiate_draft(body: DraftInstantiateRequest, profile: Optional[str] = None):
+    """Create a Kanban board + mission record from a builder draft without saving a template."""
+    with _config_profile_scope(profile):
+        from hermes_cli import kanban_db, traces_store
+
+        board_title = (body.board or body.name or "Mission").strip()
+        board_slug = _allocate_template_board_slug(board_title)
+
+        kanban_db.create_board(
+            board_slug,
+            name=board_title,
+            description=body.description or board_title,
+        )
+
+        tasks_dicts = [t.model_dump(exclude_none=True) for t in body.tasks]
+        synthetic_template: Dict[str, Any] = {
+            "creates": {"tasks": tasks_dicts},
+        }
+
+        conn = kanban_db.connect(board=board_slug)
+        try:
+            _seed_template_tasks(
+                conn=conn,
+                kanban_db=kanban_db,
+                board_slug=board_slug,
+                template=synthetic_template,
+                owner=body.owner,
+            )
+        finally:
+            conn.close()
+
+        mission_id = _derived_mission_id(board_slug)
+        defaults = body.defaults or {}
+        model_tier = str(defaults.get("model_tier") or "").strip()
+        mission = traces_store.upsert_mission(
+            {
+                "id": mission_id,
+                "board_slug": board_slug,
+                "title": board_title,
+                "status": "todo",
+                "owner": body.owner,
+                "tags": [
+                    "source:builder",
+                    *([f"model-tier:{model_tier}"] if model_tier else []),
+                ],
+            }
+        )
+        return {
+            "mission_id": str(mission.get("id") or mission_id),
+            "board_slug": board_slug,
+        }
 
 
 @app.get("/api/traces")
@@ -12971,8 +13660,7 @@ async def post_mission(body: MissionUpsertRequest, profile: Optional[str] = None
         return {"mission": payload}
 
 
-@app.get("/api/ops/fleet-metrics")
-async def get_fleet_metrics(profile: Optional[str] = None):
+def _build_fleet_metrics_payload(profile: Optional[str]) -> Dict[str, Any]:
     with _config_profile_scope(profile):
         from hermes_cli import traces_store
 
@@ -13093,6 +13781,184 @@ async def get_fleet_metrics(profile: Optional[str] = None):
         }
 
 
+def _autopilot_report_scaffold(incident: Dict[str, Any]) -> Dict[str, Any]:
+    title = str(incident.get("title") or "Operational incident").strip() or "Operational incident"
+    detail = str(incident.get("detail") or "").strip()
+    suggested = str(incident.get("suggested_action") or "Investigate traces and queue state.").strip()
+    severity = str(incident.get("severity") or "warning").strip()
+    return {
+        "summary": f"{title} ({severity})",
+        "suspected_cause": detail or "Signal thresholds were exceeded in recent fleet telemetry.",
+        "suggested_fix": suggested,
+        "next_steps": [
+            "Review evidence attached to the incident.",
+            "Validate queue and trace state for affected runs.",
+            "Apply the suggested fix and monitor recurrence.",
+        ],
+    }
+
+
+def _resolve_autopilot_incident(
+    incidents: List[Dict[str, Any]],
+    body: OpsAutopilotDiagnoseRequest,
+) -> Dict[str, Any]:
+    if body.incident_id:
+        target_id = str(body.incident_id).strip()
+        if not target_id:
+            raise HTTPException(status_code=400, detail="incident_id cannot be empty")
+        target = next((item for item in incidents if str(item.get("id")) == target_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return target
+    if isinstance(body.incident, dict):
+        raw_id = str(body.incident.get("id") or "").strip()
+        raw_kind = str(body.incident.get("kind") or "custom").strip() or "custom"
+        if not raw_id:
+            raw_id = f"{raw_kind}:{int(time.time())}"
+        return {
+            "id": raw_id,
+            "kind": raw_kind,
+            "severity": str(body.incident.get("severity") or "warning"),
+            "title": str(body.incident.get("title") or "Operational incident"),
+            "detail": str(body.incident.get("detail") or "Manual incident submitted by operator."),
+            "evidence": body.incident.get("evidence") if isinstance(body.incident.get("evidence"), dict) else {},
+            "suggested_action": str(body.incident.get("suggested_action") or "Open a diagnostic mission."),
+        }
+    raise HTTPException(status_code=400, detail="Provide incident_id or incident payload")
+
+
+def _create_autopilot_diagnostic(
+    *,
+    profile: Optional[str],
+    incident: Dict[str, Any],
+    assignee_profile: Optional[str],
+) -> Dict[str, Any]:
+    from hermes_cli import kanban_db, mission_templates, traces_store
+
+    assignee = str(assignee_profile or profile or "").strip() or "ops"
+    template = mission_templates.get_template("ops-watchdog") or {
+        "id": "ops-watchdog",
+        "name": "Ops Watchdog",
+        "description": "Operator-triggered diagnostics for operational incidents.",
+        "creates": {"tasks": []},
+    }
+
+    board_title = f"Diagnostic — {str(incident.get('title') or 'ops incident').strip()}"
+    board_slug = _allocate_template_board_slug(board_title)
+    kanban_task_id: Optional[str] = None
+    kanban_warning: Optional[str] = None
+    try:
+        kanban_db.create_board(
+            board_slug,
+            name=board_title,
+            description=str(template.get("description") or board_title),
+        )
+        conn = kanban_db.connect(board=board_slug)
+        try:
+            _seed_template_tasks(
+                conn=conn,
+                kanban_db=kanban_db,
+                board_slug=board_slug,
+                template=template,
+                owner=assignee,
+            )
+            detail = str(incident.get("detail") or "").strip()
+            evidence = incident.get("evidence")
+            evidence_blob = json.dumps(evidence, ensure_ascii=False, indent=2) if isinstance(evidence, dict) else "{}"
+            task_body = (
+                f"Incident ID: {incident.get('id')}\n"
+                f"Kind: {incident.get('kind')}\n"
+                f"Severity: {incident.get('severity')}\n"
+                f"Detail: {detail}\n\n"
+                f"Evidence:\n{evidence_blob}\n"
+            )
+            kanban_task_id = kanban_db.create_task(
+                conn,
+                title=f"Diagnose incident: {incident.get('title') or incident.get('id')}",
+                body=task_body,
+                assignee=assignee,
+                initial_status="running",
+                board=board_slug,
+            )
+            conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (kanban_task_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        kanban_warning = str(exc)
+
+    mission_id = _derived_mission_id(board_slug)
+    mission = traces_store.upsert_mission(
+        {
+            "id": mission_id,
+            "board_slug": board_slug,
+            "title": board_title,
+            "status": "todo",
+            "owner": assignee,
+            "tags": [
+                "template:ops-watchdog",
+                "diagnostic",
+                f"incident:{incident.get('kind') or 'unknown'}",
+                f"incident-id:{incident.get('id') or 'unknown'}",
+            ],
+        }
+    )
+    report = _autopilot_report_scaffold(incident)
+    response: Dict[str, Any] = {
+        "mission_id": str(mission.get("id") or mission_id),
+        "kanban_task_id": kanban_task_id,
+        "report": report,
+    }
+    if kanban_warning:
+        response["kanban_warning"] = f"Kanban task creation failed, mission registry kept: {kanban_warning}"
+    return response
+
+
+@app.get("/api/ops/fleet-metrics")
+async def get_fleet_metrics(profile: Optional[str] = None):
+    return _build_fleet_metrics_payload(profile)
+
+
+@app.get("/api/ops/autopilot/incidents")
+async def get_autopilot_incidents(profile: Optional[str] = None):
+    from hermes_cli.ops_autopilot import detect_incidents
+
+    with _config_profile_scope(profile):
+        config = load_config()
+        fleet_metrics = _build_fleet_metrics_payload(profile)
+        cost_status = _cost_guardrails_payload(profile).get("status", {})
+        incidents = detect_incidents(
+            fleet_metrics=fleet_metrics,
+            cost_status=cost_status if isinstance(cost_status, dict) else {},
+            config=config.get("ops_autopilot") if isinstance(config, dict) else {},
+        )
+        return {"incidents": incidents}
+
+
+@app.post("/api/ops/autopilot/diagnose")
+async def post_autopilot_diagnose(
+    body: OpsAutopilotDiagnoseRequest,
+    profile: Optional[str] = None,
+):
+    from hermes_cli.ops_autopilot import detect_incidents
+
+    with _config_profile_scope(profile):
+        config = load_config()
+        fleet_metrics = _build_fleet_metrics_payload(profile)
+        cost_status = _cost_guardrails_payload(profile).get("status", {})
+        incidents = detect_incidents(
+            fleet_metrics=fleet_metrics,
+            cost_status=cost_status if isinstance(cost_status, dict) else {},
+            config=config.get("ops_autopilot") if isinstance(config, dict) else {},
+        )
+        incident = _resolve_autopilot_incident(incidents, body)
+        return _create_autopilot_diagnostic(
+            profile=profile,
+            incident=incident,
+            assignee_profile=body.assignee_profile,
+        )
+
+
 @app.get("/api/costs/by-mission")
 async def get_costs_by_mission(days: int = 30, profile: Optional[str] = None):
     with _config_profile_scope(profile):
@@ -13126,15 +13992,36 @@ async def get_costs_by_mission(days: int = 30, profile: Optional[str] = None):
                         [*session_ids, cutoff],
                     )
                     rows = [dict(r) for r in cur.fetchall()]
+                span_view = _span_cost_views_for_sessions(
+                    session_ids=session_ids,
+                    cutoff=cutoff,
+                )
+                by_session = span_view.get("by_session", {}) if isinstance(span_view, dict) else {}
+                sessions_with_spans = span_view.get("sessions_with_spans", set())
+                mission_has_recorded = bool(sessions_with_spans)
 
-                total_cost = sum(_safe_float(r.get("cost_usd")) for r in rows)
-                total_tokens = sum(_safe_int(r.get("total_tokens")) for r in rows)
+                total_cost = 0.0
+                total_tokens = 0
+                top_runs_source: List[Dict[str, Any]] = []
+                for row in rows:
+                    sid = str(row.get("session_id") or "").strip()
+                    if sid in sessions_with_spans and sid in by_session:
+                        span_row = by_session[sid]
+                        run_cost = _safe_float(span_row.get("cost_usd"))
+                        run_tokens = _safe_int(span_row.get("input_tokens")) + _safe_int(span_row.get("output_tokens"))
+                    else:
+                        run_cost = _safe_float(row.get("cost_usd"))
+                        run_tokens = _safe_int(row.get("total_tokens"))
+                    total_cost += run_cost
+                    total_tokens += run_tokens
+                    top_runs_source.append({"session_id": sid, "cost_usd": run_cost})
+                top_runs_source.sort(key=lambda item: _safe_float(item.get("cost_usd")), reverse=True)
                 top_runs = [
                     {
                         "session_id": r.get("session_id"),
                         "cost_usd": _safe_float(r.get("cost_usd")),
                     }
-                    for r in rows[:3]
+                    for r in top_runs_source[:3]
                 ]
                 payload.append(
                     {
@@ -13145,13 +14032,15 @@ async def get_costs_by_mission(days: int = 30, profile: Optional[str] = None):
                         "total_tokens": total_tokens,
                         "run_count": len(rows),
                         "top_runs": top_runs,
+                        "is_estimate": not mission_has_recorded,
                     }
                 )
 
             payload.sort(key=lambda item: item.get("cost_usd", 0.0), reverse=True)
+            any_recorded = any(not bool(item.get("is_estimate")) for item in payload)
             return {
                 "missions": payload,
-                "is_estimate": True,
+                "is_estimate": not any_recorded,
             }
         finally:
             db.close()

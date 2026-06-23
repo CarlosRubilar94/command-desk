@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 const PATH_LABELS: Record<string, string> = {
   "/agent":        "Home",
   "/missions":     "Missions",
+  "/missions/builder": "Mission Builder",
   "/ops":          "Fleet",
   "/costs":        "Spend",
   "/traces":       "Runs",
@@ -31,6 +32,7 @@ const PATH_LABELS: Record<string, string> = {
   "/env":          "Keys",
   "/system":       "System",
   "/docs":         "Documentation",
+  "/replay":       "Replay",
 };
 
 /** Derive breadcrumb segments from a pathname. */

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, memo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, RefreshCw, Target } from "lucide-react";
+import { LayoutTemplate, Plus, RefreshCw, Target } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { api } from "@/lib/api";
 import type {
@@ -570,9 +570,8 @@ function MissionDetailDrawer({
 function MissionsSkeleton() {
   return (
     <DeckPageShell>
-      <div className="flex items-center gap-2 py-8">
-        <Spinner />
-        <span className="text-sm text-[var(--dsd-text-secondary)]">Loading missions…</span>
+      <div className="flex flex-col gap-4 py-4">
+        <SkeletonTable rows={6} cols={7} />
       </div>
     </DeckPageShell>
   );
@@ -581,13 +580,11 @@ function MissionsSkeleton() {
 function MissionsError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <DeckPageShell>
-      <div className="flex flex-col items-center gap-3 py-12 text-center">
-        <p className="text-sm text-[var(--dsd-text-secondary)]">{message}</p>
-        <button type="button" className="deck-btn-sm ghost" onClick={onRetry}>
-          <RefreshCw className="h-3.5 w-3.5" />
-          Retry
-        </button>
-      </div>
+      <ErrorState
+        title="Failed to load missions"
+        message={message}
+        onRetry={onRetry}
+      />
     </DeckPageShell>
   );
 }
@@ -595,13 +592,11 @@ function MissionsError({ message, onRetry }: { message: string; onRetry: () => v
 function MissionsEmpty() {
   return (
     <DeckPageShell>
-      <div className="flex flex-col items-center gap-2 py-16 text-center">
-        <Target className="h-8 w-8 opacity-20 text-[var(--dsd-cat-mission)]" />
-        <p className="text-sm font-medium text-[var(--dsd-text-secondary)]">No missions yet</p>
-        <p className="text-xs text-[var(--dsd-text-faint)] max-w-xs">
-          Create a Kanban board and link it to a mission to start tracking objectives, costs, and agent delegation.
-        </p>
-      </div>
+      <EmptyState
+        icon={<Target className="h-8 w-8" />}
+        title="No missions yet"
+        description="Create a Kanban board and link it to a mission to start tracking objectives, costs, and agent delegation."
+      />
     </DeckPageShell>
   );
 }
@@ -803,6 +798,10 @@ export default function MissionsPage() {
   useLayoutEffect(() => {
     setEnd(
       <div className="flex items-center gap-2">
+        <DeckBtn onClick={() => navigate("/missions/builder")}>
+          <LayoutTemplate className="h-3.5 w-3.5" />
+          Build Mission
+        </DeckBtn>
         <DeckBtn onClick={() => setTemplatesOpen(true)}>
           <Plus className="h-3.5 w-3.5" />
           New Mission
@@ -814,7 +813,7 @@ export default function MissionsPage() {
       </div>,
     );
     return () => setEnd(null);
-  }, [loading, load, setEnd, setTemplatesOpen]);
+  }, [loading, load, navigate, setEnd, setTemplatesOpen]);
 
   const openMission = useCallback((m: MissionRow) => {
     setSelected(m);
@@ -849,6 +848,8 @@ export default function MissionsPage() {
               rowKey={(m) => m.mission_id}
               onRowClick={openMission}
               dense
+              quickFilter
+              filterPlaceholder="Filter missions…"
               aria-label="All missions"
               emptyLabel="No missions found"
             />

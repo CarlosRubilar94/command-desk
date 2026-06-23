@@ -1,6 +1,8 @@
 export { StatusPill } from "./StatusPill";
 export type { StatusPillProps, StatusVariant } from "./StatusPill";
 
+export { ErrorBoundary } from "./ErrorBoundary";
+
 export { DataTable } from "./DataTable";
 export type { DataTableProps, ColDef, SortDir } from "./DataTable";
 
