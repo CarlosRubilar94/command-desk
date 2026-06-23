@@ -109,6 +109,7 @@ const ChannelsPage = lazy(() => import("@/pages/ChannelsPage")) as unknown as Co
 const WebhooksPage = lazy(() => import("@/pages/WebhooksPage")) as unknown as ComponentType;
 const SystemPage = lazy(() => import("@/pages/SystemPage")) as unknown as ComponentType;
 const OpsFleetPage = lazy(() => import("@/pages/OpsFleetPage")) as unknown as ComponentType;
+const MultiAgentHubPage = lazy(() => import("@/pages/MultiAgentHubPage")) as unknown as ComponentType;
 const CostsPage = lazy(() => import("@/pages/CostsPage")) as unknown as ComponentType;
 const TracesPage = lazy(() => import("@/pages/TracesPage")) as unknown as ComponentType;
 const RoutingPage = lazy(() => import("@/pages/RoutingPage")) as unknown as ComponentType;
@@ -223,6 +224,7 @@ const CHAT_NAV_ITEM: NavItem = {
 const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/": RootRedirect,
   "/agent": AgentHomePage,
+  "/multi-agent": MultiAgentHubPage,
   "/ops": OpsFleetPage,
   "/costs": CostsPage,
   "/traces": TracesPage,
@@ -265,6 +267,7 @@ function ChatRouteSink() {
 const COMMAND_DESK_NAV: NavItem[] = [
   { path: "/agent", label: "Home", icon: Sparkles },
   { path: "/missions", label: "Missions", icon: Target },
+  { path: "/multi-agent", label: "Multi-agent", icon: Users },
   { path: "/ops", label: "Fleet", icon: Activity },
   { path: "/costs", label: "Spend", icon: DollarSign },
   { path: "/traces", label: "Runs", icon: GitBranch },
@@ -468,6 +471,7 @@ const DECK_LAYOUT_ROUTES = new Set([
   "/agent",
   "/missions",
   "/missions/builder",
+  "/multi-agent",
   "/ops",
   "/costs",
   "/traces",

@@ -2370,11 +2370,114 @@ def _build_fleet_status_payload() -> dict:
     }
 
 
+def _repo_root() -> "Path":
+    from pathlib import Path
+    return Path(__file__).resolve().parents[1]
+
+
+def _list_cursor_agents() -> list[dict]:
+    """Read versioned Cursor subagent definitions from .cursor/agents/."""
+    import re
+    from pathlib import Path
+
+    agents_dir = _repo_root() / ".cursor" / "agents"
+    if not agents_dir.is_dir():
+        return []
+
+    agents: list[dict] = []
+    for path in sorted(agents_dir.glob("*.md")):
+        if path.name.lower() == "readme.md":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        name = path.stem
+        description = ""
+        if text.startswith("---"):
+            parts = text.split("---", 2)
+            if len(parts) >= 3:
+                fm = parts[1]
+                m_name = re.search(r"^name:\s*(.+)$", fm, re.MULTILINE)
+                m_desc = re.search(r"^description:\s*(.+)$", fm, re.MULTILINE)
+                if m_name:
+                    name = m_name.group(1).strip()
+                if m_desc:
+                    description = m_desc.group(1).strip()
+        agents.append({
+            "id": name,
+            "file": path.name,
+            "description": description,
+        })
+    return agents
+
+
+_MULTI_AGENT_PLAYBOOKS = (
+    {
+        "id": "cursor-dev",
+        "layer": "cursor",
+        "title": "Desenvolvimento no IDE",
+        "summary": "project-analyst → planner → implementer + spec-reviewer + verifier",
+        "invoke": "@orchestrator [tarefa] — subagentes em .cursor/agents/",
+    },
+    {
+        "id": "delegate-parallel",
+        "layer": "hermes",
+        "title": "Pesquisa paralela",
+        "summary": "delegate_task batch com economy routing",
+        "invoke": "Delegue N pesquisas web em paralelo sobre [tema] e sintetize",
+    },
+    {
+        "id": "kanban-feature",
+        "layer": "hermes",
+        "title": "Feature durável",
+        "summary": "Kanban triage + auto_decompose + dispatcher 30s",
+        "invoke": "command-desk kanban create \"…\" --status triage",
+    },
+    {
+        "id": "kanban-swarm",
+        "layer": "hermes",
+        "title": "Swarm research",
+        "summary": "workers → verifier → synthesizer",
+        "invoke": "command-desk kanban swarm \"…\" --worker … --verifier … --synthesizer …",
+    },
+    {
+        "id": "cron-briefing",
+        "layer": "hermes",
+        "title": "Briefing agendado",
+        "summary": "Cron isolado com modelo economy",
+        "invoke": "command-desk cron add \"Briefing\" --schedule \"0 9 * * *\"",
+    },
+)
+
+
+def _build_multi_agent_hub_payload() -> dict:
+    """Cursor subagents catalog + Hermes playbooks + live fleet snapshot."""
+    fleet = _build_fleet_status_payload()
+    return {
+        "cursor_agents": _list_cursor_agents(),
+        "playbooks": list(_MULTI_AGENT_PLAYBOOKS),
+        "docs": {
+            "cursor_local": "docs/CURSOR-LOCAL-MULTI-AGENT.md",
+            "agents_readme": ".cursor/agents/README.md",
+            "skill": "skills/devssd-ops/multi-agent-playbook/SKILL.md",
+        },
+        "fleet": fleet,
+    }
+
+
 @app.get("/api/ops/fleet-status")
 async def get_fleet_status():
     """Multi-agent fleet snapshot: gateway agents, kanban, cron, delegation."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _build_fleet_status_payload)
+
+
+@app.get("/api/ops/multi-agent-hub")
+async def get_multi_agent_hub():
+    """Unified multi-agent hub: Cursor catalog, playbooks, fleet status."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _build_multi_agent_hub_payload)
 
 
 @app.get("/api/ops/routing")

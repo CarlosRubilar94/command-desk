@@ -54,4 +54,16 @@ Bitwarden SM project `DevSSD-keys` — only `BWS_ACCESS_TOKEN` local. Session ex
 
 - `command-desk/docs/COMMAND-DESK-ARCHITECTURE.md`
 - `command-desk/README-COMMAND-DESK.md`
+- `docs/CURSOR-LOCAL-MULTI-AGENT.md` — Cursor local + Hermes runtime multi-agent
 - `control-center/.cursor/AGENTS.md` (CommandDesk agent role)
+
+## Multi-agent (duas camadas)
+
+| Camada | Onde | Dashboard |
+|--------|------|-----------|
+| Cursor (dev local) | `.cursor/agents/` no repo | http://127.0.0.1:9119/multi-agent |
+| Hermes (runtime) | delegate_task, kanban, cron | http://127.0.0.1:9119/ops |
+
+Skill: `skills/devssd-ops/multi-agent-playbook/SKILL.md`
+
+Ativar economy routing: `command-desk routing --enable --delegation-tier economy`

@@ -1077,6 +1077,7 @@ export const api = {
   getDevssdStatus: () =>
     fetchJSON<DevssdStatusResponse>("/api/devssd/status"),
   getFleetStatus: () => fetchJSON<FleetStatusResponse>("/api/ops/fleet-status"),
+  getMultiAgentHub: () => fetchJSON<MultiAgentHubResponse>("/api/ops/multi-agent-hub"),
   getRoutingStatus: () => fetchJSON<RoutingStatusResponse>("/api/ops/routing"),
   updateRoutingStatus: (body: RoutingUpdateRequest) =>
     fetchJSON<{ ok: boolean; lines: string[] }>("/api/ops/routing", {
@@ -1830,6 +1831,31 @@ export interface StatusResponse {
   latest_config_version: number;
   release_date: string;
   version: string;
+}
+
+export interface CursorAgentInfo {
+  id: string;
+  file: string;
+  description: string;
+}
+
+export interface MultiAgentPlaybook {
+  id: string;
+  layer: string;
+  title: string;
+  summary: string;
+  invoke: string;
+}
+
+export interface MultiAgentHubResponse {
+  cursor_agents: CursorAgentInfo[];
+  playbooks: MultiAgentPlaybook[];
+  docs: {
+    cursor_local: string;
+    agents_readme: string;
+    skill: string;
+  };
+  fleet: FleetStatusResponse;
 }
 
 export interface FleetStatusResponse {
