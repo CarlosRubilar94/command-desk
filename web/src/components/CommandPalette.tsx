@@ -41,6 +41,8 @@ const PALETTE_ITEMS: PaletteItem[] = [
   // Command Desk section
   { path: "/agent",        label: "Home",          group: "Command Desk", keywords: "agent start" },
   { path: "/missions",     label: "Missions",      group: "Command Desk", keywords: "tasks objectives" },
+  { path: "/missions/builder", label: "Mission Builder", group: "Command Desk", keywords: "create new mission build" },
+  { path: "/replay",       label: "Replay",        group: "Command Desk", keywords: "trace replay debug" },
   { path: "/ops",          label: "Fleet",         group: "Command Desk", keywords: "operations ops" },
   { path: "/costs",        label: "Spend",         group: "Command Desk", keywords: "costs billing" },
   { path: "/traces",       label: "Runs",          group: "Command Desk", keywords: "traces logs runs" },

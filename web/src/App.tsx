@@ -131,6 +131,8 @@ const GatewayStatusPage = lazy(() =>
 import { CommandDeckUX } from "@/components/CommandPalette";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import { ErrorBoundary } from "@/components/ds/ErrorBoundary";
+import { DensityProvider, useDensity } from "@/contexts/DensityContext";
 import { useI18n } from "@/i18n";
 import type { Translations } from "@/i18n/types";
 import { PluginPage, PluginSlot, usePlugins } from "@/plugins";
@@ -142,6 +144,31 @@ import type { StatusResponse } from "@/lib/api";
 
 function RootRedirect() {
   return <Navigate to="/agent" replace />;
+}
+
+/** Compact/comfortable density toggle rendered in the sidebar footer. */
+function DensityToggle({ collapsed }: { collapsed: boolean }) {
+  const { density, toggleDensity } = useDensity();
+  const isCompact = density === "compact";
+  return (
+    <button
+      type="button"
+      onClick={toggleDensity}
+      aria-label={isCompact ? "Switch to comfortable density" : "Switch to compact density"}
+      aria-pressed={isCompact}
+      title={isCompact ? "Comfortable" : "Compact"}
+      className={cn(
+        "flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors",
+        "text-text-secondary hover:text-midground",
+        isCompact && "text-[var(--dsd-accent-primary)]",
+      )}
+    >
+      <span aria-hidden className="text-[13px] leading-none">{isCompact ? "⊟" : "⊞"}</span>
+      {!collapsed && (
+        <span className="hidden lg:inline">{isCompact ? "Compact" : "Cozy"}</span>
+      )}
+    </button>
+  );
 }
 
 /** Shown while a lazy-loaded page chunk is being fetched. */
@@ -570,6 +597,7 @@ export default function App() {
   }, []);
 
   return (
+    <DensityProvider>
     <ProfileProvider>
     <div
       data-deck-theme="ops"
@@ -806,6 +834,14 @@ export default function App() {
                 >
                   <LanguageSwitcher collapsed={isDesktopCollapsed} dropUp />
                 </SidebarIconWithTooltip>
+
+                <SidebarIconWithTooltip
+                  collapsed={isDesktopCollapsed}
+                  label="Toggle density"
+                  tooltipWarmRef={tooltipWarmRef}
+                >
+                  <DensityToggle collapsed={isDesktopCollapsed} />
+                </SidebarIconWithTooltip>
               </div>
             </div>
 
@@ -847,6 +883,7 @@ export default function App() {
                 )}
               >
                 <ProfileKeyedRoutes>
+                  <ErrorBoundary>
                   <Suspense fallback={<PageLoadFallback />}>
                     <Routes>
                       {routes.map(({ key, path, element }) => (
@@ -860,6 +897,7 @@ export default function App() {
                       />
                     </Routes>
                   </Suspense>
+                  </ErrorBoundary>
                 </ProfileKeyedRoutes>
 
                 {embeddedChat &&
@@ -900,6 +938,7 @@ export default function App() {
       <CommandDeckUX />
     </div>
     </ProfileProvider>
+    </DensityProvider>
   );
 }
 

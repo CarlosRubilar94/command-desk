@@ -1,6 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { AlertTriangle, Plus, RefreshCw, Save, TrendingDown, Trash2 } from "lucide-react";
-import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { api } from "@/lib/api";
 import type {
   CostGuardrailsConfig,
@@ -17,7 +16,7 @@ import {
   LayoutGrid,
   MetricTile,
 } from "@/components/DeckOps";
-import { DataTable, EmptyState, ErrorState, StatusPill } from "@/components/ds";
+import { DataTable, EmptyState, ErrorState, SkeletonTable, StatusPill } from "@/components/ds";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn } from "@/lib/utils";
 
@@ -62,9 +61,16 @@ function fmtDate(day: string): string {
 function CostsSkeleton() {
   return (
     <DeckPageShell>
-      <div className="flex items-center gap-2 py-8">
-        <Spinner />
-        <span className="text-sm text-[var(--dsd-text-secondary)]">Loading cost data…</span>
+      <div className="flex flex-col gap-4 py-4">
+        <div className="grid grid-cols-4 gap-3">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="rounded-[var(--dsd-radius-md)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-raised)] p-4">
+              <div className="h-3 w-16 rounded bg-[var(--dsd-layer-overlay)] mb-2 animate-pulse" />
+              <div className="h-6 w-24 rounded bg-[var(--dsd-layer-overlay)] animate-pulse" />
+            </div>
+          ))}
+        </div>
+        <SkeletonTable rows={8} cols={5} />
       </div>
     </DeckPageShell>
   );
@@ -175,6 +181,8 @@ const ModelTable = memo(function ModelTable({ rows }: { rows: CostsModelEntry[] 
       cols={columns}
       dense
       maxRows={12}
+      quickFilter
+      filterPlaceholder="Filter models…"
       aria-label="Cost by model"
     />
   );

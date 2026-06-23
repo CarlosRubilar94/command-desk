@@ -170,3 +170,26 @@
     --dsd-dur-crawl:   0ms;
   }
 }
+
+/* ── DENSITY MODES ────────────────────────────────────────────────── */
+/* Default (comfortable) values are already set in :root above.
+   The DensityProvider sets data-density on <html> via localStorage. */
+
+html[data-density="compact"] {
+  /* Table row height reduced by ~30% */
+  --dsd-table-row-h: 24px;
+  --dsd-table-header-h: 24px;
+
+  /* Tighter spacing scale */
+  --dsd-block-gap: 16px;
+  --dsd-space-4:   12px;
+  --dsd-space-5:   16px;
+  --dsd-space-6:   20px;
+  --dsd-space-8:   24px;
+  --dsd-space-10:  32px;
+  --dsd-space-12:  40px;
+
+  /* Slightly smaller body text */
+  --dsd-text-body: 13px;
+  --dsd-text-md:   13px;
+}
