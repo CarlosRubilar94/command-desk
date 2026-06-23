@@ -95,7 +95,7 @@ export default defineConfig({
             },
             {
               name: "vendor-terminal",
-              test: /node_modules[\\/]xterm[\\/]/,
+              test: /node_modules[\\/](?:@xterm[\\/]|xterm[\\/])/,
               priority: 50,
             },
           ],

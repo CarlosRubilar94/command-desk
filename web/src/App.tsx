@@ -78,9 +78,6 @@ import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { ProfileScopeBanner } from "@/components/ProfileScopeBanner";
 import { useSystemActions } from "@/contexts/useSystemActions";
 import type { SystemAction } from "@/contexts/system-actions-context";
-// ChatPage stays eager — it mounts persistently outside <Routes> and
-// must survive route changes without unmounting.
-import ChatPage from "@/pages/ChatPage";
 // AgentHomePage stays eager — it is the landing page; making it lazy
 // would cause a skeleton flash on every fresh load.
 import { AgentHomePage } from "@/pages/AgentHomePage";
@@ -94,6 +91,9 @@ const ConfigPage = lazy(() => import("@/pages/ConfigPage")) as unknown as Compon
 const DocsPage = lazy(() => import("@/pages/DocsPage")) as unknown as ComponentType;
 const EnvPage = lazy(() => import("@/pages/EnvPage")) as unknown as ComponentType;
 const FilesPage = lazy(() => import("@/pages/FilesPage")) as unknown as ComponentType;
+const ChatPage = lazy(() => import("@/pages/ChatPage")) as unknown as ComponentType<{
+  isActive?: boolean;
+}>;
 const SessionsPage = lazy(() => import("@/pages/SessionsPage")) as unknown as ComponentType;
 const LogsPage = lazy(() => import("@/pages/LogsPage")) as unknown as ComponentType;
 const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage")) as unknown as ComponentType;
@@ -176,6 +176,22 @@ function PageLoadFallback() {
   return (
     <div className="deck-dashboard px-5 pt-6" aria-busy="true" aria-live="polite">
       <SkeletonTable rows={6} cols={5} />
+    </div>
+  );
+}
+
+function EmbeddedChatLoadFallback({ isChatRoute }: { isChatRoute: boolean }) {
+  if (!isChatRoute) return null;
+  return (
+    <div
+      className="flex min-h-0 min-w-0 flex-1 items-center justify-center"
+      aria-busy="true"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner />
+        <span>Loading chat…</span>
+      </div>
     </div>
   );
 }
@@ -924,7 +940,9 @@ export default function App() {
                       )}
                       aria-hidden={!isChatRoute}
                     >
-                      <ChatPage isActive={isChatRoute} />
+                      <Suspense fallback={<EmbeddedChatLoadFallback isChatRoute={isChatRoute} />}>
+                        <ChatPage isActive={isChatRoute} />
+                      </Suspense>
                     </div>
                   ))}
               </div>
