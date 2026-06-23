@@ -62,6 +62,27 @@ const SLACK_TOKEN_PREFIXES: Record<string, string> = {
   SLACK_APP_TOKEN: "xapp-",
 };
 
+function normalizeEnvPathForDisplay(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return "~/.hermes/.env";
+  if (trimmed.startsWith("~")) return trimmed.replace(/\\/g, "/");
+
+  const windowsHomeMatch = trimmed.match(
+    /^[A-Za-z]:\\Users\\[^\\]+(?<rest>\\.*)?$/i,
+  );
+  if (windowsHomeMatch) {
+    const rest = windowsHomeMatch.groups?.rest ?? "";
+    return `~${rest.replace(/\\/g, "/") || ""}`;
+  }
+
+  const unixHomeMatch = trimmed.match(/^\/(?:home|Users)\/[^/]+(?<rest>\/.*)?$/);
+  if (unixHomeMatch) {
+    return `~${unixHomeMatch.groups?.rest ?? ""}`;
+  }
+
+  return trimmed;
+}
+
 function validateMessagingEnvField(field: MessagingPlatformEnvVar, value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -267,6 +288,10 @@ export default function ChannelsPage() {
     () => platforms.filter((p) => p.configured).length,
     [platforms],
   );
+  const envPathDisplay = useMemo(
+    () => normalizeEnvPathForDisplay(envPath),
+    [envPath],
+  );
 
   if (loading) {
     return (
@@ -318,7 +343,7 @@ export default function ChannelsPage() {
 
       <p className="text-xs text-muted-foreground">
         {configured} of {platforms.length} channels configured. Credentials are
-        written to <code className="font-courier">{envPath}</code>; the
+        written to <code className="font-courier">{envPathDisplay}</code>; the
         gateway connects each enabled channel on its next restart.
       </p>
 

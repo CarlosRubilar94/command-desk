@@ -15,6 +15,7 @@ const BUILTIN: Record<string, keyof Translations["app"]["nav"] | string> = {
   "/cron": "cron",
   "/skills": "skills",
   "/plugins": "plugins",
+  "/mcp": "MCP",
   "/profiles": "profiles",
   "/config": "config",
   "/env": "keys",

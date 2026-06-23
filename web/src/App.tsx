@@ -250,6 +250,9 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/profiles/new": ProfileBuilderPage,
   "/config": ConfigPage,
   "/env": EnvPage,
+  // /keys is the canonical "Secrets" deep-link; alias it to the Secrets Center
+  // (EnvPage) so bookmarks/shared links resolve instead of bouncing to home.
+  "/keys": EnvPage,
   "/docs": DocsPage,
   "/replay": ReplayPage,
 };
