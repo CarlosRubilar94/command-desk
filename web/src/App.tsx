@@ -113,6 +113,7 @@ const CostsPage = lazy(() => import("@/pages/CostsPage")) as unknown as Componen
 const TracesPage = lazy(() => import("@/pages/TracesPage")) as unknown as ComponentType;
 const RoutingPage = lazy(() => import("@/pages/RoutingPage")) as unknown as ComponentType;
 const MissionsPage = lazy(() => import("@/pages/MissionsPage")) as unknown as ComponentType;
+const ReplayPage = lazy(() => import("@/pages/ReplayPage")) as unknown as ComponentType;
 // Named exports from DevssdPages — shim to default export for React.lazy
 const BitwardenStatusPage = lazy(() =>
   import("@/pages/DevssdPages").then((m) => ({ default: m.BitwardenStatusPage })),
@@ -205,6 +206,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/config": ConfigPage,
   "/env": EnvPage,
   "/docs": DocsPage,
+  "/replay": ReplayPage,
 };
 
 // Route placeholder for /chat.  The persistent ChatPage host (rendered
