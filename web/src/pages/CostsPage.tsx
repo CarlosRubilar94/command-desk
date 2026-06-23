@@ -1,8 +1,11 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
-import { AlertTriangle, RefreshCw, TrendingDown } from "lucide-react";
+import { AlertTriangle, Plus, RefreshCw, Save, TrendingDown, Trash2 } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { api } from "@/lib/api";
 import type {
+  CostGuardrailsConfig,
+  CostGuardrailsMissionBudgetStatus,
+  CostsGuardrailsResponse,
   CostsSummaryResponse,
   CostsModelEntry,
   CostsDayEntry,
@@ -14,6 +17,7 @@ import {
   LayoutGrid,
   MetricTile,
 } from "@/components/DeckOps";
+import { DataTable, EmptyState, ErrorState, StatusPill } from "@/components/ds";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn } from "@/lib/utils";
 
@@ -69,14 +73,12 @@ function CostsSkeleton() {
 function CostsError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <DeckPageShell>
-      <div className="flex flex-col items-center gap-3 py-12 text-center">
-        <AlertTriangle className="h-6 w-6 text-[var(--color-warning)]" />
-        <p className="text-sm text-[var(--dsd-text-secondary)]">{message}</p>
-        <button type="button" className="deck-btn-sm ghost" onClick={onRetry}>
-          <RefreshCw className="h-3.5 w-3.5" />
-          Retry
-        </button>
-      </div>
+      <ErrorState
+        title="Failed to load costs"
+        message={message}
+        icon={<AlertTriangle className="h-5 w-5" />}
+        onRetry={onRetry}
+      />
     </DeckPageShell>
   );
 }
@@ -84,10 +86,12 @@ function CostsError({ message, onRetry }: { message: string; onRetry: () => void
 function CostsEmpty() {
   return (
     <DeckPageShell>
-      <div className="flex flex-col items-center gap-2 py-12 text-center">
-        <span className="text-2xl opacity-40">💰</span>
-        <p className="text-sm text-[var(--dsd-text-secondary)]">No cost data yet — run an agent session to start tracking spend.</p>
-      </div>
+      <EmptyState
+        title="No cost data yet"
+        description="Run an agent session to start tracking spend."
+        icon={<span aria-hidden>💰</span>}
+        compact
+      />
     </DeckPageShell>
   );
 }
@@ -124,47 +128,92 @@ const ModelTable = memo(function ModelTable({ rows }: { rows: CostsModelEntry[] 
   if (!rows.length) {
     return <p className="text-xs text-[var(--dsd-text-secondary)]">No model data.</p>;
   }
+  const columns = [
+    {
+      key: "model",
+      header: "Model",
+      sortKey: "model" as const,
+      cell: (row: CostsModelEntry) => (
+        <span className="font-mono-ui truncate max-w-[220px]" title={row.model}>
+          {row.model}
+        </span>
+      ),
+    },
+    {
+      key: "estimated_cost",
+      header: "Cost (est.)",
+      sortKey: "estimated_cost" as const,
+      align: "right" as const,
+      cell: (row: CostsModelEntry) => <span className="tabular-nums">{fmtUsd(row.estimated_cost)}</span>,
+    },
+    {
+      key: "input_tokens",
+      header: "Input",
+      sortKey: "input_tokens" as const,
+      align: "right" as const,
+      cell: (row: CostsModelEntry) => <span className="tabular-nums">{fmtTokens(row.input_tokens)}</span>,
+    },
+    {
+      key: "output_tokens",
+      header: "Output",
+      sortKey: "output_tokens" as const,
+      align: "right" as const,
+      cell: (row: CostsModelEntry) => <span className="tabular-nums">{fmtTokens(row.output_tokens)}</span>,
+    },
+    {
+      key: "runs",
+      header: "Runs",
+      sortKey: "runs" as const,
+      align: "right" as const,
+      cell: (row: CostsModelEntry) => <span className="tabular-nums">{row.runs}</span>,
+    },
+  ];
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse" aria-label="Cost by model">
-        <thead>
-          <tr className="text-left text-[var(--dsd-text-secondary)] border-b border-[var(--color-border)]">
-            <th scope="col" className="py-1.5 pr-4 font-medium">Model</th>
-            <th scope="col" className="py-1.5 pr-4 font-medium text-right">Cost (est.)</th>
-            <th scope="col" className="py-1.5 pr-4 font-medium text-right">Input tok</th>
-            <th scope="col" className="py-1.5 pr-4 font-medium text-right">Output tok</th>
-            <th scope="col" className="py-1.5 pr-4 font-medium text-right">Runs</th>
-            <th scope="col" className="py-1.5 font-medium text-right">API calls</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr
-              key={row.model}
-              className="border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-muted)] transition-colors"
-            >
-              <td className="py-1.5 pr-4 font-mono-ui truncate max-w-[200px]" title={row.model}>
-                {row.model}
-              </td>
-              <td className="py-1.5 pr-4 text-right tabular-nums">{fmtUsd(row.estimated_cost)}</td>
-              <td className="py-1.5 pr-4 text-right tabular-nums">{fmtTokens(row.input_tokens)}</td>
-              <td className="py-1.5 pr-4 text-right tabular-nums">{fmtTokens(row.output_tokens)}</td>
-              <td className="py-1.5 pr-4 text-right tabular-nums">{row.runs}</td>
-              <td className="py-1.5 text-right tabular-nums">{row.api_calls}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      rows={rows}
+      rowKey={(row) => row.model}
+      cols={columns}
+      dense
+      maxRows={12}
+      aria-label="Cost by model"
+    />
   );
 });
 
-/** Routing savings card */
-function SavingsCard({ savings }: { savings: CostsSavingsResponse }) {
+function BudgetBar({
+  spend,
+  budget,
+  label,
+}: {
+  spend: number;
+  budget: number | null;
+  label: string;
+}) {
+  const pct = budget && budget > 0 ? Math.min(100, (spend / budget) * 100) : 0;
+  const over = budget !== null && spend > budget;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-[var(--dsd-text-secondary)]">{label}</span>
+        <span className="tabular-nums text-[var(--dsd-text-primary)]">
+          {fmtUsd(spend)} {budget !== null ? ` / ${fmtUsd(budget)}` : ""}
+        </span>
+      </div>
+      <div className="h-2 w-full rounded-full bg-[var(--dsd-layer-surface)]" aria-hidden>
+        <div
+          className={cn("h-full rounded-full transition-all", over ? "bg-[var(--dsd-sem-critical)]" : "bg-[var(--dsd-accent-primary)]")}
+          style={{ width: `${Math.max(2, pct)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SavingsPanel({ savings }: { savings: CostsSavingsResponse }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <TrendingDown className="h-4 w-4 text-[var(--color-success)]" />
+        <TrendingDown className="h-4 w-4 text-[var(--dsd-sem-success)]" />
         <span className="text-sm font-medium">
           {fmtUsd(savings.estimated_savings_usd, 4)} estimated saved
           {savings.is_estimate && (
@@ -173,13 +222,241 @@ function SavingsCard({ savings }: { savings: CostsSavingsResponse }) {
         </span>
       </div>
       <div className="text-xs text-[var(--dsd-text-secondary)] space-y-0.5">
-        <div>Premium-tier spend: {fmtUsd(savings.premium_spend_usd)} across {savings.premium_runs} runs</div>
+          <div>Premium-tier spend: {fmtUsd(savings.premium_spend_usd)} across {savings.premium_runs} runs</div>
         <div>Mid-tier cost ratio: {Math.round(savings.mid_cost_factor * 100)}%</div>
         {savings.is_estimate && (
           <div className="italic opacity-70 mt-1">{savings.note}</div>
         )}
       </div>
     </div>
+  );
+}
+
+function GuardrailsPanel({
+  payload,
+  saving,
+  onSave,
+}: {
+  payload: CostsGuardrailsResponse;
+  saving: boolean;
+  onSave: (cfg: CostGuardrailsConfig) => Promise<void>;
+}) {
+  const [config, setConfig] = useState<CostGuardrailsConfig>(payload.cost_guardrails);
+  const [newMissionId, setNewMissionId] = useState("");
+  const [newMissionBudget, setNewMissionBudget] = useState("");
+
+  useEffect(() => setConfig(payload.cost_guardrails), [payload.cost_guardrails]);
+
+  const missionEntries = useMemo(
+    () => Object.entries(config.mission_budgets_usd).sort((a, b) => a[0].localeCompare(b[0])),
+    [config.mission_budgets_usd],
+  );
+
+  const actionVariant = payload.status.current_decision.action === "fallback"
+    ? "warning"
+    : payload.status.current_decision.action === "block"
+      ? "error"
+      : payload.status.current_decision.action === "warn"
+        ? "warning"
+        : "success";
+
+  const save = async () => {
+    await onSave(config);
+  };
+
+  return (
+    <DeckCard title="Guardrails" subtitle="Budget, premium alert, and fallback controls" colClass="col-12">
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={config.enabled}
+              onChange={(e) => setConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
+            />
+            <span>Enable cost guardrails</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={config.premium_alert}
+              onChange={(e) => setConfig((prev) => ({ ...prev, premium_alert: e.target.checked }))}
+            />
+            <span>Alert on premium model usage</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={config.block_expensive}
+              onChange={(e) => setConfig((prev) => ({ ...prev, block_expensive: e.target.checked }))}
+            />
+            <span>Block expensive models</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={config.auto_fallback}
+              onChange={(e) => setConfig((prev) => ({ ...prev, auto_fallback: e.target.checked }))}
+            />
+            <span>Auto-fallback when blocked/over budget</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <label className="text-xs text-[var(--dsd-text-secondary)]">
+            Daily budget (USD)
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={config.daily_budget_usd ?? ""}
+              onChange={(e) => {
+                const value = e.target.value.trim();
+                setConfig((prev) => ({ ...prev, daily_budget_usd: value ? Number(value) : null }));
+              }}
+              className="mt-1 w-full rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-raised)] px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="text-xs text-[var(--dsd-text-secondary)]">
+            Fallback model
+            <input
+              type="text"
+              value={config.fallback_model}
+              onChange={(e) => setConfig((prev) => ({ ...prev, fallback_model: e.target.value }))}
+              className="mt-1 w-full rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-raised)] px-2 py-1 text-sm"
+            />
+          </label>
+          <label className="text-xs text-[var(--dsd-text-secondary)]">
+            Fallback provider (optional)
+            <input
+              type="text"
+              value={config.fallback_provider}
+              onChange={(e) => setConfig((prev) => ({ ...prev, fallback_provider: e.target.value }))}
+              className="mt-1 w-full rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-raised)] px-2 py-1 text-sm"
+            />
+          </label>
+        </div>
+
+        <div className="space-y-2">
+          <div className="text-xs text-[var(--dsd-text-secondary)]">Per-mission budgets</div>
+          {missionEntries.length === 0 ? (
+            <div className="text-xs text-[var(--dsd-text-faint)]">No mission budgets configured.</div>
+          ) : (
+            <div className="space-y-2">
+              {missionEntries.map(([missionId, budget]) => (
+                <div key={missionId} className="flex items-center gap-2">
+                  <code className="min-w-[220px] truncate rounded bg-[var(--dsd-layer-surface)] px-2 py-1 text-xs">{missionId}</code>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={budget}
+                    onChange={(e) => {
+                      const val = Number(e.target.value || 0);
+                      setConfig((prev) => ({
+                        ...prev,
+                        mission_budgets_usd: {
+                          ...prev.mission_budgets_usd,
+                          [missionId]: val,
+                        },
+                      }));
+                    }}
+                    className="w-28 rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-raised)] px-2 py-1 text-sm"
+                  />
+                  <button
+                    type="button"
+                    className="deck-btn-sm ghost"
+                    onClick={() =>
+                      setConfig((prev) => {
+                        const next = { ...prev.mission_budgets_usd };
+                        delete next[missionId];
+                        return { ...prev, mission_budgets_usd: next };
+                      })
+                    }
+                    aria-label={`Remove mission budget ${missionId}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              placeholder="mission_id"
+              value={newMissionId}
+              onChange={(e) => setNewMissionId(e.target.value)}
+              className="rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-raised)] px-2 py-1 text-sm"
+            />
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              placeholder="budget"
+              value={newMissionBudget}
+              onChange={(e) => setNewMissionBudget(e.target.value)}
+              className="w-28 rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-layer-raised)] px-2 py-1 text-sm"
+            />
+            <button
+              type="button"
+              className="deck-btn-sm ghost"
+              onClick={() => {
+                const key = newMissionId.trim();
+                const val = Number(newMissionBudget || 0);
+                if (!key || !Number.isFinite(val) || val <= 0) return;
+                setConfig((prev) => ({
+                  ...prev,
+                  mission_budgets_usd: { ...prev.mission_budgets_usd, [key]: val },
+                }));
+                setNewMissionId("");
+                setNewMissionBudget("");
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add mission
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusPill
+            variant={actionVariant}
+            label={`Current action: ${payload.status.current_decision.action}`}
+          />
+          <span className="text-xs text-[var(--dsd-text-secondary)]">
+            {payload.status.current_decision.reason || "No active guardrail reason."}
+          </span>
+          <button type="button" className="deck-btn-sm primary ml-auto" onClick={() => void save()} disabled={saving}>
+            <Save className="h-3.5 w-3.5" />
+            {saving ? "Saving..." : "Save guardrails"}
+          </button>
+        </div>
+
+        <BudgetBar
+          spend={payload.status.spend_today_usd}
+          budget={payload.status.daily_budget_usd}
+          label="Daily budget usage"
+        />
+
+        {payload.status.mission_budgets.length > 0 && (
+          <div className="space-y-2">
+            {payload.status.mission_budgets.map((item: CostGuardrailsMissionBudgetStatus) => (
+              <BudgetBar
+                key={item.mission_id}
+                spend={item.spend_usd}
+                budget={item.budget_usd}
+                label={`${item.title} (${item.mission_id})`}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="text-xs text-[var(--dsd-text-secondary)]">
+          Premium today: {payload.status.premium_usage_today.runs} runs, {fmtUsd(payload.status.premium_usage_today.spend_usd)} spend, projected day-end {fmtUsd(payload.status.projected_spend_today_usd)}.
+        </div>
+      </div>
+    </DeckCard>
   );
 }
 
@@ -191,23 +468,27 @@ export default function CostsPage() {
   const [byModel, setByModel] = useState<CostsModelEntry[]>([]);
   const [byDay, setByDay] = useState<CostsDayEntry[]>([]);
   const [savings, setSavings] = useState<CostsSavingsResponse | null>(null);
+  const [guardrails, setGuardrails] = useState<CostsGuardrailsResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [savingGuardrails, setSavingGuardrails] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [summaryData, byModelData, byDayData, savingsData] = await Promise.all([
+      const [summaryData, byModelData, byDayData, savingsData, guardrailsData] = await Promise.all([
         api.getCostsSummary(),
         api.getCostsByModel(days),
         api.getCostsByDay(days),
         api.getCostsSavings(days),
+        api.getCostsGuardrails(),
       ]);
       setSummary(summaryData);
       setByModel(byModelData.by_model);
       setByDay(byDayData.by_day);
       setSavings(savingsData);
+      setGuardrails(guardrailsData);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -253,6 +534,25 @@ export default function CostsPage() {
 
   // Alert banner: fire when today's spend exceeds threshold
   const showAlert = (summary.spend_today ?? 0) >= DEFAULT_ALERT_THRESHOLD_USD;
+  const saveGuardrails = async (cfg: CostGuardrailsConfig) => {
+    setSavingGuardrails(true);
+    try {
+      await api.updateCostsGuardrails({
+        enabled: cfg.enabled,
+        daily_budget_usd: cfg.daily_budget_usd,
+        mission_budgets_usd: cfg.mission_budgets_usd,
+        premium_alert: cfg.premium_alert,
+        block_expensive: cfg.block_expensive,
+        auto_fallback: cfg.auto_fallback,
+        fallback_model: cfg.fallback_model,
+        fallback_provider: cfg.fallback_provider,
+        premium_model_prefixes: cfg.premium_model_prefixes,
+      });
+      await refresh();
+    } finally {
+      setSavingGuardrails(false);
+    }
+  };
 
   return (
     <DeckPageShell>
@@ -305,14 +605,15 @@ export default function CostsPage() {
         <ModelTable rows={byModel} />
       </DeckCard>
 
-      {/* Routing savings */}
+      {/* Guardrails controls + live status */}
+      {guardrails && (
+        <GuardrailsPanel payload={guardrails} saving={savingGuardrails} onSave={saveGuardrails} />
+      )}
+
+      {/* Savings */}
       {savings && (
-        <DeckCard
-          title="Routing Savings"
-          subtitle="Estimated downgrade savings from smart model routing"
-          colClass="col-12"
-        >
-          <SavingsCard savings={savings} />
+        <DeckCard title="Savings" subtitle="Estimated savings from routing and model mix" colClass="col-12">
+          <SavingsPanel savings={savings} />
         </DeckCard>
       )}
     </DeckPageShell>

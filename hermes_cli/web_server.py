@@ -714,6 +714,19 @@ class RoutingUpdate(BaseModel):
     delegation_tier: Optional[str] = None
 
 
+class CostGuardrailsUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    daily_budget_usd: Optional[float] = None
+    mission_budgets_usd: Optional[Dict[str, Optional[float]]] = None
+    premium_alert: Optional[bool] = None
+    block_expensive: Optional[bool] = None
+    auto_fallback: Optional[bool] = None
+    fallback_model: Optional[str] = None
+    fallback_provider: Optional[str] = None
+    premium_model_prefixes: Optional[List[str]] = None
+    profile: Optional[str] = None
+
+
 class EnvVarUpdate(BaseModel):
     key: str
     value: str
@@ -11942,6 +11955,297 @@ async def get_observability_events(limit: int = 50, profile: Optional[str] = Non
 # No dependency on traces.db or spans (Wave 1B scope).
 # ---------------------------------------------------------------------------
 
+def _cost_guardrails_defaults() -> Dict[str, Any]:
+    raw = DEFAULT_CONFIG.get("cost_guardrails", {})
+    if not isinstance(raw, dict):
+        return {
+            "enabled": False,
+            "daily_budget_usd": None,
+            "mission_budgets_usd": {},
+            "premium_alert": False,
+            "block_expensive": False,
+            "auto_fallback": False,
+            "fallback_model": "",
+            "fallback_provider": "",
+            "premium_model_prefixes": [],
+        }
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "daily_budget_usd": raw.get("daily_budget_usd"),
+        "mission_budgets_usd": dict(raw.get("mission_budgets_usd") or {}),
+        "premium_alert": bool(raw.get("premium_alert", False)),
+        "block_expensive": bool(raw.get("block_expensive", False)),
+        "auto_fallback": bool(raw.get("auto_fallback", False)),
+        "fallback_model": str(raw.get("fallback_model") or "").strip(),
+        "fallback_provider": str(raw.get("fallback_provider") or "").strip(),
+        "premium_model_prefixes": list(raw.get("premium_model_prefixes") or []),
+    }
+
+
+def _normalize_cost_guardrails_config(raw: Any) -> Dict[str, Any]:
+    defaults = _cost_guardrails_defaults()
+    section = raw if isinstance(raw, dict) else {}
+    mission_budgets = section.get("mission_budgets_usd", defaults["mission_budgets_usd"])
+    if not isinstance(mission_budgets, dict):
+        mission_budgets = {}
+    normalized_mission_budgets: Dict[str, float] = {}
+    for mission_id, budget in mission_budgets.items():
+        mission_key = str(mission_id or "").strip()
+        if not mission_key:
+            continue
+        parsed = _budget_value(budget)
+        if parsed is None:
+            continue
+        normalized_mission_budgets[mission_key] = parsed
+    prefixes_raw = section.get("premium_model_prefixes", defaults["premium_model_prefixes"])
+    prefixes: List[str] = []
+    if isinstance(prefixes_raw, list):
+        for item in prefixes_raw:
+            value = str(item or "").strip().lower()
+            if value:
+                prefixes.append(value)
+    return {
+        "enabled": bool(section.get("enabled", defaults["enabled"])),
+        "daily_budget_usd": _budget_value(section.get("daily_budget_usd", defaults["daily_budget_usd"])),
+        "mission_budgets_usd": normalized_mission_budgets,
+        "premium_alert": bool(section.get("premium_alert", defaults["premium_alert"])),
+        "block_expensive": bool(section.get("block_expensive", defaults["block_expensive"])),
+        "auto_fallback": bool(section.get("auto_fallback", defaults["auto_fallback"])),
+        "fallback_model": str(section.get("fallback_model", defaults["fallback_model"]) or "").strip(),
+        "fallback_provider": str(section.get("fallback_provider", defaults["fallback_provider"]) or "").strip(),
+        "premium_model_prefixes": prefixes,
+    }
+
+
+def _cost_guardrails_payload(profile: Optional[str]) -> Dict[str, Any]:
+    from hermes_cli.cost_guardrails import decision_to_dict, evaluate_guardrails, is_premium_model
+
+    with _config_profile_scope(profile):
+        config = load_config()
+        guardrails = _normalize_cost_guardrails_config(config.get("cost_guardrails"))
+        db = _open_session_db_for_profile(profile)
+        try:
+            today_start = _today_start_epoch_local()
+            now_ts = time.time()
+            spend_row = db._conn.execute(
+                """
+                SELECT COALESCE(SUM(estimated_cost_usd), 0.0) AS spend_today
+                FROM sessions
+                WHERE started_at >= ?
+                """,
+                (today_start,),
+            ).fetchone()
+            spend_today = _safe_float(spend_row["spend_today"] if spend_row is not None else 0.0)
+
+            premium_rows = db._conn.execute(
+                """
+                SELECT model,
+                       COALESCE(SUM(estimated_cost_usd), 0.0) AS spend,
+                       COUNT(*) AS runs
+                FROM sessions
+                WHERE started_at >= ? AND model IS NOT NULL AND model != ''
+                GROUP BY model
+                """,
+                (today_start,),
+            ).fetchall()
+            premium_models: List[Dict[str, Any]] = []
+            premium_runs = 0
+            premium_spend = 0.0
+            for row in premium_rows:
+                model_name = str(row["model"] or "").strip()
+                if not model_name:
+                    continue
+                if not is_premium_model(model_name, guardrails):
+                    continue
+                runs = _safe_int(row["runs"])
+                spend = _safe_float(row["spend"])
+                premium_runs += runs
+                premium_spend += spend
+                premium_models.append(
+                    {
+                        "model": model_name,
+                        "runs": runs,
+                        "spend_usd": round(spend, 6),
+                    }
+                )
+            premium_models.sort(key=lambda item: item.get("spend_usd", 0.0), reverse=True)
+
+            mission_status: List[Dict[str, Any]] = []
+            for mission_id, budget in guardrails.get("mission_budgets_usd", {}).items():
+                mission_title = mission_id
+                spend = 0.0
+                try:
+                    from hermes_cli import traces_store
+
+                    mission = traces_store.get_mission(mission_id) or {}
+                    mission_title = str(mission.get("title") or mission_id)
+                    board_slug = str(mission.get("board_slug") or "").strip()
+                    session_ids = _mission_session_ids(board_slug)
+                    if session_ids:
+                        placeholders = ",".join("?" for _ in session_ids)
+                        row = db._conn.execute(
+                            f"""
+                            SELECT COALESCE(SUM(estimated_cost_usd), 0.0) AS spend
+                            FROM sessions
+                            WHERE id IN ({placeholders}) AND started_at >= ?
+                            """,
+                            [*session_ids, today_start],
+                        ).fetchone()
+                        spend = _safe_float(row["spend"] if row is not None else 0.0)
+                except Exception:
+                    spend = 0.0
+                pct = (spend / budget * 100.0) if budget > 0 else 0.0
+                mission_status.append(
+                    {
+                        "mission_id": mission_id,
+                        "title": mission_title,
+                        "budget_usd": budget,
+                        "spend_usd": round(spend, 6),
+                        "remaining_usd": round(max(0.0, budget - spend), 6),
+                        "pct_used": round(pct, 2),
+                        "over_budget": spend > budget,
+                    }
+                )
+            mission_status.sort(key=lambda item: item.get("spend_usd", 0.0), reverse=True)
+
+            current_model = str(config.get("model") or "").strip()
+            over_budget_mission = next((m for m in mission_status if m.get("over_budget")), None)
+            mission_for_decision = over_budget_mission or (mission_status[0] if mission_status else None)
+            mission_spend = _safe_float((mission_for_decision or {}).get("spend_usd"))
+            mission_budget = _budget_value((mission_for_decision or {}).get("budget_usd"))
+            decision = evaluate_guardrails(
+                spend_today=spend_today,
+                daily_budget=guardrails.get("daily_budget_usd"),
+                mission_spend=mission_spend,
+                mission_budget=mission_budget,
+                model=current_model,
+                is_premium=is_premium_model(current_model, guardrails),
+                config=guardrails,
+            )
+
+            elapsed = max(1.0, now_ts - today_start)
+            projected_spend = spend_today * (86400.0 / elapsed)
+            daily_budget = guardrails.get("daily_budget_usd")
+            remaining = (
+                round(max(0.0, daily_budget - spend_today), 6)
+                if daily_budget is not None
+                else None
+            )
+
+            return {
+                "cost_guardrails": guardrails,
+                "status": {
+                    "spend_today_usd": round(spend_today, 6),
+                    "daily_budget_usd": daily_budget,
+                    "daily_budget_remaining_usd": remaining,
+                    "projected_spend_today_usd": round(projected_spend, 6),
+                    "mission_budgets": mission_status,
+                    "premium_usage_today": {
+                        "runs": premium_runs,
+                        "spend_usd": round(premium_spend, 6),
+                        "models": premium_models,
+                    },
+                    "current_model": current_model,
+                    "current_decision": decision_to_dict(decision),
+                },
+            }
+        finally:
+            db.close()
+
+
+def _payload_to_dict(payload: Any) -> Dict[str, Any]:
+    if hasattr(payload, "model_dump"):
+        return payload.model_dump(exclude_unset=True)
+    return payload.dict(exclude_unset=True)
+
+
+@app.get("/api/costs/guardrails")
+async def get_costs_guardrails(profile: Optional[str] = None):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: _cost_guardrails_payload(profile))
+
+
+@app.put("/api/costs/guardrails")
+async def put_costs_guardrails(body: CostGuardrailsUpdate, profile: Optional[str] = None):
+    payload = _payload_to_dict(body)
+    scoped_profile = str(payload.pop("profile", "") or "").strip() or profile
+    loop = asyncio.get_running_loop()
+
+    def _write() -> Dict[str, Any]:
+        with _config_profile_scope(scoped_profile):
+            config = load_config()
+            current = _normalize_cost_guardrails_config(config.get("cost_guardrails"))
+
+            for key in (
+                "enabled",
+                "premium_alert",
+                "block_expensive",
+                "auto_fallback",
+            ):
+                if key in payload:
+                    current[key] = bool(payload[key])
+
+            if "daily_budget_usd" in payload:
+                raw = payload.get("daily_budget_usd")
+                if raw is None:
+                    current["daily_budget_usd"] = None
+                else:
+                    parsed = _budget_value(raw)
+                    if parsed is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="daily_budget_usd must be null or a positive number",
+                        )
+                    current["daily_budget_usd"] = parsed
+
+            if "mission_budgets_usd" in payload:
+                raw_missions = payload.get("mission_budgets_usd")
+                if not isinstance(raw_missions, dict):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="mission_budgets_usd must be an object map",
+                    )
+                mission_budgets: Dict[str, float] = {}
+                for mission_id, raw_budget in raw_missions.items():
+                    mission_key = str(mission_id or "").strip()
+                    if not mission_key:
+                        continue
+                    if raw_budget is None:
+                        continue
+                    parsed = _budget_value(raw_budget)
+                    if parsed is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"mission budget for '{mission_key}' must be null or a positive number",
+                        )
+                    mission_budgets[mission_key] = parsed
+                current["mission_budgets_usd"] = mission_budgets
+
+            if "fallback_model" in payload:
+                current["fallback_model"] = str(payload.get("fallback_model") or "").strip()
+            if "fallback_provider" in payload:
+                current["fallback_provider"] = str(payload.get("fallback_provider") or "").strip()
+            if "premium_model_prefixes" in payload:
+                raw_prefixes = payload.get("premium_model_prefixes")
+                if not isinstance(raw_prefixes, list):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="premium_model_prefixes must be an array",
+                    )
+                cleaned = []
+                for item in raw_prefixes:
+                    value = str(item or "").strip().lower()
+                    if value:
+                        cleaned.append(value)
+                current["premium_model_prefixes"] = cleaned
+
+            config["cost_guardrails"] = current
+            save_config(config)
+        return _cost_guardrails_payload(scoped_profile)
+
+    return await loop.run_in_executor(None, _write)
+
+
 @app.get("/api/costs/summary")
 async def get_costs_summary(profile: Optional[str] = None):
     """Spend summary: today + all-time totals, token counts, run count."""
@@ -12134,6 +12438,14 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value or 0.0)
     except Exception:
         return default
+
+
+def _budget_value(value: Any) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _trace_root_fields(spans: List[Dict[str, Any]]) -> Dict[str, Any]:

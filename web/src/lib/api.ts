@@ -1206,6 +1206,22 @@ export const api = {
     fetchJSON<CostsSavingsResponse>(
       appendProfileParam(`/api/costs/savings?days=${days}`, profile),
     ),
+  getCostsGuardrails: (profile = getManagementProfile()) =>
+    fetchJSON<CostsGuardrailsResponse>(
+      appendProfileParam("/api/costs/guardrails", profile),
+    ),
+  updateCostsGuardrails: (
+    body: CostsGuardrailsUpdateRequest,
+    profile = getManagementProfile(),
+  ) =>
+    fetchJSON<CostsGuardrailsResponse>(
+      appendProfileParam("/api/costs/guardrails", profile),
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
 
   // ── Traces ──────────────────────────────────────────────────────────────
   getTraces: (params?: TracesParams) => {
@@ -2534,6 +2550,67 @@ export interface CostsSavingsResponse {
   is_estimate: boolean;
   note: string;
   period_days: number;
+}
+
+export interface CostGuardrailDecision {
+  allow: boolean;
+  action: "none" | "warn" | "block" | "fallback";
+  fallback_model: string | null;
+  reason: string | null;
+}
+
+export interface CostGuardrailsConfig {
+  enabled: boolean;
+  daily_budget_usd: number | null;
+  mission_budgets_usd: Record<string, number>;
+  premium_alert: boolean;
+  block_expensive: boolean;
+  auto_fallback: boolean;
+  fallback_model: string;
+  fallback_provider: string;
+  premium_model_prefixes: string[];
+}
+
+export interface CostGuardrailsMissionBudgetStatus {
+  mission_id: string;
+  title: string;
+  budget_usd: number;
+  spend_usd: number;
+  remaining_usd: number;
+  pct_used: number;
+  over_budget: boolean;
+}
+
+export interface CostGuardrailsStatusResponse {
+  spend_today_usd: number;
+  daily_budget_usd: number | null;
+  daily_budget_remaining_usd: number | null;
+  projected_spend_today_usd: number;
+  mission_budgets: CostGuardrailsMissionBudgetStatus[];
+  premium_usage_today: {
+    runs: number;
+    spend_usd: number;
+    models: Array<{ model: string; runs: number; spend_usd: number }>;
+  };
+  current_model: string;
+  current_decision: CostGuardrailDecision;
+}
+
+export interface CostsGuardrailsResponse {
+  cost_guardrails: CostGuardrailsConfig;
+  status: CostGuardrailsStatusResponse;
+}
+
+export interface CostsGuardrailsUpdateRequest {
+  enabled?: boolean;
+  daily_budget_usd?: number | null;
+  mission_budgets_usd?: Record<string, number | null>;
+  premium_alert?: boolean;
+  block_expensive?: boolean;
+  auto_fallback?: boolean;
+  fallback_model?: string;
+  fallback_provider?: string;
+  premium_model_prefixes?: string[];
 }
 
 // ── Traces types ─────────────────────────────────────────────────────────────
