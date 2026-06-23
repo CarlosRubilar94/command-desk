@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { AlertTriangle, RefreshCw, TrendingDown } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { api } from "@/lib/api";
@@ -93,11 +93,14 @@ function CostsEmpty() {
 }
 
 /** Mini bar-chart sparkline rendered via CSS — no chart dependency. */
-function MiniBarChart({ data, valueKey }: { data: CostsDayEntry[]; valueKey: keyof CostsDayEntry }) {
+const MiniBarChart = memo(function MiniBarChart({ data, valueKey }: { data: CostsDayEntry[]; valueKey: keyof CostsDayEntry }) {
+  const max = useMemo(
+    () => Math.max(...data.map((d) => Number(d[valueKey]) || 0), 0),
+    [data, valueKey],
+  );
   if (!data.length) {
     return <p className="text-xs text-[var(--dsd-text-secondary)] py-2">No trend data for this period.</p>;
   }
-  const max = Math.max(...data.map((d) => Number(d[valueKey]) || 0));
   return (
     <div className="flex items-end gap-px h-16 w-full overflow-hidden" aria-label="Daily cost sparkline">
       {data.map((entry) => {
@@ -114,24 +117,24 @@ function MiniBarChart({ data, valueKey }: { data: CostsDayEntry[]; valueKey: key
       })}
     </div>
   );
-}
+});
 
 /** Per-model cost table */
-function ModelTable({ rows }: { rows: CostsModelEntry[] }) {
+const ModelTable = memo(function ModelTable({ rows }: { rows: CostsModelEntry[] }) {
   if (!rows.length) {
     return <p className="text-xs text-[var(--dsd-text-secondary)]">No model data.</p>;
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse">
+      <table className="w-full text-xs border-collapse" aria-label="Cost by model">
         <thead>
           <tr className="text-left text-[var(--dsd-text-secondary)] border-b border-[var(--color-border)]">
-            <th className="py-1.5 pr-4 font-medium">Model</th>
-            <th className="py-1.5 pr-4 font-medium text-right">Cost (est.)</th>
-            <th className="py-1.5 pr-4 font-medium text-right">Input tok</th>
-            <th className="py-1.5 pr-4 font-medium text-right">Output tok</th>
-            <th className="py-1.5 pr-4 font-medium text-right">Runs</th>
-            <th className="py-1.5 font-medium text-right">API calls</th>
+            <th scope="col" className="py-1.5 pr-4 font-medium">Model</th>
+            <th scope="col" className="py-1.5 pr-4 font-medium text-right">Cost (est.)</th>
+            <th scope="col" className="py-1.5 pr-4 font-medium text-right">Input tok</th>
+            <th scope="col" className="py-1.5 pr-4 font-medium text-right">Output tok</th>
+            <th scope="col" className="py-1.5 pr-4 font-medium text-right">Runs</th>
+            <th scope="col" className="py-1.5 font-medium text-right">API calls</th>
           </tr>
         </thead>
         <tbody>
@@ -154,7 +157,7 @@ function ModelTable({ rows }: { rows: CostsModelEntry[] }) {
       </table>
     </div>
   );
-}
+});
 
 /** Routing savings card */
 function SavingsCard({ savings }: { savings: CostsSavingsResponse }) {
@@ -253,9 +256,10 @@ export default function CostsPage() {
 
   return (
     <DeckPageShell>
+      <h1 className="sr-only">Spend</h1>
       {/* Threshold alert banner */}
       {showAlert && (
-        <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-md bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 text-[var(--color-warning)] text-xs">
+        <div role="alert" className="flex items-center gap-2 mb-4 px-3 py-2 rounded-md bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 text-[var(--color-warning)] text-xs">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
           <span>
             Daily spend alert: today's cost ({fmtUsd(summary.spend_today)}) exceeded the{" "}

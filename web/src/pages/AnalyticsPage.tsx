@@ -114,8 +114,12 @@ function SortHeader({
   const active = col === sortKey;
   return (
     <th
+      scope="col"
       onClick={() => toggle(col)}
-      className={`cursor-pointer select-none ${className ?? ""}`}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggle(col); }}
+      tabIndex={0}
+      aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+      className={`cursor-pointer select-none focus-visible:outline-2 focus-visible:outline-[var(--dsd-border-focus,currentColor)] ${className ?? ""}`}
     >
       <span className="inline-flex items-center gap-1.5 rounded px-1 -mx-1 py-0.5 hover:bg-muted/40 transition-colors">
         {label}
@@ -526,6 +530,19 @@ function AnalyticsOverviewSection({ days }: { days: number }) {
     model_efficiency.length === 0 &&
     token_usage.length === 0;
 
+  const throughputCounts = useMemo(
+    () => throughput.traces_per_day.map((d) => d.count),
+    [throughput.traces_per_day],
+  );
+  const tokenInputSeries = useMemo(
+    () => token_usage.map((d) => d.input_tokens),
+    [token_usage],
+  );
+  const tokenOutputSeries = useMemo(
+    () => token_usage.map((d) => d.output_tokens),
+    [token_usage],
+  );
+
   if (noData) {
     return (
       <EmptyState
@@ -535,10 +552,6 @@ function AnalyticsOverviewSection({ days }: { days: number }) {
       />
     );
   }
-
-  const throughputCounts = throughput.traces_per_day.map((d) => d.count);
-  const tokenInputSeries = token_usage.map((d) => d.input_tokens);
-  const tokenOutputSeries = token_usage.map((d) => d.output_tokens);
 
   return (
     <div className="flex flex-col gap-5">
@@ -774,6 +787,7 @@ export default function AnalyticsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <h1 className="sr-only">Analytics</h1>
       <PluginSlot name="analytics:top" />
 
       {/* Wave 6: always-visible overview section */}

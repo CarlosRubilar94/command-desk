@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { DeckPageShell } from "@/components/DeckPageShell";
@@ -184,7 +184,7 @@ const COLS: ColDef<TraceRow>[] = [
 
 // ── Filter chip component ─────────────────────────────────────────────────────
 
-function FilterChip({
+const FilterChip = memo(function FilterChip({
   options,
   value,
   onChange,
@@ -212,7 +212,7 @@ function FilterChip({
       ))}
     </div>
   );
-}
+});
 
 // ── TracesPage ────────────────────────────────────────────────────────────────
 
@@ -302,8 +302,13 @@ export default function TracesPage() {
   return (
     <DeckPageShell>
       <div className="deck-dashboard deck-animate">
+        <h1 className="sr-only">Runs</h1>
         {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-3 mb-4 pb-3 border-b border-[var(--dsd-border-subtle)]">
+        <div
+          role="search"
+          aria-label="Filter traces"
+          className="flex flex-wrap items-center gap-3 mb-4 pb-3 border-b border-[var(--dsd-border-subtle)]"
+        >
           <span className="text-[11px] text-[var(--dsd-text-faint)] uppercase tracking-wide">
             Status
           </span>

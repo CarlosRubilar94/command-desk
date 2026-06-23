@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -76,37 +78,54 @@ import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { ProfileScopeBanner } from "@/components/ProfileScopeBanner";
 import { useSystemActions } from "@/contexts/useSystemActions";
 import type { SystemAction } from "@/contexts/system-actions-context";
-import ConfigPage from "@/pages/ConfigPage";
-import DocsPage from "@/pages/DocsPage";
-import EnvPage from "@/pages/EnvPage";
-import FilesPage from "@/pages/FilesPage";
-import SessionsPage from "@/pages/SessionsPage";
-import LogsPage from "@/pages/LogsPage";
-import AnalyticsPage from "@/pages/AnalyticsPage";
-import ModelsPage from "@/pages/ModelsPage";
-import CronPage from "@/pages/CronPage";
-import ProfilesPage from "@/pages/ProfilesPage";
-import ProfileBuilderPage from "@/pages/ProfileBuilderPage";
-import SkillsPage from "@/pages/SkillsPage";
-import PluginsPage from "@/pages/PluginsPage";
-import McpPage from "@/pages/McpPage";
-import PairingPage from "@/pages/PairingPage";
-import ChannelsPage from "@/pages/ChannelsPage";
-import WebhooksPage from "@/pages/WebhooksPage";
-import SystemPage from "@/pages/SystemPage";
+// ChatPage stays eager — it mounts persistently outside <Routes> and
+// must survive route changes without unmounting.
 import ChatPage from "@/pages/ChatPage";
-import {
-  AgentHomePage,
-  BitwardenStatusPage,
-  CommandDeckOpsPage,
-  DevssdDoctorPage,
-  GatewayStatusPage,
-} from "@/pages/DevssdPages";
-import OpsFleetPage from "@/pages/OpsFleetPage";
-import CostsPage from "@/pages/CostsPage";
-import TracesPage from "@/pages/TracesPage";
-import RoutingPage from "@/pages/RoutingPage";
-import MissionsPage from "@/pages/MissionsPage";
+// AgentHomePage stays eager — it is the landing page; making it lazy
+// would cause a skeleton flash on every fresh load.
+import { AgentHomePage } from "@/pages/DevssdPages";
+import { SkeletonTable } from "@/components/ds/Skeleton";
+
+// ── Lazy page imports ──────────────────────────────────────────────────────────
+// Each is cast `as unknown as ComponentType` so the record type annotation
+// below stays narrow; the Suspense boundary wrapping <Routes> handles the
+// loading state for every lazy route uniformly.
+const ConfigPage = lazy(() => import("@/pages/ConfigPage")) as unknown as ComponentType;
+const DocsPage = lazy(() => import("@/pages/DocsPage")) as unknown as ComponentType;
+const EnvPage = lazy(() => import("@/pages/EnvPage")) as unknown as ComponentType;
+const FilesPage = lazy(() => import("@/pages/FilesPage")) as unknown as ComponentType;
+const SessionsPage = lazy(() => import("@/pages/SessionsPage")) as unknown as ComponentType;
+const LogsPage = lazy(() => import("@/pages/LogsPage")) as unknown as ComponentType;
+const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage")) as unknown as ComponentType;
+const ModelsPage = lazy(() => import("@/pages/ModelsPage")) as unknown as ComponentType;
+const CronPage = lazy(() => import("@/pages/CronPage")) as unknown as ComponentType;
+const ProfilesPage = lazy(() => import("@/pages/ProfilesPage")) as unknown as ComponentType;
+const ProfileBuilderPage = lazy(() => import("@/pages/ProfileBuilderPage")) as unknown as ComponentType;
+const SkillsPage = lazy(() => import("@/pages/SkillsPage")) as unknown as ComponentType;
+const PluginsPage = lazy(() => import("@/pages/PluginsPage")) as unknown as ComponentType;
+const McpPage = lazy(() => import("@/pages/McpPage")) as unknown as ComponentType;
+const PairingPage = lazy(() => import("@/pages/PairingPage")) as unknown as ComponentType;
+const ChannelsPage = lazy(() => import("@/pages/ChannelsPage")) as unknown as ComponentType;
+const WebhooksPage = lazy(() => import("@/pages/WebhooksPage")) as unknown as ComponentType;
+const SystemPage = lazy(() => import("@/pages/SystemPage")) as unknown as ComponentType;
+const OpsFleetPage = lazy(() => import("@/pages/OpsFleetPage")) as unknown as ComponentType;
+const CostsPage = lazy(() => import("@/pages/CostsPage")) as unknown as ComponentType;
+const TracesPage = lazy(() => import("@/pages/TracesPage")) as unknown as ComponentType;
+const RoutingPage = lazy(() => import("@/pages/RoutingPage")) as unknown as ComponentType;
+const MissionsPage = lazy(() => import("@/pages/MissionsPage")) as unknown as ComponentType;
+// Named exports from DevssdPages — shim to default export for React.lazy
+const BitwardenStatusPage = lazy(() =>
+  import("@/pages/DevssdPages").then((m) => ({ default: m.BitwardenStatusPage })),
+) as unknown as ComponentType;
+const CommandDeckOpsPage = lazy(() =>
+  import("@/pages/DevssdPages").then((m) => ({ default: m.CommandDeckOpsPage })),
+) as unknown as ComponentType;
+const DevssdDoctorPage = lazy(() =>
+  import("@/pages/DevssdPages").then((m) => ({ default: m.DevssdDoctorPage })),
+) as unknown as ComponentType;
+const GatewayStatusPage = lazy(() =>
+  import("@/pages/DevssdPages").then((m) => ({ default: m.GatewayStatusPage })),
+) as unknown as ComponentType;
 import { CommandDeckUX } from "@/components/CommandPalette";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -121,6 +140,15 @@ import type { StatusResponse } from "@/lib/api";
 
 function RootRedirect() {
   return <Navigate to="/agent" replace />;
+}
+
+/** Shown while a lazy-loaded page chunk is being fetched. */
+function PageLoadFallback() {
+  return (
+    <div className="deck-dashboard px-5 pt-6" aria-busy="true" aria-live="polite">
+      <SkeletonTable rows={6} cols={5} />
+    </div>
+  );
 }
 
 function UnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
@@ -814,17 +842,19 @@ export default function App() {
                 )}
               >
                 <ProfileKeyedRoutes>
-                  <Routes>
-                    {routes.map(({ key, path, element }) => (
-                      <Route key={key} path={path} element={element} />
-                    ))}
-                    <Route
-                      path="*"
-                      element={
-                        <UnknownRouteFallback pluginsLoading={pluginsLoading} />
-                      }
-                    />
-                  </Routes>
+                  <Suspense fallback={<PageLoadFallback />}>
+                    <Routes>
+                      {routes.map(({ key, path, element }) => (
+                        <Route key={key} path={path} element={element} />
+                      ))}
+                      <Route
+                        path="*"
+                        element={
+                          <UnknownRouteFallback pluginsLoading={pluginsLoading} />
+                        }
+                      />
+                    </Routes>
+                  </Suspense>
                 </ProfileKeyedRoutes>
 
                 {embeddedChat &&

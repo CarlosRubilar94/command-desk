@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, RefreshCw, Target } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
@@ -255,12 +255,12 @@ function DelegationTreeRows({
   navigate: ReturnType<typeof useNavigate>;
   onClose: () => void;
 }) {
-  const depthMap = buildDelegationDepth(nodes);
-  const sorted = [...nodes].sort((a, b) => {
+  const depthMap = useMemo(() => buildDelegationDepth(nodes), [nodes]);
+  const sorted = useMemo(() => [...nodes].sort((a, b) => {
     const da = depthMap.get(a.session_id) ?? 0;
     const db = depthMap.get(b.session_id) ?? 0;
     return da - db;
-  });
+  }), [nodes, depthMap]);
 
   return (
     <div className="flex flex-col gap-0.5">
@@ -307,12 +307,12 @@ function DelegationTreeRows({
             )}
             <button
               type="button"
-              className="text-[10px] text-[var(--dsd-cat-trace)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0 hover:underline"
+              className="text-[10px] text-[var(--dsd-cat-trace)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0 hover:underline focus-visible:opacity-100"
               onClick={() => {
                 navigate(`/traces?session=${encodeURIComponent(node.session_id)}`);
                 onClose();
               }}
-              title="View trace"
+              aria-label={`View trace for ${node.agent ?? node.session_id.slice(0, 12)}`}
             >
               trace →
             </button>
@@ -372,12 +372,12 @@ function TopRunsList({
           </span>
           <button
             type="button"
-            className="text-[10px] text-[var(--dsd-cat-trace)] opacity-0 group-hover:opacity-100 transition-opacity hover:underline"
+            className="text-[10px] text-[var(--dsd-cat-trace)] opacity-0 group-hover:opacity-100 transition-opacity hover:underline focus-visible:opacity-100"
             onClick={() => {
               navigate(`/traces?session=${encodeURIComponent(run.session_id)}`);
               onClose();
             }}
-            title="View in Runs"
+            aria-label={`View trace for run ${run.session_id.slice(0, 16)}`}
           >
             trace →
           </button>
@@ -418,12 +418,12 @@ function TaskList({
           {task.session_id && (
             <button
               type="button"
-              className="text-[10px] text-[var(--dsd-cat-trace)] opacity-0 group-hover:opacity-100 transition-opacity hover:underline shrink-0"
+              className="text-[10px] text-[var(--dsd-cat-trace)] opacity-0 group-hover:opacity-100 transition-opacity hover:underline shrink-0 focus-visible:opacity-100"
               onClick={() => {
                 navigate(`/sessions`);
                 onClose();
               }}
-              title="View session"
+              aria-label={`View session for task ${task.title}`}
             >
               session →
             </button>
@@ -609,14 +609,16 @@ function MissionsEmpty() {
 // ── Summary strip ──────────────────────────────────────────────────────────────
 
 function MissionsSummaryStrip({ missions }: { missions: MissionRow[] }) {
-  const active = missions.filter(
-    (m) =>
-      m.status.toLowerCase() === "in_progress" ||
-      m.status.toLowerCase() === "active" ||
-      m.status.toLowerCase() === "running",
-  ).length;
-  const totalCost = missions.reduce((s, m) => s + (m.cost_usd ?? 0), 0);
-  const totalRuns = missions.reduce((s, m) => s + m.run_count, 0);
+  const { active, totalCost, totalRuns } = useMemo(() => ({
+    active: missions.filter(
+      (m) =>
+        m.status.toLowerCase() === "in_progress" ||
+        m.status.toLowerCase() === "active" ||
+        m.status.toLowerCase() === "running",
+    ).length,
+    totalCost: missions.reduce((s, m) => s + (m.cost_usd ?? 0), 0),
+    totalRuns: missions.reduce((s, m) => s + m.run_count, 0),
+  }), [missions]);
 
   return (
     <div className="metrics-strip col-12">
@@ -814,10 +816,12 @@ export default function MissionsPage() {
     return () => setEnd(null);
   }, [loading, load, setEnd, setTemplatesOpen]);
 
-  function openMission(m: MissionRow) {
+  const openMission = useCallback((m: MissionRow) => {
     setSelected(m);
     setDrawerOpen(true);
-  }
+  }, []);
+
+  const missionCols = useMemo(() => buildMissionCols(openMission), [openMission]);
 
   if (loading && !missions.length) return <MissionsSkeleton />;
   if (error) return <MissionsError message={error} onRetry={load} />;
@@ -828,9 +832,9 @@ export default function MissionsPage() {
       <DeckPageShell>
         <div className="flex flex-col gap-5 py-4">
           <div className="flex flex-col gap-1">
-            <p className="text-[var(--dsd-text-h2)] font-semibold tracking-[-0.01em] text-[var(--dsd-text-primary)]">
+            <h1 className="text-[var(--dsd-text-h2)] font-semibold tracking-[-0.01em] text-[var(--dsd-text-primary)]">
               Missions
-            </p>
+            </h1>
             <p className="text-sm text-[var(--dsd-text-secondary)]">
               {total} mission{total !== 1 ? "s" : ""} · click a row to drill into tasks, delegation tree, and cost.
             </p>
@@ -840,7 +844,7 @@ export default function MissionsPage() {
 
           <DeckCard title="All Missions" colClass="col-12">
             <DataTable<MissionRow>
-              cols={buildMissionCols(openMission)}
+              cols={missionCols}
               rows={missions}
               rowKey={(m) => m.mission_id}
               onRowClick={openMission}
