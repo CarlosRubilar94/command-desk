@@ -61,6 +61,7 @@ import { Input } from "@nous-research/ui/ui/components/input";
 import { useI18n } from "@/i18n";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
+import { DeckPageShell } from "@/components/DeckPageShell";
 
 /* ------------------------------------------------------------------ */
 /*  Types & helpers                                                    */
@@ -346,7 +347,14 @@ export default function SkillsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <DeckPageShell
+      intro={(
+        <p className="text-xs text-text-secondary">
+          Manage local skills, toolsets, and installable skills from the connected hub.
+        </p>
+      )}
+      className="flex flex-col gap-4"
+    >
       <PluginSlot name="skills:top" />
       <Toast toast={toast} />
 
@@ -498,7 +506,7 @@ export default function SkillsPage() {
                       onClick={openCreateEditor}
                       prefix={<Plus />}
                     >
-                      New skill
+                      + New skill
                     </Button>
                   </div>
                 </div>
@@ -631,7 +639,7 @@ export default function SkillsPage() {
         onSaved={handleEditorSaved}
       />
       <PluginSlot name="skills:bottom" />
-    </div>
+    </DeckPageShell>
   );
 }
 
@@ -686,7 +694,7 @@ function PanelItem({ active, icon: Icon, label, onClick }: PanelItemProps) {
       onClick={onClick}
       className={cn(
         "rounded-none whitespace-nowrap px-2.5 py-1.5",
-        "font-mondwest text-[0.7rem] tracking-[0.08em] uppercase",
+        "font-mondwest text-[0.7rem] tracking-[0.08em]",
         active && "bg-foreground/90 text-background hover:text-background",
       )}
     >
@@ -984,7 +992,7 @@ function HubBrowser({
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 px-1">
                 <Sparkles className="h-3.5 w-3.5 text-primary" />
-                <span className="font-mondwest text-display text-xs tracking-[0.12em] text-text-secondary uppercase">
+                <span className="font-mondwest text-display text-xs tracking-[0.12em] text-text-secondary">
                   Featured skills
                 </span>
                 <span className="text-xs text-text-tertiary">
@@ -1393,7 +1401,7 @@ function SkillDetailDialog({
                 )}
                 {preview.files.length > 0 && (
                   <div className="text-xs text-text-tertiary">
-                    <span className="font-mondwest tracking-[0.1em] uppercase">
+                    <span className="font-mondwest tracking-[0.1em]">
                       Files:{" "}
                     </span>
                     <span className="font-mono">{preview.files.join("  ")}</span>
