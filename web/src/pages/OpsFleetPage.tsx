@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { DeckPageShell } from "@/components/DeckPageShell";
@@ -98,6 +98,8 @@ const BOTTLENECK_COLS: ColDef<FleetMetricsResponse["bottlenecks"][number]>[] = [
 ];
 
 export default function OpsFleetPage() {
+  const [searchParams] = useSearchParams();
+  const [dismissedSource, setDismissedSource] = useState(false);
   const [fleet, setFleet] = useState<FleetStatusResponse | null>(null);
   const [delegation, setDelegation] = useState<DelegationStatusResponse | null>(null);
   const [metrics, setMetrics] = useState<FleetMetricsResponse | null>(null);
@@ -182,6 +184,14 @@ export default function OpsFleetPage() {
   return (
     <DeckPageShell>
       <div className="deck-dashboard deck-animate">
+        {searchParams.get("source") === "command-deck" && !dismissedSource ? (
+          <div className="mb-3 flex items-center justify-between gap-2 rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-bg-muted)] px-3 py-2 text-xs text-[var(--dsd-text-secondary)]">
+            <span>From Command Deck: fleet detail opened via integration overview.</span>
+            <button type="button" className="deck-btn-sm ghost" onClick={() => setDismissedSource(true)}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
         {error ? (
           <p className="mb-4 text-sm text-[var(--dsd-sem-critical)]">{error}</p>
         ) : null}

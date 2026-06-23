@@ -1,22 +1,17 @@
 import { Link } from "react-router-dom";
-import { Activity, Bot, ExternalLink, KeyRound, ShieldCheck, Terminal } from "lucide-react";
+import { Activity, Bot, ExternalLink, KeyRound, Terminal } from "lucide-react";
 import {
   computeOverallHealth,
-  DeckBtnLink,
   DeckCard,
   DeckToolbar,
   LayoutGrid,
-  MetricRow,
   MetricTile,
   OperationalStatus,
-  OpsSummaryGrid,
   ServiceCell,
 } from "@/components/DeckOps";
-import { FleetOpsPanel } from "@/components/FleetOpsPanel";
 import { MissionOverview } from "@/components/MissionOverview";
 import { useI18n } from "@/i18n";
 import {
-  CommandList,
   DevssdShell,
   LoadingOrError,
   OpsPill,
@@ -77,6 +72,12 @@ export function AgentHomePage() {
                   label={deckOk ? "Deck online" : "Deck offline"}
                   tone={deckOk ? "ok" : "warn"}
                 />
+                <Link to="/command-deck" className="deck-btn-sm ghost">
+                  Command Deck overview
+                </Link>
+                <Link to="/doctor" className="deck-btn-sm ghost">
+                  CLI / Smoke + DevSSD info
+                </Link>
                 {status.command_deck.app_url ? (
                   <a
                     href={status.command_deck.app_url}
@@ -161,73 +162,6 @@ export function AgentHomePage() {
                   Doctor
                 </Link>
               </DeckToolbar>
-            </DeckCard>
-
-            <FleetOpsPanel compact />
-
-            <DeckCard title="Smoke commands" colClass="col-8">
-              <CommandList commands={status.agent.commands} />
-            </DeckCard>
-
-            <DeckCard
-              title="Integração Command Deck"
-              subtitle="Espelha renderCommandDesk() do Deck :8765"
-              colClass="col-6"
-            >
-              <MetricRow label="Dashboard :9119" value="Online" tone="ok" />
-              <MetricRow
-                label="Gateway"
-                value={gatewayOk ? "running" : "stopped"}
-                tone={gatewayOk ? "ok" : "warn"}
-              />
-              <MetricRow
-                label="Command Deck :8765"
-                value={deckOk ? `Online (${status.command_deck.latency_ms} ms)` : "Offline"}
-                tone={deckOk ? "ok" : "warn"}
-              />
-              <MetricRow
-                label="Provider / Model"
-                value={`${status.agent.provider} / ${status.agent.model}`}
-                tone="ok"
-              />
-              <DeckToolbar>
-                {status.command_deck.app_url ? (
-                  <DeckBtnLink href={status.command_deck.app_url} target="_blank" rel="noopener noreferrer" primary>
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    Command Deck
-                  </DeckBtnLink>
-                ) : null}
-                <Link to="/command-deck" className="deck-btn-sm ghost">
-                  Ops embed
-                </Link>
-              </DeckToolbar>
-            </DeckCard>
-
-            <DeckCard title="Resumo DevSSD" subtitle="Paths e runtime" colClass="col-6">
-              <OpsSummaryGrid
-                items={[
-                  {
-                    label: "Agent home",
-                    value: status.agent.home.split("\\").pop() ?? status.agent.home,
-                    hint: status.agent.home,
-                  },
-                  {
-                    label: "DevSSD skill",
-                    value: status.agent.devssd_skill_installed ? "Installed" : "Missing",
-                    tone: status.agent.devssd_skill_installed ? "ok" : "warn",
-                  },
-                  {
-                    label: "Config",
-                    value: "YAML",
-                    hint: status.agent.config_path,
-                  },
-                  {
-                    label: "Secrets",
-                    value: bwOk ? "Configured" : "Pending",
-                    tone: bwOk ? "ok" : "warn",
-                  },
-                ]}
-              />
             </DeckCard>
           </LayoutGrid>
         </div>

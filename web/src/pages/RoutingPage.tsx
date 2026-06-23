@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Power, RefreshCw } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { DeckPageShell } from "@/components/DeckPageShell";
@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 const DELEGATION_TIERS = ["economy", "inherit", "performance"] as const;
 
 export default function RoutingPage() {
+  const [searchParams] = useSearchParams();
+  const [dismissedSource, setDismissedSource] = useState(false);
   const [routing, setRouting] = useState<RoutingStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -74,6 +76,14 @@ export default function RoutingPage() {
   return (
     <DeckPageShell>
       <div className="deck-dashboard deck-animate">
+        {searchParams.get("source") === "command-deck" && !dismissedSource ? (
+          <div className="mb-3 flex items-center justify-between gap-2 rounded-[var(--dsd-radius-sm)] border border-[var(--dsd-border-subtle)] bg-[var(--dsd-bg-muted)] px-3 py-2 text-xs text-[var(--dsd-text-secondary)]">
+            <span>From Command Deck: routing view opened from integration overview.</span>
+            <button type="button" className="deck-btn-sm ghost" onClick={() => setDismissedSource(true)}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
         {error ? <p className="mb-4 text-sm text-[var(--dsd-sem-critical)]">{error}</p> : null}
       {routing ? (
         <LayoutGrid>
