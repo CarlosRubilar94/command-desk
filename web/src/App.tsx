@@ -113,6 +113,7 @@ const CostsPage = lazy(() => import("@/pages/CostsPage")) as unknown as Componen
 const TracesPage = lazy(() => import("@/pages/TracesPage")) as unknown as ComponentType;
 const RoutingPage = lazy(() => import("@/pages/RoutingPage")) as unknown as ComponentType;
 const MissionsPage = lazy(() => import("@/pages/MissionsPage")) as unknown as ComponentType;
+const MissionBuilderPage = lazy(() => import("@/pages/MissionBuilderPage")) as unknown as ComponentType;
 const ReplayPage = lazy(() => import("@/pages/ReplayPage")) as unknown as ComponentType;
 // Named exports from DevssdPages — shim to default export for React.lazy
 const BitwardenStatusPage = lazy(() =>
@@ -183,6 +184,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/costs": CostsPage,
   "/traces": TracesPage,
   "/missions": MissionsPage,
+  "/missions/builder": MissionBuilderPage,
   "/routing": RoutingPage,
   "/doctor": DevssdDoctorPage,
   "/bitwarden": BitwardenStatusPage,
@@ -422,6 +424,7 @@ const SIDEBAR_COLLAPSED_KEY = "hermes-sidebar-collapsed";
 const DECK_LAYOUT_ROUTES = new Set([
   "/agent",
   "/missions",
+  "/missions/builder",
   "/ops",
   "/costs",
   "/traces",

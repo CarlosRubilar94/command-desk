@@ -1274,6 +1274,24 @@ export const api = {
   // ── Traces by session ─────────────────────────────────────────────────────
   getTracesBySession: (sessionId: string) =>
     fetchJSON<TracesResponse>(`/api/traces?session_id=${encodeURIComponent(sessionId)}`),
+
+  // ── Mission Builder (Wave 9) ───────────────────────────────────────────────
+  getTemplateDetail: (id: string) =>
+    fetchJSON<FullTemplateResponse>(`/api/templates/${encodeURIComponent(id)}`),
+
+  saveCustomTemplate: (body: CustomTemplateSaveRequest) =>
+    fetchJSON<{ id: string; name: string }>("/api/templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  instantiateDraft: (body: DraftInstantiateRequest) =>
+    fetchJSON<InstantiateTemplateResponse>("/api/templates/instantiate-draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -2818,4 +2836,50 @@ export interface TemplatesResponse {
 export interface InstantiateTemplateResponse {
   mission_id: string;
   board_slug: string;
+}
+
+// ── Mission Builder types (Wave 9) ────────────────────────────────────────────
+
+export interface FullTemplateTask {
+  title: string;
+  status?: string;
+  assignee?: string;
+  body?: string;
+}
+
+export interface FullTemplateResponse {
+  id: string;
+  name: string;
+  description: string;
+  defaults: Record<string, string>;
+  creates: {
+    board: string;
+    tasks: FullTemplateTask[];
+    cron: boolean;
+  };
+}
+
+export interface DraftTask {
+  title: string;
+  description?: string;
+  assignee?: string;
+  status?: string;
+}
+
+export interface DraftInstantiateRequest {
+  name: string;
+  description?: string;
+  board?: string;
+  owner?: string;
+  tasks: DraftTask[];
+  defaults?: Record<string, string>;
+}
+
+export interface CustomTemplateSaveRequest {
+  name: string;
+  description?: string;
+  board?: string;
+  owner?: string;
+  tasks: DraftTask[];
+  defaults?: Record<string, string>;
 }

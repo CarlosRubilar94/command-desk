@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, memo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, RefreshCw, Target } from "lucide-react";
+import { LayoutTemplate, Plus, RefreshCw, Target } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { api } from "@/lib/api";
 import type {
@@ -803,6 +803,10 @@ export default function MissionsPage() {
   useLayoutEffect(() => {
     setEnd(
       <div className="flex items-center gap-2">
+        <DeckBtn onClick={() => navigate("/missions/builder")}>
+          <LayoutTemplate className="h-3.5 w-3.5" />
+          Build Mission
+        </DeckBtn>
         <DeckBtn onClick={() => setTemplatesOpen(true)}>
           <Plus className="h-3.5 w-3.5" />
           New Mission
@@ -814,7 +818,7 @@ export default function MissionsPage() {
       </div>,
     );
     return () => setEnd(null);
-  }, [loading, load, setEnd, setTemplatesOpen]);
+  }, [loading, load, navigate, setEnd, setTemplatesOpen]);
 
   const openMission = useCallback((m: MissionRow) => {
     setSelected(m);

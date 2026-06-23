@@ -12659,6 +12659,136 @@ async def instantiate_template(
         return response
 
 
+# ── Mission Builder endpoints (Wave 9) ────────────────────────────────────────
+
+
+class DraftInstantiateTask(BaseModel):
+    title: str
+    description: Optional[str] = None
+    assignee: Optional[str] = None
+    status: Optional[str] = "todo"
+
+
+class DraftInstantiateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    board: Optional[str] = None
+    owner: Optional[str] = None
+    tasks: List[DraftInstantiateTask] = []
+    defaults: Optional[Dict[str, Any]] = None
+
+
+class CustomTemplateSaveRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    board: Optional[str] = None
+    owner: Optional[str] = None
+    tasks: List[DraftInstantiateTask] = []
+    defaults: Optional[Dict[str, Any]] = None
+
+
+@app.get("/api/templates/{template_id}")
+async def get_template_detail(template_id: str, profile: Optional[str] = None):
+    """Return the full template record including tasks list (not just the catalog summary)."""
+    with _config_profile_scope(profile):
+        from hermes_cli import mission_templates
+
+        template = mission_templates.get_template(template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail=f"Unknown template: {template_id}")
+
+        creates = template.get("creates", {})
+        tasks_raw = creates.get("tasks", [])
+        return {
+            "id": template["id"],
+            "name": template["name"],
+            "description": template.get("description", ""),
+            "defaults": template.get("defaults", {}),
+            "creates": {
+                "board": creates.get("board") or template["name"],
+                "tasks": tasks_raw if isinstance(tasks_raw, list) else [],
+                "cron": bool(template.get("cron")),
+            },
+        }
+
+
+@app.post("/api/templates")
+async def save_custom_template(body: CustomTemplateSaveRequest, profile: Optional[str] = None):
+    """Persist a custom mission template so it appears in the template catalog."""
+    with _config_profile_scope(profile):
+        import uuid as _uuid
+        from hermes_cli import mission_templates
+
+        template_id = f"custom-{_uuid.uuid4().hex[:8]}"
+        tasks_dicts = [t.model_dump(exclude_none=True) for t in body.tasks]
+        template: Dict[str, Any] = {
+            "id": template_id,
+            "name": body.name,
+            "description": body.description or body.name,
+            "defaults": body.defaults or {},
+            "creates": {
+                "board": body.board or body.name,
+                "tasks": tasks_dicts,
+            },
+        }
+        mission_templates.save_custom_template(template)
+        return {"id": template_id, "name": body.name}
+
+
+@app.post("/api/templates/instantiate-draft")
+async def instantiate_draft(body: DraftInstantiateRequest, profile: Optional[str] = None):
+    """Create a Kanban board + mission record from a builder draft without saving a template."""
+    with _config_profile_scope(profile):
+        from hermes_cli import kanban_db, traces_store
+
+        board_title = (body.board or body.name or "Mission").strip()
+        board_slug = _allocate_template_board_slug(board_title)
+
+        kanban_db.create_board(
+            board_slug,
+            name=board_title,
+            description=body.description or board_title,
+        )
+
+        tasks_dicts = [t.model_dump(exclude_none=True) for t in body.tasks]
+        synthetic_template: Dict[str, Any] = {
+            "creates": {"tasks": tasks_dicts},
+        }
+
+        conn = kanban_db.connect(board=board_slug)
+        try:
+            _seed_template_tasks(
+                conn=conn,
+                kanban_db=kanban_db,
+                board_slug=board_slug,
+                template=synthetic_template,
+                owner=body.owner,
+            )
+        finally:
+            conn.close()
+
+        mission_id = _derived_mission_id(board_slug)
+        defaults = body.defaults or {}
+        model_tier = str(defaults.get("model_tier") or "").strip()
+        mission = traces_store.upsert_mission(
+            {
+                "id": mission_id,
+                "board_slug": board_slug,
+                "title": board_title,
+                "status": "todo",
+                "owner": body.owner,
+                "tags": [
+                    "source:builder",
+                    *([f"model-tier:{model_tier}"] if model_tier else []),
+                ],
+            }
+        )
+        return {
+            "mission_id": str(mission.get("id") or mission_id),
+            "board_slug": board_slug,
+        }
+
+
 @app.get("/api/traces")
 async def get_traces(
     limit: int = 50,
