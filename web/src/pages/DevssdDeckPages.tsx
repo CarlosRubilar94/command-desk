@@ -10,13 +10,16 @@ import {
   LayoutGrid,
   MetricRow,
   MetricTile,
+  OpsSummaryGrid,
 } from "@/components/DeckOps";
-import { FleetOpsPanel } from "@/components/FleetOpsPanel";
+import { FleetRoutingSummaryCard } from "@/components/FleetRoutingSummaryCard";
+import { CommandDeckLandingSummary } from "@/components/CommandDeckLandingSummary";
 import { useI18n } from "@/i18n";
 import { api } from "@/lib/api";
 import type { CommandDeckOverviewResponse } from "@/lib/api";
 import {
   ActionButton,
+  CommandList,
   DevssdShell,
   LoadingOrError,
   useDevssdStatus,
@@ -45,13 +48,54 @@ export function DevssdDoctorPage() {
           </DeckToolbar>
         </DeckCard>
         {status ? (
-          <DeckCard title="Resolved paths" colClass="col-12">
-            <div className="grid gap-2 font-mono text-xs text-[var(--dsd-text-secondary)]">
-              <code>{status.agent.config_path}</code>
-              <code>{status.agent.env_path}</code>
-              <code>{status.agent.skills_dir}</code>
-            </div>
-          </DeckCard>
+          <>
+            <DeckCard title="CLI / Smoke commands" colClass="col-12">
+              <CommandList commands={status.agent.commands} />
+            </DeckCard>
+            <DeckCard title="Resumo DevSSD" subtitle="Paths e runtime" colClass="col-6">
+              <OpsSummaryGrid
+                items={[
+                  {
+                    label: "Agent home",
+                    value: status.agent.home.split("\\").pop() ?? status.agent.home,
+                    hint: status.agent.home,
+                  },
+                  {
+                    label: "DevSSD skill",
+                    value: status.agent.devssd_skill_installed ? "Installed" : "Missing",
+                    tone: status.agent.devssd_skill_installed ? "ok" : "warn",
+                  },
+                  {
+                    label: "Config",
+                    value: "YAML",
+                    hint: status.agent.config_path,
+                  },
+                  {
+                    label: "Secrets",
+                    value:
+                      status.bitwarden.enabled &&
+                      status.bitwarden.token_present &&
+                      status.bitwarden.project_configured
+                        ? "Configured"
+                        : "Pending",
+                    tone:
+                      status.bitwarden.enabled &&
+                      status.bitwarden.token_present &&
+                      status.bitwarden.project_configured
+                        ? "ok"
+                        : "warn",
+                  },
+                ]}
+              />
+            </DeckCard>
+            <DeckCard title="Resolved paths" colClass="col-6">
+              <div className="grid gap-2 font-mono text-xs text-[var(--dsd-text-secondary)]">
+                <code>{status.agent.config_path}</code>
+                <code>{status.agent.env_path}</code>
+                <code>{status.agent.skills_dir}</code>
+              </div>
+            </DeckCard>
+          </>
         ) : null}
       </LayoutGrid>
     </DevssdShell>
@@ -282,9 +326,12 @@ export function CommandDeckOpsPage() {
 
           <DeckCard title="Navigate" colClass="col-12">
             <DeckToolbar>
-              <Link to="/ops" className="deck-btn-sm">
+              <Link to="/ops?source=command-deck" className="deck-btn-sm">
                 <Activity className="h-3.5 w-3.5" />
                 Ops
+              </Link>
+              <Link to="/routing?source=command-deck" className="deck-btn-sm">
+                Routing
               </Link>
               <Link to="/traces" className="deck-btn-sm">
                 <Radio className="h-3.5 w-3.5" />
@@ -301,7 +348,26 @@ export function CommandDeckOpsPage() {
             </DeckToolbar>
           </DeckCard>
 
-          <FleetOpsPanel compact />
+          <FleetRoutingSummaryCard
+            fleet={{
+              queue: overview.fleet.queue,
+              throughput: overview.fleet.throughput,
+              costTodayUsd: overview.fleet.cost_today_usd,
+              bottlenecks: overview.fleet.bottlenecks,
+              recurringErrors: overview.fleet.recurring_errors,
+            }}
+            routing={{
+              tracerHealthy: overview.tracer.healthy,
+              droppedSpans: overview.tracer.dropped_spans,
+              missionsCount: overview.missions.count,
+            }}
+          />
+          <CommandDeckLandingSummary
+            deck={{
+              available: overview.deck.available,
+              status: overview.deck.status,
+            }}
+          />
         </div>
       )}
     </DevssdShell>
