@@ -34,6 +34,7 @@ import type {
 import { useModalBehavior } from "@/hooks/useModalBehavior";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn, themedBody } from "@/lib/utils";
+import { DeckPageShell } from "@/components/DeckPageShell";
 
 // State → badge mapping. The backend emits a small, fixed vocabulary plus
 // whatever the live gateway runtime reports (connected/disconnected/fatal).
@@ -271,7 +272,6 @@ export default function ChannelsPage() {
   useLayoutEffect(() => {
     setEnd(
       <Button
-        className="uppercase"
         size="sm"
         onClick={handleRestart}
         disabled={restarting}
@@ -302,7 +302,14 @@ export default function ChannelsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <DeckPageShell
+      intro={(
+        <p className="text-xs text-text-secondary">
+          Connect messaging channels and apply changes with a gateway restart when needed.
+        </p>
+      )}
+      className="flex flex-col gap-6"
+    >
       <Toast toast={toast} />
 
       {/* Restart banner */}
@@ -317,7 +324,7 @@ export default function ChannelsPage() {
             </div>
             <Button
               size="sm"
-              className="uppercase shrink-0"
+              className="shrink-0"
               onClick={handleRestart}
               disabled={restarting}
               prefix={restarting ? <Spinner /> : <RotateCw className="h-4 w-4" />}
@@ -453,7 +460,6 @@ export default function ChannelsPage() {
                   Cancel
                 </Button>
                 <Button
-                  className="uppercase"
                   size="sm"
                   onClick={handleSave}
                   disabled={saving}
@@ -541,7 +547,6 @@ export default function ChannelsPage() {
                     </Button>
                     <Button
                       size="sm"
-                      className="uppercase"
                       onClick={() => openConfig(platform)}
                       prefix={<Settings2 className="h-4 w-4" />}
                     >
@@ -563,7 +568,7 @@ export default function ChannelsPage() {
           );
         })}
       </div>
-    </div>
+    </DeckPageShell>
   );
 }
 
@@ -784,7 +789,6 @@ function TelegramOnboardingPanel({
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          className="uppercase"
           onClick={() => void start()}
           disabled={phase === "starting" || phase === "waiting" || phase === "applying"}
           prefix={phase === "starting" ? <Spinner /> : <QrCode className="h-4 w-4" />}
@@ -820,7 +824,7 @@ function TelegramOnboardingPanel({
 
                 <div className="grid gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+                    <span className="text-xs tracking-[0.12em] text-muted-foreground">
                       Allowed users
                     </span>
                     {detectedOwnerId && allowedIds.includes(detectedOwnerId) && (
@@ -866,7 +870,6 @@ function TelegramOnboardingPanel({
                 <div className="flex flex-wrap gap-2">
                   <Button
                     size="sm"
-                    className="uppercase"
                     onClick={() => void apply()}
                     disabled={phase === "applying"}
                     prefix={phase === "applying" ? <Spinner /> : <Save className="h-4 w-4" />}
@@ -898,7 +901,7 @@ function TelegramOnboardingPanel({
                 href={setup.deep_link}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex h-8 items-center gap-1 border border-border px-3 text-xs uppercase text-foreground hover:border-foreground/40"
+                className="inline-flex h-8 items-center gap-1 border border-border px-3 text-xs text-foreground hover:border-foreground/40"
               >
                 <ExternalLink className="h-4 w-4" />
                 Open Telegram
