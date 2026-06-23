@@ -515,6 +515,7 @@ export const api = {
       body: JSON.stringify({ key }),
     });
   },
+  getSecretsStatus: () => fetchJSON<SecretsStatus>("/api/secrets/status"),
 
   // Cron jobs
   getCronJobs: (profile = "all") =>
@@ -1941,6 +1942,23 @@ export interface EnvVarInfo {
   advanced: boolean;
   /** True when this var is a messaging-platform credential owned by the Channels page. */
   channel_managed?: boolean;
+}
+
+/** Secrets Center provider status — never carries secret values, only state + counts. */
+export interface SecretsStatus {
+  provider: string;
+  fallback_provider: string;
+  bitwarden: {
+    installed: boolean;
+    state: "not-installed" | "unauthenticated" | "locked" | "unlocked" | "unknown";
+    version: string | null;
+  };
+  env: {
+    fallback_enabled: boolean;
+    known: number;
+    set: number;
+    missing: number;
+  };
 }
 
 export interface TelegramOnboardingStartResponse {
