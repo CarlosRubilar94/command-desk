@@ -2766,6 +2766,7 @@ export interface MissionCostRow {
   cost_usd: number;
   total_tokens: number;
   run_count: number;
+  is_estimate: boolean;
   top_runs: Array<{
     session_id: string;
     cost_usd: number;

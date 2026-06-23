@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import threading
 from datetime import datetime
 from typing import Any, Dict, FrozenSet, Optional, Tuple
 
@@ -39,6 +40,7 @@ PERFORMANCE_TASKS: FrozenSet[str] = frozenset({
 })
 
 _DEFAULT_OPENROUTER_ECONOMY = "google/gemini-3-flash-preview"
+_ROUTING_ANNOTATION = threading.local()
 
 
 def _load_config() -> Dict[str, Any]:
@@ -257,6 +259,8 @@ def resolve_aux_routing(
     if not is_routing_enabled() or not task:
         return main_provider, main_model
 
+    baseline_model = main_model
+
     tier = get_task_tier(task)
     if tier in {"inherit", "performance"}:
         resolved_provider, resolved_model = main_provider, main_model
@@ -274,6 +278,11 @@ def resolve_aux_routing(
 
     decision = _guardrail_decision_for_model(resolved_model)
     if decision is None or decision.action == "none":
+        _record_routing_annotation(
+            task=task,
+            baseline_model=baseline_model,
+            selected_model=resolved_model,
+        )
         return resolved_provider, resolved_model
 
     if decision.action == "warn":
@@ -282,6 +291,11 @@ def resolve_aux_routing(
             task,
             resolved_model,
             decision.reason or "unspecified",
+        )
+        _record_routing_annotation(
+            task=task,
+            baseline_model=baseline_model,
+            selected_model=resolved_model,
         )
         return resolved_provider, resolved_model
 
@@ -298,6 +312,11 @@ def resolve_aux_routing(
             fallback_model,
             decision.reason or "fallback_requested",
         )
+        _record_routing_annotation(
+            task=task,
+            baseline_model=baseline_model,
+            selected_model=fallback_model,
+        )
         return fallback_provider, fallback_model
 
     logger.warning(
@@ -310,6 +329,50 @@ def resolve_aux_routing(
         f"Cost guardrails blocked model '{resolved_model}'"
         f"{f': {decision.reason}' if decision.reason else ''}"
     )
+
+
+def _annotation_store() -> dict[str, dict[str, str]]:
+    store = getattr(_ROUTING_ANNOTATION, "store", None)
+    if not isinstance(store, dict):
+        store = {}
+        _ROUTING_ANNOTATION.store = store
+    return store
+
+
+def _record_routing_annotation(*, task: str, baseline_model: str, selected_model: str) -> None:
+    if not task or not baseline_model or not selected_model:
+        return
+    if selected_model == baseline_model:
+        return
+    try:
+        from hermes_cli.cost_guardrails import model_tier_for_pricing
+
+        baseline_tier = model_tier_for_pricing(baseline_model)
+        selected_tier = model_tier_for_pricing(selected_model)
+    except Exception:
+        baseline_tier = "performance"
+        selected_tier = "performance"
+    _annotation_store()[task] = {
+        "baseline_model": baseline_model,
+        "baseline_tier": baseline_tier,
+        "selected_model": selected_model,
+        "selected_tier": selected_tier,
+    }
+
+
+def consume_routing_annotation(task: Optional[str], selected_model: Optional[str]) -> Dict[str, str]:
+    task_key = str(task or "").strip()
+    if not task_key:
+        return {}
+    store = _annotation_store()
+    payload = store.pop(task_key, None)
+    if not isinstance(payload, dict):
+        return {}
+    selected = str(selected_model or "").strip()
+    annotated_selected = str(payload.get("selected_model") or "").strip()
+    if selected and annotated_selected and selected != annotated_selected:
+        return {}
+    return payload
 
 
 def resolve_delegation_model(parent_agent: Any) -> Optional[str]:

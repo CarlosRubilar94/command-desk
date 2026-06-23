@@ -3635,6 +3635,16 @@ def run_conversation(
                     )
                     _assistant_text = assistant_message.content or ""
                     _api_ended_at = api_start_time + api_duration
+                    _routing_annotation = {}
+                    try:
+                        from agent.smart_model_routing import consume_routing_annotation
+
+                        _routing_annotation = consume_routing_annotation(
+                            effective_task_id,
+                            agent.model,
+                        )
+                    except Exception:
+                        _routing_annotation = {}
                     _invoke_hook(
                         "post_api_request",
                         task_id=effective_task_id,
@@ -3662,6 +3672,9 @@ def run_conversation(
                         assistant_message=assistant_message,
                         assistant_content_chars=len(_assistant_text),
                         assistant_tool_call_count=len(_assistant_tool_calls),
+                        baseline_model=_routing_annotation.get("baseline_model"),
+                        baseline_tier=_routing_annotation.get("baseline_tier"),
+                        selected_tier=_routing_annotation.get("selected_tier"),
                     )
             except Exception:
                 pass

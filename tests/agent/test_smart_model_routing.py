@@ -18,7 +18,7 @@ def routing_config(tmp_path, monkeypatch):
 
 
 def test_economy_task_routes_to_cheaper_model(routing_config):
-    from agent.smart_model_routing import resolve_aux_routing
+    from agent.smart_model_routing import consume_routing_annotation, resolve_aux_routing
 
     provider, model = resolve_aux_routing(
         "compression",
@@ -27,6 +27,9 @@ def test_economy_task_routes_to_cheaper_model(routing_config):
     )
     assert provider == "openrouter"
     assert model == "google/gemini-3-flash-preview"
+    annotation = consume_routing_annotation("compression", model)
+    assert annotation["baseline_model"] == "anthropic/claude-opus-4"
+    assert annotation["selected_model"] == "google/gemini-3-flash-preview"
 
 
 def test_performance_task_keeps_main_model(routing_config):

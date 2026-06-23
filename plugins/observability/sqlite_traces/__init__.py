@@ -54,37 +54,16 @@ def get_dropped_spans() -> int:
         return int(_dropped_spans)
 
 
-def _estimate_cost_usd(
-    *,
-    model: str,
-    provider: str,
-    base_url: str,
-    usage: dict[str, Any],
-) -> float | None:
+def _recorded_cost_usd(*, model: str, input_tokens: int, output_tokens: int) -> float | None:
     try:
-        from decimal import Decimal
+        from hermes_cli.pricing import price_for_model
 
-        from agent.usage_pricing import CanonicalUsage, estimate_usage_cost
-
-        canonical = CanonicalUsage(
-            input_tokens=int(usage.get("input_tokens") or 0),
-            output_tokens=int(usage.get("output_tokens") or 0),
-            cache_read_tokens=int(usage.get("cache_read_tokens") or 0),
-            cache_write_tokens=int(usage.get("cache_write_tokens") or 0),
-            reasoning_tokens=int(usage.get("reasoning_tokens") or 0),
-            request_count=1,
-        )
-        cost = estimate_usage_cost(
-            model,
-            canonical,
-            provider=provider,
-            base_url=base_url,
-            api_key="",
-        )
-        if isinstance(cost.amount_usd, Decimal):
-            return float(cost.amount_usd)
-        if cost.amount_usd is not None:
-            return float(cost.amount_usd)
+        rate_in, rate_out = price_for_model(model)
+        if rate_in < 0 or rate_out < 0:
+            return None
+        cost = (max(0, int(input_tokens)) / 1_000_000.0) * float(rate_in)
+        cost += (max(0, int(output_tokens)) / 1_000_000.0) * float(rate_out)
+        return float(cost)
     except Exception:
         return None
     return None
@@ -380,12 +359,32 @@ class _Runtime:
         output_tokens = int(usage.get("output_tokens") or 0)
         total_tokens = int(usage.get("total_tokens") or (input_tokens + output_tokens))
 
-        cost_value = _estimate_cost_usd(
-            model=str(kwargs.get("model") or ""),
-            provider=str(kwargs.get("provider") or ""),
-            base_url=str(kwargs.get("base_url") or ""),
-            usage=usage,
+        model_value = str(kwargs.get("model") or "")
+        baseline_model = str(kwargs.get("baseline_model") or "").strip() or None
+        baseline_tier = str(kwargs.get("baseline_tier") or "").strip() or None
+        selected_tier = str(kwargs.get("selected_tier") or "").strip() or None
+
+        cost_value = _recorded_cost_usd(
+            model=model_value,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
+        baseline_cost_value = (
+            _recorded_cost_usd(
+                model=baseline_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+            if baseline_model
+            else None
+        )
+        savings_value: float | None = None
+        if (
+            baseline_cost_value is not None
+            and cost_value is not None
+            and baseline_cost_value > cost_value
+        ):
+            savings_value = float(max(0.0, baseline_cost_value - cost_value))
 
         self._queue_span(
             {
@@ -396,7 +395,7 @@ class _Runtime:
                 "kind": "llm_call",
                 "name": "post_api_request",
                 "agent": kwargs.get("platform"),
-                "model": kwargs.get("model"),
+                "model": model_value,
                 "provider": kwargs.get("provider"),
                 "status": "ok",
                 "started_at": started_at,
@@ -406,6 +405,7 @@ class _Runtime:
                 "output_tokens": output_tokens,
                 "total_tokens": total_tokens,
                 "cost_usd": cost_value,
+                "savings_usd": savings_value,
                 "error": None,
                 "attributes": {
                     "trace_id": trace_id,
@@ -415,12 +415,16 @@ class _Runtime:
                     "api_request_id": kwargs.get("api_request_id"),
                     "kind": "llm_call",
                     "status": "ok",
-                    "model": kwargs.get("model"),
+                    "model": model_value,
                     "provider": kwargs.get("provider"),
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                     "total_tokens": total_tokens,
                     "cost_usd": cost_value,
+                    "savings_usd": savings_value,
+                    "baseline_model": baseline_model,
+                    "baseline_tier": baseline_tier,
+                    "selected_tier": selected_tier,
                     "duration_ms": max(0, int((ended_at - started_at) * 1000)),
                 },
             }

@@ -9,6 +9,7 @@ import type {
   CostsModelEntry,
   CostsDayEntry,
   CostsSavingsResponse,
+  MissionCostRow,
 } from "@/lib/api";
 import { DeckPageShell } from "@/components/DeckPageShell";
 import {
@@ -223,11 +224,12 @@ function SavingsPanel({ savings }: { savings: CostsSavingsResponse }) {
       <div className="flex items-center gap-2">
         <TrendingDown className="h-4 w-4 text-[var(--dsd-sem-success)]" />
         <span className="text-sm font-medium">
-          {fmtUsd(savings.estimated_savings_usd, 4)} estimated saved
-          {savings.is_estimate && (
-            <span className="ml-1 text-xs text-[var(--dsd-text-secondary)]">(estimate)</span>
-          )}
+          {fmtUsd(savings.estimated_savings_usd, 4)} saved
         </span>
+        <StatusPill
+          variant={savings.is_estimate ? "warning" : "success"}
+          label={savings.is_estimate ? "estimated" : "actual"}
+        />
       </div>
       <div className="text-xs text-[var(--dsd-text-secondary)] space-y-0.5">
           <div>Premium-tier spend: {fmtUsd(savings.premium_spend_usd)} across {savings.premium_runs} runs</div>
@@ -239,6 +241,63 @@ function SavingsPanel({ savings }: { savings: CostsSavingsResponse }) {
     </div>
   );
 }
+
+const MissionCostTable = memo(function MissionCostTable({ rows }: { rows: MissionCostRow[] }) {
+  if (!rows.length) {
+    return <p className="text-xs text-[var(--dsd-text-secondary)]">No mission cost data.</p>;
+  }
+  const columns = [
+    {
+      key: "title",
+      header: "Mission",
+      sortKey: "title" as const,
+      cell: (row: MissionCostRow) => (
+        <div className="flex items-center gap-2">
+          <span className="truncate max-w-[240px]" title={row.title}>
+            {row.title}
+          </span>
+          <StatusPill
+            variant={row.is_estimate ? "warning" : "success"}
+            label={row.is_estimate ? "estimated" : "actual"}
+          />
+        </div>
+      ),
+    },
+    {
+      key: "cost_usd",
+      header: "Cost",
+      sortKey: "cost_usd" as const,
+      align: "right" as const,
+      cell: (row: MissionCostRow) => <span className="tabular-nums">{fmtUsd(row.cost_usd)}</span>,
+    },
+    {
+      key: "total_tokens",
+      header: "Tokens",
+      sortKey: "total_tokens" as const,
+      align: "right" as const,
+      cell: (row: MissionCostRow) => <span className="tabular-nums">{fmtTokens(row.total_tokens)}</span>,
+    },
+    {
+      key: "run_count",
+      header: "Runs",
+      sortKey: "run_count" as const,
+      align: "right" as const,
+      cell: (row: MissionCostRow) => <span className="tabular-nums">{row.run_count}</span>,
+    },
+  ];
+  return (
+    <DataTable
+      rows={rows}
+      rowKey={(row) => row.mission_id}
+      cols={columns}
+      dense
+      maxRows={8}
+      quickFilter
+      filterPlaceholder="Filter missions…"
+      aria-label="Cost by mission"
+    />
+  );
+});
 
 function GuardrailsPanel({
   payload,
@@ -476,6 +535,8 @@ export default function CostsPage() {
   const [byModel, setByModel] = useState<CostsModelEntry[]>([]);
   const [byDay, setByDay] = useState<CostsDayEntry[]>([]);
   const [savings, setSavings] = useState<CostsSavingsResponse | null>(null);
+  const [byMission, setByMission] = useState<MissionCostRow[]>([]);
+  const [byMissionEstimate, setByMissionEstimate] = useState(true);
   const [guardrails, setGuardrails] = useState<CostsGuardrailsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingGuardrails, setSavingGuardrails] = useState(false);
@@ -485,18 +546,21 @@ export default function CostsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [summaryData, byModelData, byDayData, savingsData, guardrailsData] = await Promise.all([
+      const [summaryData, byModelData, byDayData, savingsData, guardrailsData, byMissionData] = await Promise.all([
         api.getCostsSummary(),
         api.getCostsByModel(days),
         api.getCostsByDay(days),
         api.getCostsSavings(days),
         api.getCostsGuardrails(),
+        api.getCostsByMission(days),
       ]);
       setSummary(summaryData);
       setByModel(byModelData.by_model);
       setByDay(byDayData.by_day);
       setSavings(savingsData);
       setGuardrails(guardrailsData);
+      setByMission(byMissionData.missions || []);
+      setByMissionEstimate(Boolean(byMissionData.is_estimate));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -624,6 +688,14 @@ export default function CostsPage() {
           <SavingsPanel savings={savings} />
         </DeckCard>
       )}
+
+      <DeckCard
+        title="Cost by Mission"
+        subtitle={byMissionEstimate ? "Estimated where span data is missing" : "Using recorded span costs"}
+        colClass="col-12"
+      >
+        <MissionCostTable rows={byMission} />
+      </DeckCard>
     </DeckPageShell>
   );
 }

@@ -36,6 +36,10 @@ _ALLOWED_ATTRIBUTE_KEYS = {
     "output_tokens",
     "total_tokens",
     "cost_usd",
+    "savings_usd",
+    "baseline_model",
+    "baseline_tier",
+    "selected_tier",
     "error_class",
     "parent_session_id",
     "child_session_id",
@@ -62,6 +66,7 @@ CREATE TABLE IF NOT EXISTS spans (
     output_tokens INTEGER,
     total_tokens INTEGER,
     cost_usd REAL,
+    savings_usd REAL,
     error TEXT,
     attributes TEXT
 );
@@ -86,6 +91,10 @@ CREATE TABLE IF NOT EXISTS missions (
 CREATE INDEX IF NOT EXISTS idx_missions_board_status_created
     ON missions(board_slug, status, created_at);
 """
+
+_SPANS_ADDITIVE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("savings_usd", "REAL"),
+)
 
 
 def traces_db_path() -> Path:
@@ -145,9 +154,22 @@ def ensure_initialized() -> None:
         try:
             conn.executescript(_SPAN_SCHEMA_SQL)
             conn.executescript(_MISSIONS_SCHEMA_SQL)
+            _ensure_additive_columns(conn)
         finally:
             conn.close()
         _DB_INITIALIZED = True
+
+
+def _ensure_additive_columns(conn: sqlite3.Connection) -> None:
+    existing = {
+        str(row["name"]).strip().lower()
+        for row in conn.execute("PRAGMA table_info(spans)").fetchall()
+        if row["name"]
+    }
+    for col_name, col_type in _SPANS_ADDITIVE_COLUMNS:
+        if col_name.lower() in existing:
+            continue
+        conn.execute(f"ALTER TABLE spans ADD COLUMN {col_name} {col_type}")
 
 
 def _clean_attributes(raw: Any) -> dict[str, Any]:
@@ -190,6 +212,7 @@ def _row_to_span_dict(row: sqlite3.Row) -> dict[str, Any]:
         "output_tokens": row["output_tokens"],
         "total_tokens": row["total_tokens"],
         "cost_usd": row["cost_usd"],
+        "savings_usd": row["savings_usd"] if "savings_usd" in row.keys() else None,
         "error": row["error"],
         "attributes": attributes,
     }
@@ -231,6 +254,7 @@ def insert_span(span: Mapping[str, Any]) -> dict[str, Any]:
         "output_tokens": output_tokens,
         "total_tokens": int(total_tokens or 0),
         "cost_usd": span.get("cost_usd"),
+        "savings_usd": span.get("savings_usd"),
         "error": span.get("error"),
         "attributes": json.dumps(
             _clean_attributes(span.get("attributes")),
@@ -246,11 +270,11 @@ def insert_span(span: Mapping[str, Any]) -> dict[str, Any]:
             {replace_sql} INTO spans (
                 span_id, trace_id, parent_id, session_id, kind, name, agent, model, provider,
                 status, started_at, ended_at, duration_ms, input_tokens, output_tokens,
-                total_tokens, cost_usd, error, attributes
+                total_tokens, cost_usd, savings_usd, error, attributes
             ) VALUES (
                 :span_id, :trace_id, :parent_id, :session_id, :kind, :name, :agent, :model, :provider,
                 :status, :started_at, :ended_at, :duration_ms, :input_tokens, :output_tokens,
-                :total_tokens, :cost_usd, :error, :attributes
+                :total_tokens, :cost_usd, :savings_usd, :error, :attributes
             )
             """,
             values,

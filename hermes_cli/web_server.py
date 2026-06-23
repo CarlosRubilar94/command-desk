@@ -12246,44 +12246,222 @@ async def put_costs_guardrails(body: CostGuardrailsUpdate, profile: Optional[str
     return await loop.run_in_executor(None, _write)
 
 
+def _session_rows_for_costs(
+    db: Any,
+    *,
+    cutoff: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    where_sql = "WHERE started_at > ?" if cutoff is not None else ""
+    params: List[Any] = [float(cutoff)] if cutoff is not None else []
+    rows = db._conn.execute(
+        f"""
+        SELECT id,
+               model,
+               started_at,
+               COALESCE(estimated_cost_usd, 0.0) AS estimated_cost_usd,
+               COALESCE(actual_cost_usd, 0.0) AS actual_cost_usd,
+               COALESCE(input_tokens, 0) AS input_tokens,
+               COALESCE(output_tokens, 0) AS output_tokens,
+               COALESCE(api_call_count, 0) AS api_call_count
+        FROM sessions
+        {where_sql}
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _span_cost_views_for_sessions(
+    *,
+    session_ids: List[str],
+    cutoff: Optional[float],
+) -> Dict[str, Any]:
+    from hermes_cli import traces_store
+    import sqlite3
+
+    traces_store.ensure_initialized()
+    db_path = traces_store.traces_db_path()
+    empty = {
+        "has_data": False,
+        "sessions_with_spans": set(),
+        "by_session": {},
+        "by_model": {},
+        "by_day": {},
+        "savings": {
+            "total_savings_usd": 0.0,
+            "premium_spend_usd": 0.0,
+            "premium_runs": 0,
+            "savings_spans": 0,
+        },
+    }
+    if not db_path.exists():
+        return empty
+    clean_ids = [str(sid).strip() for sid in session_ids if str(sid).strip()]
+    if not clean_ids:
+        return empty
+
+    placeholders = ",".join("?" for _ in clean_ids)
+    cutoff_sql = "AND started_at > ?" if cutoff is not None else ""
+    params = list(clean_ids)
+    if cutoff is not None:
+        params.append(float(cutoff))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        by_session_rows = conn.execute(
+            f"""
+            SELECT session_id,
+                   COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            GROUP BY session_id
+            """,
+            params,
+        ).fetchall()
+        by_model_rows = conn.execute(
+            f"""
+            SELECT COALESCE(NULLIF(model, ''), 'unknown') AS model,
+                   COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                   COUNT(DISTINCT session_id) AS runs
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            GROUP BY COALESCE(NULLIF(model, ''), 'unknown')
+            """,
+            params,
+        ).fetchall()
+        by_day_rows = conn.execute(
+            f"""
+            SELECT date(started_at, 'unixepoch') AS day,
+                   COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                   COUNT(DISTINCT session_id) AS runs
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            GROUP BY day
+            ORDER BY day
+            """,
+            params,
+        ).fetchall()
+        savings_rows = conn.execute(
+            f"""
+            SELECT COALESCE(SUM(savings_usd), 0.0) AS total_savings_usd,
+                   COALESCE(SUM(COALESCE(cost_usd, 0.0) + COALESCE(savings_usd, 0.0)), 0.0) AS premium_spend_usd,
+                   COUNT(*) AS savings_spans
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND savings_usd IS NOT NULL
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            """,
+            params,
+        ).fetchone()
+    finally:
+        conn.close()
+
+    by_session: Dict[str, Dict[str, Any]] = {}
+    sessions_with_spans: set[str] = set()
+    for row in by_session_rows:
+        sid = str(row["session_id"] or "").strip()
+        if not sid:
+            continue
+        sessions_with_spans.add(sid)
+        by_session[sid] = {
+            "cost_usd": _safe_float(row["cost_usd"]),
+            "input_tokens": _safe_int(row["input_tokens"]),
+            "output_tokens": _safe_int(row["output_tokens"]),
+        }
+
+    by_model = {
+        str(row["model"]): {
+            "cost_usd": _safe_float(row["cost_usd"]),
+            "input_tokens": _safe_int(row["input_tokens"]),
+            "output_tokens": _safe_int(row["output_tokens"]),
+            "runs": _safe_int(row["runs"]),
+        }
+        for row in by_model_rows
+    }
+    by_day = {
+        str(row["day"]): {
+            "cost_usd": _safe_float(row["cost_usd"]),
+            "input_tokens": _safe_int(row["input_tokens"]),
+            "output_tokens": _safe_int(row["output_tokens"]),
+            "runs": _safe_int(row["runs"]),
+        }
+        for row in by_day_rows
+        if row["day"] is not None
+    }
+    savings_payload = {
+        "total_savings_usd": _safe_float(savings_rows["total_savings_usd"] if savings_rows is not None else 0.0),
+        "premium_spend_usd": _safe_float(savings_rows["premium_spend_usd"] if savings_rows is not None else 0.0),
+        "premium_runs": _safe_int(savings_rows["savings_spans"] if savings_rows is not None else 0),
+        "savings_spans": _safe_int(savings_rows["savings_spans"] if savings_rows is not None else 0),
+    }
+    return {
+        "has_data": bool(sessions_with_spans),
+        "sessions_with_spans": sessions_with_spans,
+        "by_session": by_session,
+        "by_model": by_model,
+        "by_day": by_day,
+        "savings": savings_payload,
+    }
+
+
 @app.get("/api/costs/summary")
 async def get_costs_summary(profile: Optional[str] = None):
     """Spend summary: today + all-time totals, token counts, run count."""
     db = _open_session_db_for_profile(profile)
     try:
-        today_start = time.mktime(time.strptime(time.strftime("%Y-%m-%d"), "%Y-%m-%d"))
-        cur = db._conn.execute(
-            """
-            SELECT COALESCE(SUM(estimated_cost_usd), 0) AS spend_today,
-                   SUM(input_tokens)                    AS tokens_input_today,
-                   SUM(output_tokens)                   AS tokens_output_today,
-                   COUNT(*)                             AS runs_today
-            FROM sessions WHERE started_at >= ?
-            """,
-            (today_start,),
-        )
-        today = dict(cur.fetchone())
+        today_start = _today_start_epoch_local()
+        total_rows = _session_rows_for_costs(db)
+        today_rows = [row for row in total_rows if _safe_float(row.get("started_at")) >= today_start]
 
-        cur2 = db._conn.execute(
-            """
-            SELECT COALESCE(SUM(estimated_cost_usd), 0) AS spend_total,
-                   COALESCE(SUM(actual_cost_usd), 0)    AS actual_total,
-                   SUM(input_tokens)                    AS tokens_input_total,
-                   SUM(output_tokens)                   AS tokens_output_total,
-                   COUNT(*)                             AS runs_total
-            FROM sessions
-            """
+        total_span = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in total_rows],
+            cutoff=None,
         )
-        totals = dict(cur2.fetchone())
+        today_span = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in today_rows],
+            cutoff=today_start,
+        )
+
+        def _preferred_totals(rows: List[Dict[str, Any]], span_view: Dict[str, Any]) -> tuple[float, int]:
+            by_session = span_view.get("by_session", {}) if isinstance(span_view, dict) else {}
+            cost_total = 0.0
+            token_total = 0
+            for row in rows:
+                sid = str(row.get("id") or "").strip()
+                if sid and sid in by_session:
+                    span_row = by_session[sid]
+                    cost_total += _safe_float(span_row.get("cost_usd"))
+                    token_total += _safe_int(span_row.get("input_tokens")) + _safe_int(span_row.get("output_tokens"))
+                    continue
+                cost_total += _safe_float(row.get("estimated_cost_usd"))
+                token_total += _safe_int(row.get("input_tokens")) + _safe_int(row.get("output_tokens"))
+            return cost_total, token_total
+
+        spend_today, tokens_today = _preferred_totals(today_rows, today_span)
+        spend_total, tokens_total = _preferred_totals(total_rows, total_span)
 
         return {
-            "spend_today": today["spend_today"],
-            "runs_today": today["runs_today"],
-            "tokens_today": (today["tokens_input_today"] or 0) + (today["tokens_output_today"] or 0),
-            "spend_total": totals["spend_total"],
-            "actual_total": totals["actual_total"],
-            "tokens_total": (totals["tokens_input_total"] or 0) + (totals["tokens_output_total"] or 0),
-            "runs_total": totals["runs_total"],
+            "spend_today": round(spend_today, 6),
+            "runs_today": len(today_rows),
+            "tokens_today": tokens_today,
+            "spend_total": round(spend_total, 6),
+            "actual_total": round(spend_total, 6),
+            "tokens_total": tokens_total,
+            "runs_total": len(total_rows),
         }
     finally:
         db.close()
@@ -12294,24 +12472,65 @@ async def get_costs_by_model(days: int = 30, profile: Optional[str] = None):
     """Per-model cost breakdown for the given lookback window."""
     db = _open_session_db_for_profile(profile)
     try:
-        cutoff = time.time() - (days * 86400)
-        cur = db._conn.execute(
-            """
-            SELECT model,
-                   COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost,
-                   COALESCE(SUM(actual_cost_usd), 0)    AS actual_cost,
-                   SUM(input_tokens)                    AS input_tokens,
-                   SUM(output_tokens)                   AS output_tokens,
-                   COUNT(*)                             AS runs,
-                   SUM(COALESCE(api_call_count, 0))     AS api_calls
-            FROM sessions
-            WHERE started_at > ? AND model IS NOT NULL AND model != ''
-            GROUP BY model
-            ORDER BY SUM(COALESCE(estimated_cost_usd, 0)) DESC
-            """,
-            (cutoff,),
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        session_rows = _session_rows_for_costs(db, cutoff=cutoff)
+        span_view = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in session_rows],
+            cutoff=cutoff,
         )
-        rows = [dict(r) for r in cur.fetchall()]
+        by_model: Dict[str, Dict[str, Any]] = {}
+        for model, row in (span_view.get("by_model") or {}).items():
+            by_model[model] = {
+                "model": model,
+                "estimated_cost": _safe_float(row.get("cost_usd")),
+                "actual_cost": _safe_float(row.get("cost_usd")),
+                "input_tokens": _safe_int(row.get("input_tokens")),
+                "output_tokens": _safe_int(row.get("output_tokens")),
+                "runs": _safe_int(row.get("runs")),
+                "api_calls": 0,
+            }
+
+        sessions_with_spans = span_view.get("sessions_with_spans", set())
+        for row in session_rows:
+            sid = str(row.get("id") or "").strip()
+            if sid in sessions_with_spans:
+                model = str(row.get("model") or "").strip() or "unknown"
+                target = by_model.get(model)
+                if target:
+                    target["api_calls"] += _safe_int(row.get("api_call_count"))
+                continue
+            model = str(row.get("model") or "").strip() or "unknown"
+            target = by_model.setdefault(
+                model,
+                {
+                    "model": model,
+                    "estimated_cost": 0.0,
+                    "actual_cost": 0.0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "runs": 0,
+                    "api_calls": 0,
+                },
+            )
+            target["estimated_cost"] += _safe_float(row.get("estimated_cost_usd"))
+            target["actual_cost"] += _safe_float(row.get("actual_cost_usd"))
+            target["input_tokens"] += _safe_int(row.get("input_tokens"))
+            target["output_tokens"] += _safe_int(row.get("output_tokens"))
+            target["runs"] += 1
+            target["api_calls"] += _safe_int(row.get("api_call_count"))
+
+        rows = sorted(
+            (
+                {
+                    **entry,
+                    "estimated_cost": round(_safe_float(entry.get("estimated_cost")), 6),
+                    "actual_cost": round(_safe_float(entry.get("actual_cost")), 6),
+                }
+                for entry in by_model.values()
+            ),
+            key=lambda item: _safe_float(item.get("estimated_cost")),
+            reverse=True,
+        )
         return {"by_model": rows, "period_days": days}
     finally:
         db.close()
@@ -12322,22 +12541,47 @@ async def get_costs_by_day(days: int = 30, profile: Optional[str] = None):
     """Daily cost trend for sparkline rendering."""
     db = _open_session_db_for_profile(profile)
     try:
-        cutoff = time.time() - (days * 86400)
-        cur = db._conn.execute(
-            """
-            SELECT date(started_at, 'unixepoch') AS day,
-                   COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost,
-                   SUM(input_tokens)                    AS input_tokens,
-                   SUM(output_tokens)                   AS output_tokens,
-                   COUNT(*)                             AS runs
-            FROM sessions
-            WHERE started_at > ?
-            GROUP BY day
-            ORDER BY day
-            """,
-            (cutoff,),
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        session_rows = _session_rows_for_costs(db, cutoff=cutoff)
+        span_view = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in session_rows],
+            cutoff=cutoff,
         )
-        rows = [dict(r) for r in cur.fetchall()]
+        by_day: Dict[str, Dict[str, Any]] = {
+            day: {
+                "day": day,
+                "estimated_cost": _safe_float(values.get("cost_usd")),
+                "input_tokens": _safe_int(values.get("input_tokens")),
+                "output_tokens": _safe_int(values.get("output_tokens")),
+                "runs": _safe_int(values.get("runs")),
+            }
+            for day, values in (span_view.get("by_day") or {}).items()
+        }
+        sessions_with_spans = span_view.get("sessions_with_spans", set())
+        for row in session_rows:
+            sid = str(row.get("id") or "").strip()
+            if sid in sessions_with_spans:
+                continue
+            day = datetime.fromtimestamp(_safe_float(row.get("started_at"))).strftime("%Y-%m-%d")
+            target = by_day.setdefault(
+                day,
+                {"day": day, "estimated_cost": 0.0, "input_tokens": 0, "output_tokens": 0, "runs": 0},
+            )
+            target["estimated_cost"] += _safe_float(row.get("estimated_cost_usd"))
+            target["input_tokens"] += _safe_int(row.get("input_tokens"))
+            target["output_tokens"] += _safe_int(row.get("output_tokens"))
+            target["runs"] += 1
+
+        rows = [
+            {
+                "day": day,
+                "estimated_cost": round(_safe_float(entry.get("estimated_cost")), 6),
+                "input_tokens": _safe_int(entry.get("input_tokens")),
+                "output_tokens": _safe_int(entry.get("output_tokens")),
+                "runs": _safe_int(entry.get("runs")),
+            }
+            for day, entry in sorted(by_day.items(), key=lambda item: item[0])
+        ]
         return {"by_day": rows, "period_days": days}
     finally:
         db.close()
@@ -12346,43 +12590,40 @@ async def get_costs_by_day(days: int = 30, profile: Optional[str] = None):
 @app.get("/api/costs/savings")
 async def get_costs_savings(days: int = 30, profile: Optional[str] = None):
     """
-    Routing downgrade savings estimate.
-
-    No per-call savings are recorded in Wave 1B (smart_model_routing does not
-    persist this yet). We compute a best-effort estimate: sessions run on known
-    premium-tier models are compared against an estimated mid-tier cost ratio.
-    The ``is_estimate: true`` flag lets the UI clearly mark the result.
+    Routing downgrade savings (real when recorded, estimate as fallback).
     """
-    PREMIUM_PREFIXES = (
-        "claude-3-5-sonnet", "claude-3-opus", "gpt-4o", "gpt-4-turbo",
-        "gpt-4", "o1", "o3",
-    )
-    MID_COST_FACTOR = 0.30  # approximate mid-tier / premium cost ratio
+    MID_COST_FACTOR = 0.30
 
     db = _open_session_db_for_profile(profile)
     try:
-        cutoff = time.time() - (days * 86400)
-        cur = db._conn.execute(
-            """
-            SELECT model,
-                   COALESCE(SUM(estimated_cost_usd), 0) AS spend,
-                   COUNT(*) AS runs
-            FROM sessions
-            WHERE started_at > ? AND model IS NOT NULL AND model != ''
-            GROUP BY model
-            """,
-            (cutoff,),
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        session_rows = _session_rows_for_costs(db, cutoff=cutoff)
+        span_view = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in session_rows],
+            cutoff=cutoff,
         )
-        rows = [dict(r) for r in cur.fetchall()]
+        savings = span_view.get("savings", {}) if isinstance(span_view, dict) else {}
+        savings_spans = _safe_int(savings.get("savings_spans"))
+        if savings_spans > 0:
+            return {
+                "estimated_savings_usd": round(_safe_float(savings.get("total_savings_usd")), 6),
+                "premium_spend_usd": round(_safe_float(savings.get("premium_spend_usd")), 6),
+                "premium_runs": _safe_int(savings.get("premium_runs")),
+                "mid_cost_factor": MID_COST_FACTOR,
+                "is_estimate": False,
+                "note": "Savings from recorded per-call baseline metadata.",
+                "period_days": days,
+            }
+
+        from hermes_cli.cost_guardrails import is_premium_model
 
         premium_spend = 0.0
         premium_runs = 0
-        for row in rows:
-            m = (row.get("model") or "").lower()
-            if any(m.startswith(p) for p in PREMIUM_PREFIXES):
-                premium_spend += row["spend"]
-                premium_runs += row["runs"]
-
+        for row in session_rows:
+            model_name = str(row.get("model") or "")
+            if is_premium_model(model_name):
+                premium_spend += _safe_float(row.get("estimated_cost_usd"))
+                premium_runs += 1
         estimated_savings = premium_spend * (1.0 - MID_COST_FACTOR)
         return {
             "estimated_savings_usd": round(estimated_savings, 6),
@@ -12390,7 +12631,7 @@ async def get_costs_savings(days: int = 30, profile: Optional[str] = None):
             "premium_runs": premium_runs,
             "mid_cost_factor": MID_COST_FACTOR,
             "is_estimate": True,
-            "note": "Best-effort estimate; no per-call savings recorded in Wave 1B.",
+            "note": "Best-effort estimate; no recorded baseline savings in window.",
             "period_days": days,
         }
     finally:
@@ -13751,15 +13992,36 @@ async def get_costs_by_mission(days: int = 30, profile: Optional[str] = None):
                         [*session_ids, cutoff],
                     )
                     rows = [dict(r) for r in cur.fetchall()]
+                span_view = _span_cost_views_for_sessions(
+                    session_ids=session_ids,
+                    cutoff=cutoff,
+                )
+                by_session = span_view.get("by_session", {}) if isinstance(span_view, dict) else {}
+                sessions_with_spans = span_view.get("sessions_with_spans", set())
+                mission_has_recorded = bool(sessions_with_spans)
 
-                total_cost = sum(_safe_float(r.get("cost_usd")) for r in rows)
-                total_tokens = sum(_safe_int(r.get("total_tokens")) for r in rows)
+                total_cost = 0.0
+                total_tokens = 0
+                top_runs_source: List[Dict[str, Any]] = []
+                for row in rows:
+                    sid = str(row.get("session_id") or "").strip()
+                    if sid in sessions_with_spans and sid in by_session:
+                        span_row = by_session[sid]
+                        run_cost = _safe_float(span_row.get("cost_usd"))
+                        run_tokens = _safe_int(span_row.get("input_tokens")) + _safe_int(span_row.get("output_tokens"))
+                    else:
+                        run_cost = _safe_float(row.get("cost_usd"))
+                        run_tokens = _safe_int(row.get("total_tokens"))
+                    total_cost += run_cost
+                    total_tokens += run_tokens
+                    top_runs_source.append({"session_id": sid, "cost_usd": run_cost})
+                top_runs_source.sort(key=lambda item: _safe_float(item.get("cost_usd")), reverse=True)
                 top_runs = [
                     {
                         "session_id": r.get("session_id"),
                         "cost_usd": _safe_float(r.get("cost_usd")),
                     }
-                    for r in rows[:3]
+                    for r in top_runs_source[:3]
                 ]
                 payload.append(
                     {
@@ -13770,13 +14032,15 @@ async def get_costs_by_mission(days: int = 30, profile: Optional[str] = None):
                         "total_tokens": total_tokens,
                         "run_count": len(rows),
                         "top_runs": top_runs,
+                        "is_estimate": not mission_has_recorded,
                     }
                 )
 
             payload.sort(key=lambda item: item.get("cost_usd", 0.0), reverse=True)
+            any_recorded = any(not bool(item.get("is_estimate")) for item in payload)
             return {
                 "missions": payload,
-                "is_estimate": True,
+                "is_estimate": not any_recorded,
             }
         finally:
             db.close()

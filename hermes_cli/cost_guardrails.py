@@ -20,6 +20,32 @@ PREMIUM_MODEL_PREFIXES = (
     "o3",
 )
 
+ECONOMY_MODEL_PREFIXES = (
+    "google/gemini-2.5-flash",
+    "google/gemini-3-flash",
+    "google/gemini-3-flash-preview",
+    "qwen/qwen3-coder:free",
+)
+
+DEFAULT_TOKEN_RATES_USD_PER_MTOKEN = {
+    "economy": (0.20, 0.80),
+    "performance": (3.00, 15.00),
+    "premium": (15.00, 75.00),
+}
+
+KNOWN_MODEL_TOKEN_RATES_USD_PER_MTOKEN = {
+    "google/gemini-3-flash-preview": (0.15, 0.60),
+    "google/gemini-2.5-flash": (0.30, 2.50),
+    "google/gemini-3-flash": (0.30, 2.50),
+    "openai/gpt-4o": (5.00, 15.00),
+    "openai/gpt-4.1": (2.00, 8.00),
+    "openai/gpt-5.5-medium": (5.00, 20.00),
+    "openai/gpt-5.5-pro": (25.00, 125.00),
+    "anthropic/claude-opus-4": (15.00, 75.00),
+    "anthropic/claude-opus-4.8": (15.00, 75.00),
+    "anthropic/claude-3-5-sonnet": (3.00, 15.00),
+}
+
 
 @dataclass(frozen=True)
 class GuardrailDecision:
@@ -56,6 +82,28 @@ def is_premium_model(model: str, config: Optional[Dict[str, Any]] = None) -> boo
     else:
         prefixes = PREMIUM_MODEL_PREFIXES
     return any(raw.startswith(prefix) for prefix in prefixes)
+
+
+def model_tier_for_pricing(model: str, config: Optional[Dict[str, Any]] = None) -> str:
+    raw = str(model or "").strip().lower()
+    if not raw:
+        return "performance"
+    if is_premium_model(raw, config):
+        return "premium"
+    if any(raw.startswith(prefix) for prefix in ECONOMY_MODEL_PREFIXES):
+        return "economy"
+    return "performance"
+
+
+def token_rates_for_model(model: str, config: Optional[Dict[str, Any]] = None) -> tuple[float, float]:
+    raw = str(model or "").strip().lower()
+    if not raw:
+        return DEFAULT_TOKEN_RATES_USD_PER_MTOKEN["performance"]
+    known = KNOWN_MODEL_TOKEN_RATES_USD_PER_MTOKEN.get(raw)
+    if known is not None:
+        return known
+    tier = model_tier_for_pricing(raw, config)
+    return DEFAULT_TOKEN_RATES_USD_PER_MTOKEN[tier]
 
 
 def evaluate_guardrails(

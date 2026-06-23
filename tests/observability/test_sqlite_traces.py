@@ -289,6 +289,39 @@ def test_register_hook_bus_records_span(monkeypatch, tmp_path):
     plugin.reset_for_tests()
 
 
+def test_post_api_request_records_cost_and_savings(monkeypatch, tmp_path):
+    _reload_store(monkeypatch, tmp_path)
+    plugin = _reload_plugin(monkeypatch, tmp_path)
+    import hermes_cli.traces_store as store
+
+    monkeypatch.setattr(
+        "hermes_cli.pricing.price_for_model",
+        lambda model, config=None: (10.0, 20.0) if "baseline" in model else (2.0, 4.0),
+    )
+    plugin.on_post_api_request(
+        session_id="sess-1",
+        turn_id="turn-1",
+        model="actual-model",
+        provider="openrouter",
+        started_at=time.time() - 0.1,
+        ended_at=time.time(),
+        usage={"input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500},
+        baseline_model="baseline-model",
+        baseline_tier="premium",
+        selected_tier="economy",
+    )
+
+    time.sleep(0.3)
+    spans = store.get_trace("turn-1")
+    llm_spans = [span for span in spans if span.get("kind") == "llm_call"]
+    assert llm_spans
+    llm = llm_spans[0]
+    assert llm["cost_usd"] > 0
+    assert llm["savings_usd"] > 0
+    assert llm["attributes"]["baseline_model"] == "baseline-model"
+    plugin.reset_for_tests()
+
+
 def test_sqlite_traces_plugin_default_enabled(monkeypatch, tmp_path):
     hermes_home = tmp_path / "hermes_home"
     hermes_home.mkdir(parents=True, exist_ok=True)
