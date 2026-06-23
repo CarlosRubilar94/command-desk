@@ -20,6 +20,7 @@ import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
 import { cn } from "@/lib/utils";
 import { usePageHeader } from "@/contexts/usePageHeader";
+import { DeckPageShell } from "@/components/DeckPageShell";
 
 /** Select value for built-in memory (`config` uses empty string). Never use `""` — UI Select maps empty value to an empty label. */
 const MEMORY_PROVIDER_BUILTIN = "__hermes_memory_builtin__";
@@ -149,7 +150,14 @@ export default function PluginsPage() {
   const providers = hub?.providers;
 
   return (
-    <div className="flex flex-col gap-4">
+    <DeckPageShell
+      intro={(
+        <p className="text-xs text-text-secondary">
+          Install and manage dashboard plugins, runtime state, and provider integrations.
+        </p>
+      )}
+      className="flex flex-col gap-4"
+    >
       <PluginSlot name="plugins:top" />
 
       <div className={cn("flex w-full flex-col gap-8")}>
@@ -210,7 +218,7 @@ export default function PluginsPage() {
               </div>
 
               <Button
-                className="w-fit uppercase"
+                className="w-fit"
                 size="sm"
                 disabled={providerBusy}
                 onClick={() => void onSaveProviders()}
@@ -270,13 +278,13 @@ export default function PluginsPage() {
             </div>
 
             <Button
-              className="w-fit uppercase"
+              className="w-fit"
               size="sm"
               disabled={installBusy}
               onClick={() => void onInstall()}
               prefix={installBusy ? <Spinner /> : undefined}
             >
-              {t.pluginsPage.installBtn}
+              + Add plugin
             </Button>
 
             <p className="text-xs tracking-[0.06em] text-text-tertiary">
@@ -363,7 +371,7 @@ export default function PluginsPage() {
 
       <Toast toast={toast} />
       <PluginSlot name="plugins:bottom" />
-    </div>
+    </DeckPageShell>
   );
 }
 
@@ -431,35 +439,27 @@ function PluginRowCard(props: PluginRowCardProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {row.runtime_status === "enabled" ? (
-              <Button
+            <div className="inline-flex items-center gap-2 border border-border px-2 py-1">
+              <Switch
+                checked={row.runtime_status === "enabled"}
                 disabled={busy}
-                ghost
-                size="sm"
-                onClick={() => {
+                aria-label={`${row.runtime_status === "enabled" ? "Disable" : "Enable"} ${row.name}`}
+                onCheckedChange={(checked) => {
                   void setRuntimeLoading(row.name, async () => {
+                    if (checked) {
+                      await api.enableAgentPlugin(row.name);
+                      showToast(t.pluginsPage.enableRuntime, "success");
+                      return;
+                    }
                     await api.disableAgentPlugin(row.name);
                     showToast(t.pluginsPage.disableRuntime, "success");
                   });
                 }}
-              >
-                {t.pluginsPage.disableRuntime}
-              </Button>
-            ) : (
-              <Button
-                disabled={busy}
-                ghost
-                size="sm"
-                onClick={() => {
-                  void setRuntimeLoading(row.name, async () => {
-                    await api.enableAgentPlugin(row.name);
-                    showToast(t.pluginsPage.enableRuntime, "success");
-                  });
-                }}
-              >
-                {t.pluginsPage.enableRuntime}
-              </Button>
-            )}
+              />
+              <span className="text-xs text-text-secondary">
+                {row.runtime_status === "enabled" ? "Enabled" : "Disabled"}
+              </span>
+            </div>
 
             {tabPath ? (
 
