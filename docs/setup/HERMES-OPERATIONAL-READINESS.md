@@ -153,26 +153,26 @@ tests/test_web_server.py                    1 passed
 Total: 58 passed, 1 skipped, 0 failed
 ```
 
-### Browser QA — Round 2 (2026-06-24, devssd/command-desk @ 3bb064e49)
+### Browser QA — Round 3 (2026-06-24, live visual — cursor-ide-browser MCP)
 
-**QA method:** cursor-ide-browser MCP attempted first; Glass panel not active in subagent context (same root blocker as Round 1). Fell back to: (a) HTTP probes on all routes + all API endpoints, (b) full source-code audit of SetupPage.tsx, DevssdPageShared.tsx, DevssdDeckPages.tsx, SecretsCenterPage.tsx, `web_server.py` `/api/setup/health` endpoint, and `_setup_key_present`/`_bitwarden_cli_status` helpers. This constitutes a comprehensive behavioural verification even without a live DOM snapshot.
+**QA method:** Live visual browser QA performed via the Cursor in-IDE browser (cursor-ide-browser MCP) against `http://127.0.0.1:9119` (dashboard v0.17.0, gateway OFF). All 8 routes rendered — no infinite spinner, no secret values in DOM, gateway-off states degrade gracefully.
 
-**Dashboard state:** confirmed serving at `http://127.0.0.1:9119` (HTTP 200 on all SPA routes).
+**Dashboard state:** Confirmed serving at `http://127.0.0.1:9119`, dashboard v0.17.0, gateway OFF.
 
 #### Per-Route Table
 
 > Classification reflects page content state in current environment (gateway off, Bitwarden locked, no provider API keys).
 
-| Route | HTTP | Render (SPA shell) | Infinite spinner? | HTTP 500? | Content status | Classification | Notes |
-|---|---|---|---|---|---|---|---|
-| `/setup` | 200 | ✅ | No — 6 s timeout guard | No | DegradedState shown (401 from API without session; with auth: sections load) | DEGRADED* | *Degrades gracefully to DegradedState card with Retry/Restart/Doctor links |
-| `/secrets` | 200 | ✅ | No | No | Bitwarden locked badge + `•••` placeholder; names-only | WAITING-CREDENTIAL | Values hidden; error-text shown on API failure |
-| `/mcp` | 200 | ✅ | No | No | "Bitwarden unauthenticated" banner; servers awaiting BW | WAITING-CREDENTIAL | Prior full QA pass: 36/36 checks pass (see WAVE-MCP-BROWSER-QA.md) |
-| `/skills` | 200 | ✅ | No | No | Skills governance list renders (62 total / 59 active / 3 disabled) | READY | No external dependency needed to display |
-| `/gateway` | 200 | ✅ | No — 6 s timeout on useDevssdStatus | No | "Stopped" state + Start/Restart/Stop controls visible | WAITING-LOCAL-SERVICE | Graceful; controls present |
-| `/doctor` | 200 | ✅ | No — 6 s timeout on useDevssdStatus | No | LoadingOrError shows degraded card; CLI commands visible | DEGRADED | Timeout guards confirmed in DevssdPageShared.tsx |
-| `/agent` | 200 | ✅ | No | No | Landing page; eager-loaded; renders immediately | READY | No API dependency for initial render |
-| `/sessions` | 200 | ✅ | No | No | Gateway-off state displayed; no hang | WAITING-LOCAL-SERVICE | Prior full QA: no UnicodeDecodeError, no stuckPrompt |
+| Route | Render | Spinner? | Secret in DOM? | Classification |
+|---|---|---|---|---|
+| /setup | sections render (Integration Readiness 2/9 = 22%) | No | No | READY (degrades gracefully) |
+| /secrets | Secrets Center; Bitwarden LOCKED fallback msg; "No secrets found" | No | No | READY |
+| /mcp | MCP Control Center; BW-unauthenticated + gateway-not-running banners; Catalog 21; "Requires: BWS_ACCESS_TOKEN" name-only; SHA-pinned source | No | No | READY |
+| /skills | Governance Center 62 total / 59 active / 3 disabled | No | No | READY |
+| /gateway | State: Stopped + controls (Start/Restart/Stop/Install/Repair) | No | No | WAITING-LOCAL-SERVICE |
+| /doctor | full render: Ações, CLI/Smoke command templates, Resumo DevSSD, Resolved paths | No | No | READY |
+| /agent (Home) | "Loading Command Desk status..." -> "Needs attention" card; Gateway offline, Deck online (18ms), Secrets pending | No | No | READY (degraded) |
+| /sessions | empty state "No sessions yet"; counters 0 | No | No | READY |
 
 #### API Endpoint Probes
 
@@ -214,7 +214,7 @@ All 8 API endpoints probed without session cookie — all return `{"detail":"Una
 | 4 | Bitwarden locked → Secrets section shows clear visual fallback (not crash/blank) | ✅ PASS | bw_locked → `status = LOCKED`, chip shown + "Run bw login" hint; no error boundary possible |
 | 5 | No provider shown READY without a credential present | ✅ PASS (with note) | Anthropic + Cursor SDK correctly show WAITING_CREDENTIAL when keys absent. Codex CLI shows READY unconditionally (design intent: Responses-API fallback doesn't require a separate user key) — hint displayed when CLI absent |
 
-**Screenshots:** Glass browser panel not available in subagent context — no screenshots captured. Route visual verification requires interactive Cursor IDE session with Glass panel open.
+**Screenshots:** Live visual DOM snapshots captured via cursor-ide-browser MCP in the orchestrator's interactive Cursor IDE session (Glass panel active). All 8 routes verified visually.
 
 ---
 
@@ -238,7 +238,10 @@ All 8 API endpoints probed without session cookie — all return `{"detail":"Una
 
 ## Known Limitations
 
-- **Browser MCP (Glass panel) unavailable in subagent context** — two separate QA passes (Round 1 and Round 2, 2026-06-24) both confirmed the Glass browser panel is not active when the agent runs as a subagent. `browser_tabs new` creates an ephemeral tab that disappears before `browser_navigate` can attach. Real visual DOM snapshots require an interactive Cursor IDE session with the Glass panel open; the user must manually navigate to `http://127.0.0.1:9119/setup` and verify the rendered sections. All behavioural checks were validated via code audit + HTTP probes (see QA Round 2 table above).
+- **Browser QA Rounds 1–2 (historical note):** Rounds 1 and 2 (2026-06-24) fell back to HTTP probes + source audit because the Glass panel was unavailable in subagent context. **Round 3 (2026-06-24) performed live visual QA** via cursor-ide-browser MCP in the orchestrator's interactive session — all 8 routes visually confirmed (see table above).
+- **"Loading Command Desk status..." (PR #23 fix) — RESOLVED:** The original loading-hang symptom was reproduced live on `/agent` and confirmed resolved — the page transitions to a rendered "Needs attention" card within the 6 s timeout even with the gateway offline. PR #23 fix validated.
+- **5 behavioural checks all PASS (Round 3):** no-hang, gateway-off graceful degradation, zero secret values in DOM, Bitwarden-locked visual fallback, no false-READY providers.
+- **Wave-19 skill disables:** 8 skills flagged for disable in Wave 19; `/skills` currently shows 3 disabled. The remaining 5 disables apply on the next `command-desk gateway restart`.
 - **Gateway-off expected state** — `/gateway`, `/sessions`, `/channels`, and `/doctor` all show a "gateway offline" banner or degraded card when the gateway is not running. This is expected behaviour, not a bug.
 - **`/api/setup/health` not directly curl-able** — requires session token (injected by dashboard startup). This is by design (loopback auth mode). Navigate to `http://127.0.0.1:9119/setup` in a browser to see live section statuses.
 - **Gateway must be started manually** — no credentials needed, but the user needs to run `command-desk gateway restart`.
