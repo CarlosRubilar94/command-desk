@@ -770,6 +770,7 @@ function TemplatesDrawer({ open, onClose }: TemplatesDrawerProps) {
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function MissionsPage() {
+  const navigate = useNavigate();
   const { setEnd } = usePageHeader();
   const [missions, setMissions] = useState<MissionRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -813,7 +814,7 @@ export default function MissionsPage() {
       </div>,
     );
     return () => setEnd(null);
-  }, [loading, load, setEnd, setTemplatesOpen]);
+  }, [loading, load, navigate, setEnd, setTemplatesOpen]);
 
   const openMission = useCallback((m: MissionRow) => {
     setSelected(m);
