@@ -2630,8 +2630,15 @@ def _get_usage(agent) -> dict:
 def _probe_credentials(agent) -> str:
     """Light credential check at session creation — returns warning or ''."""
     try:
-        key = getattr(agent, "api_key", "") or ""
         provider = getattr(agent, "provider", "") or ""
+        api_mode = getattr(agent, "api_mode", "") or ""
+        # Keyless subprocess providers (claude-cli) authenticate through their
+        # own CLI/OAuth session, not an HTTP API key, so an empty ``api_key``
+        # is expected and correct. Skip the warning to avoid a false "no API
+        # key" alarm on every /chat session for these providers.
+        if provider == "claude-cli" or api_mode == "claude_cli":
+            return ""
+        key = getattr(agent, "api_key", "") or ""
         if not key or key == "no-key-required":
             return f"No API key configured for provider '{provider}'. First message will fail."
     except Exception:
@@ -8421,8 +8428,15 @@ def _(rid, params: dict) -> dict:
 
         api_key = runtime.get("api_key")
         api_key_text = "" if callable(api_key) else str(api_key or "").strip()
+        api_mode = str(runtime.get("api_mode") or "").strip()
+        # Keyless subprocess providers (claude-cli) authenticate via their own
+        # CLI/OAuth session — they resolve with an empty api_key by design, so
+        # the credential probe must treat them as OK rather than reporting
+        # "No usable credentials found".
+        keyless_subprocess = api_mode == "claude_cli" or str(provider) == "claude-cli"
         credential_ok = (
             callable(api_key)
+            or keyless_subprocess
             or api_key_text in {"aws-sdk", "no-key-required"}
             or has_usable_secret(api_key_text)
             or bool(runtime.get("command"))
