@@ -1,0 +1,43 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: logs
+description: Search and tail log files for Claude, Cursor, Codex, and MCP servers.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server for log file access. On the DevSSD Windows setup, log
+# roots are hardcoded to specific Windows paths (Claude AppData, Cursor AppData,
+# Codex home, MCP scripts dir). The server lists these roots, searches with
+# PowerShell Select-String, and tails with Get-Content.
+# NOTE: log root paths are Windows-specific in the stock DevSSD implementation.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/logs-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/logs-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY-WAITING-LOCAL-SERVICE (log paths are Windows-specific in stock config)
+# Reconfigure ROOTS in logs-mcp.js to match your log directories on other OSes.
+
+post_install: |
+  The logs server reads from hardcoded Windows paths for Claude, Cursor, Codex,
+  and MCP. Edit the ROOTS map in logs-mcp.js to match your log locations:
+    claude: ~/.config/Claude/logs (Linux) or ~/Library/Logs/Claude (macOS)
+    cursor: ~/.config/Cursor/logs (Linux)
+
+  No credentials needed once paths are configured.
+
+  Available tools: logs_roots, logs_list, logs_search, logs_tail,
+  logs_mcp_status.

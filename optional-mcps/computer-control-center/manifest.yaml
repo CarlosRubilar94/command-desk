@@ -1,0 +1,36 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: computer-control-center
+description: Run DevSSD computer health checks, scheduled tasks, and backup operations.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# DevSSD Windows control plane. Orchestrates health checks (disk, services,
+# network), runs PowerShell scheduled tasks, and manages system backups.
+# Uses PowerShell — WINDOWS ONLY.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/computer-control-center-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/computer-control-center-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY-WAITING-LOCAL-SERVICE (Windows only — requires Windows + PowerShell)
+
+post_install: |
+  WINDOWS ONLY. Runs PowerShell for all health checks and backup operations.
+
+  Available tools: computer_health, computer_backup, computer_run_task,
+  computer_task_list, computer_watchdog, computer_dashboard_start,
+  computer_install_scheduled_tasks, computer_control_tasks.

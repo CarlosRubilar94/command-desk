@@ -1,0 +1,48 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: github
+description: Interact with GitHub repositories, issues, PRs, and code search.
+source: https://github.com/github/github-mcp-server
+
+# Official GitHub MCP server distributed as a standalone binary.
+# On Windows the user ships a Node.js wrapper that spawns the pre-built
+# github-mcp-server.exe with GITHUB_PERSONAL_ACCESS_TOKEN injected.
+# This catalog entry uses the official cross-platform binary via npx.
+transport:
+  type: stdio
+  command: npx
+  args:
+    - "-y"
+    - "@github/mcp-server"
+    - "stdio"
+
+auth:
+  type: api_key
+  env:
+    - name: GITHUB_PERSONAL_ACCESS_TOKEN
+      prompt: "GitHub Personal Access Token (repo, read:org scopes)"
+      required: true
+      secret: true
+
+# Windows user note: the existing wrapper at
+#   C:\Users\Vinicius\Documents\Codex\mcp\github-mcp-server-wrapper.js
+# spawns the local github-mcp-server.exe and resolves GITHUB_PERSONAL_ACCESS_TOKEN
+# from Bitwarden SM or the env. To use that wrapper instead of npx, set:
+#   command: "C:\Program Files\nodejs\node.exe"
+#   args: ["C:\\Users\\Vinicius\\Documents\\Codex\\mcp\\github-mcp-server-wrapper.js"]
+#
+# Status: READY-WAITING-CREDENTIAL (GITHUB_PERSONAL_ACCESS_TOKEN required)
+
+post_install: |
+  Set GITHUB_PERSONAL_ACCESS_TOKEN in ~/.hermes/.env before starting Hermes.
+  Generate a fine-grained token at https://github.com/settings/tokens with
+  repo, read:org, and pull_request scopes at minimum.
+
+  Windows (DevSSD setup): the bitwarden-secret-resolver reads the token from
+  Bitwarden SM automatically when bw is authenticated. Unlock bw first with:
+    bw login
+  Then confirm: bw status → {"status":"unlocked"}
+
+  After config, restart Hermes to load the GitHub tools.

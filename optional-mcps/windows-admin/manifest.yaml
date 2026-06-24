@@ -1,0 +1,37 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: windows-admin
+description: Inspect Windows processes, services, firewall rules, and port listeners.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server for Windows system administration. Uses PowerShell
+# cmdlets (Get-Process, Get-Service, Get-NetFirewallRule, netstat) which are
+# Windows-only. WINDOWS ONLY.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/windows-admin-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/windows-admin-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY-WAITING-LOCAL-SERVICE (Windows only — requires Windows + PowerShell)
+
+post_install: |
+  WINDOWS ONLY. Uses PowerShell for all operations.
+  Some tools (firewall rules, service restart) may require elevated privileges.
+
+  Available tools: win_process_list, win_process_kill, win_service_list,
+  win_service_restart, win_firewall_status, win_firewall_rules,
+  win_port_listening, win_port_test, win_open_app.

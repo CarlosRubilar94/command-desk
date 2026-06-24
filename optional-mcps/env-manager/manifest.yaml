@@ -1,0 +1,40 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: env-manager
+description: Manage Windows user env vars, compare .env files, and DPAPI-encrypt backups.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server for Windows environment variable management.
+# Uses PowerShell to read/write Windows user env vars and Windows DPAPI for
+# encrypted backups. NOTE: DPAPI features are Windows-only.
+# env_file_keys, env_compare_files, and env_user_status are cross-platform.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/env-manager-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/env-manager-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY on Windows; WAITING-LOCAL-SERVICE for DPAPI features on non-Windows
+# env_file_keys and env_compare_files work on all platforms.
+
+post_install: |
+  No credentials needed. On Windows, env_user_set and env_backup_encrypt_dpapi
+  use PowerShell and Windows DPAPI (local machine encryption).
+  On non-Windows, only env_file_keys, env_compare_files, and env_user_status
+  are functional.
+
+  Available tools: env_file_keys, env_compare_files, env_user_status,
+  env_user_set (Windows only), env_backup_encrypt_dpapi (Windows only).

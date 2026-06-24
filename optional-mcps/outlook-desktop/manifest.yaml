@@ -1,0 +1,40 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: outlook-desktop
+description: Read mail, manage calendar, and compose drafts in Outlook desktop app.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server that controls the Outlook desktop application via
+# PowerShell COM automation. Requires Microsoft Outlook to be installed and
+# running. WINDOWS ONLY — not compatible with web Outlook or other mail clients.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/outlook-desktop-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/outlook-desktop-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY-WAITING-LOCAL-SERVICE (Windows + Outlook Desktop required)
+# Prerequisite: Microsoft Outlook must be installed, signed in, and running.
+
+post_install: |
+  WINDOWS ONLY. Requires Microsoft Outlook desktop app (not web Outlook).
+  Outlook must be running before using these tools. Start it with:
+    outlook_open()  (from this server)
+
+  Available tools: outlook_status, outlook_open, outlook_close, outlook_focus,
+  outlook_restart, outlook_recent_mail, outlook_search_mail, outlook_folders,
+  outlook_accounts, outlook_create_draft, outlook_calendar_today,
+  outlook_calendar_range, outlook_create_appointment.
