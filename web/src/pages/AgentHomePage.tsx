@@ -47,7 +47,7 @@ export function AgentHomePage() {
       loading={loading}
       hideTitle
     >
-      <LoadingOrError loading={loading} error={error} />
+      <LoadingOrError loading={loading} error={error} onRetry={refresh} />
       {status ? (
         <div className="deck-dashboard deck-animate">
           <div className="ops-first-fold">
