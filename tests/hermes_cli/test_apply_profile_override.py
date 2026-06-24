@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 
 def _run_apply_profile_override(
@@ -27,7 +29,20 @@ def _run_apply_profile_override(
     Returns the value of os.environ["HERMES_HOME"] after the call,
     or None if unset.
     """
-    hermes_root = tmp_path / ".hermes"
+    # On Windows, _get_platform_default_hermes_home() uses LOCALAPPDATA (not
+    # Path.home()).  When hermes_home is None (HERMES_HOME unset), the code will
+    # look in %LOCALAPPDATA%\hermes, not ~/.hermes.  Patch LOCALAPPDATA to point
+    # at a temp dir so the production code finds the test's active_profile file.
+    # When hermes_home is explicitly provided, HERMES_HOME is set so the code
+    # resolves the root from HERMES_HOME directly — no LOCALAPPDATA patch needed.
+    if sys.platform == "win32" and hermes_home is None:
+        fake_local_appdata = tmp_path / "AppData" / "Local"
+        fake_local_appdata.mkdir(parents=True, exist_ok=True)
+        hermes_root = fake_local_appdata / "hermes"
+        monkeypatch.setenv("LOCALAPPDATA", str(fake_local_appdata))
+    else:
+        hermes_root = tmp_path / ".hermes"
+
     hermes_root.mkdir(parents=True, exist_ok=True)
 
     if active_profile is not None:
@@ -125,6 +140,7 @@ class TestApplyProfileOverrideHermesHomeGuard:
         assert result is not None
         assert "coder" in result
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX pwd module (unavailable on Windows)")
     def test_sudo_explicit_profile_resolves_invoking_users_profile(self, tmp_path, monkeypatch):
         """sudo elias ... should resolve `-p elias` under SUDO_USER, not root."""
         root_home = tmp_path / "root"
@@ -305,7 +321,17 @@ class TestSupervisedChildIgnoresStickyProfile:
         """A supervised named-profile slot passes ``-p <name>`` explicitly;
         that must still resolve (the sentinel guard only skips the sticky
         active_profile fallback, never an explicit flag)."""
-        hermes_root = tmp_path / ".hermes"
+        # On Windows, _get_platform_default_hermes_home() uses LOCALAPPDATA, not
+        # Path.home().  Patch LOCALAPPDATA so the profile resolution finds the
+        # test's hermes root instead of the real system directory.
+        if sys.platform == "win32":
+            fake_local_appdata = tmp_path / "AppData" / "Local"
+            fake_local_appdata.mkdir(parents=True, exist_ok=True)
+            hermes_root = fake_local_appdata / "hermes"
+            monkeypatch.setenv("LOCALAPPDATA", str(fake_local_appdata))
+        else:
+            hermes_root = tmp_path / ".hermes"
+
         hermes_root.mkdir(parents=True, exist_ok=True)
         (hermes_root / "active_profile").write_text("briefer")
         (hermes_root / "profiles" / "briefer").mkdir(parents=True, exist_ok=True)

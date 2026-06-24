@@ -352,7 +352,7 @@ def test_report_md_splits_consolidated_and_pruned_sections(curator_env):
     assert payload["counts"]["consolidated_this_run"] == 1
     assert payload["counts"]["pruned_this_run"] == 1
 
-    md = (run_dir / "REPORT.md").read_text()
+    md = (run_dir / "REPORT.md").read_text(encoding="utf-8")
     # Two separate sections, not a single "Skills archived" lump
     assert "Consolidated into umbrella skills" in md
     assert "Pruned — archived for staleness" in md

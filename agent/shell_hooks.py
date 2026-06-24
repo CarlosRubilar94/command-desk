@@ -784,7 +784,9 @@ def _command_script_path(command: str) -> str:
     common bare-path form.
     """
     try:
-        parts = shlex.split(command)
+        # Use non-POSIX mode on Windows so backslashes in paths survive
+        # shlex parsing without being treated as escape characters.
+        parts = shlex.split(command, posix=(os.name != "nt"))
     except ValueError:
         return command
     if not parts:
@@ -793,7 +795,7 @@ def _command_script_path(command: str) -> str:
         if part.lower().endswith(_SCRIPT_EXTENSIONS):
             return part
     for part in parts:
-        if "/" in part or part.startswith("~"):
+        if "/" in part or "\\" in part or part.startswith("~"):
             return part
     return parts[0]
 
@@ -871,7 +873,7 @@ def script_is_executable(command: str) -> bool:
     if not os.path.isfile(expanded):
         return False
     try:
-        argv = shlex.split(command)
+        argv = shlex.split(command, posix=(os.name != "nt"))
     except ValueError:
         return False
     is_bare_invocation = bool(argv) and argv[0] == path

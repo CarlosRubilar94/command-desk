@@ -80,11 +80,24 @@ def atomic_replace(tmp_path: Union[str, Path], target: Union[str, Path]) -> str:
     Returns the resolved real path used for the replace, so callers that
     need to re-apply permissions can target it instead of the symlink.
     """
+    import time as _time
+
     target_str = str(target)
     real_path = os.path.realpath(target_str) if os.path.islink(target_str) else target_str
     tmp_str = str(tmp_path)
     try:
-        os.replace(tmp_str, real_path)
+        # On Windows, os.replace may raise PermissionError (WinError 5 / 32)
+        # when another thread briefly holds the file open. Retry a few times
+        # with exponential back-off before giving up.
+        _retries = 5
+        for _attempt in range(_retries):
+            try:
+                os.replace(tmp_str, real_path)
+                break
+            except PermissionError:
+                if _attempt == _retries - 1:
+                    raise
+                _time.sleep(0.01 * (2 ** _attempt))
     except OSError as exc:
         if exc.errno not in (errno.EXDEV, errno.EBUSY):
             raise
