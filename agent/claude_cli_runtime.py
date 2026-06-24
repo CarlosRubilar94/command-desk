@@ -41,9 +41,16 @@ DEFAULT_CLAUDE_BIN = "claude"
 # Most conversational turns finish in <30 s; extended-thinking may need more.
 DEFAULT_TIMEOUT = 120
 
-# Maximum bytes of conversation history we embed in the prompt to Claude.
-# Beyond this the synthesized context is truncated gracefully.
+# Maximum bytes of *conversation history* we embed in the prompt to Claude.
+# This budget applies ONLY to the middle history turns — the system prompt and
+# the current user turn are always preserved in full (truncating either would
+# corrupt the request: dropping the system prompt loses Hermes' identity/tools
+# context; dropping the current turn loses the user's actual question). Beyond
+# this the middle history is truncated gracefully from the front (oldest first).
 _HISTORY_MAX_CHARS = 24_000
+
+# Marker inserted when middle history is truncated.
+_TRUNCATION_MARKER = "[...earlier turns truncated...]\n\n"
 
 
 def _find_claude_bin(agent) -> Optional[str]:
@@ -68,7 +75,8 @@ def _build_context_prompt(messages: List[Dict[str, Any]], user_message: str) -> 
     converted to a brief «[tool: name → result]» inline note so context is
     preserved without confusing Claude CLI with OpenAI-style tool JSON.
     """
-    lines: List[str] = []
+    system_blocks: List[str] = []
+    history_lines: List[str] = []
     for msg in messages:
         role = str(msg.get("role") or "").lower()
         content = msg.get("content") or ""
@@ -112,33 +120,34 @@ def _build_context_prompt(messages: List[Dict[str, Any]], user_message: str) -> 
 
         if role == "system":
             # Embed the system prompt once at the top, clearly labelled.
-            lines.append(f"[SYSTEM CONTEXT]\n{content}\n[/SYSTEM CONTEXT]")
+            system_blocks.append(f"[SYSTEM CONTEXT]\n{content}\n[/SYSTEM CONTEXT]")
         elif role == "user":
-            lines.append(f"Human: {content}")
+            history_lines.append(f"Human: {content}")
         elif role == "assistant":
-            lines.append(f"Assistant: {content}")
+            history_lines.append(f"Assistant: {content}")
         elif role == "tool":
             # Tool results are already handled via content blocks above;
             # standalone role=tool messages are OpenAI style.
             tool_call_id = str(msg.get("tool_call_id") or "?")
-            lines.append(f"[tool-result {tool_call_id}: {content[:200]}]")
+            history_lines.append(f"[tool-result {tool_call_id}: {content[:200]}]")
 
-    # Append the current user turn as the final Human: line.
-    lines.append(f"Human: {user_message}")
-    lines.append("Assistant:")
+    system_part = "\n\n".join(system_blocks)
+    history_part = "\n\n".join(history_lines)
+    # The current user turn is ALWAYS preserved in full — it carries the
+    # question Claude must answer this turn.
+    current_turn = f"Human: {user_message}\n\nAssistant:"
 
-    full = "\n\n".join(lines)
-    if len(full) > _HISTORY_MAX_CHARS:
-        # Soft-truncate from the middle (keep system prompt + recent turns).
-        system_end = full.find("[/SYSTEM CONTEXT]")
-        prefix = full[: system_end + len("[/SYSTEM CONTEXT]") + 2] if system_end >= 0 else ""
-        remainder = full[len(prefix):]
-        if len(prefix) + len(remainder) > _HISTORY_MAX_CHARS:
-            keep_tail = _HISTORY_MAX_CHARS - len(prefix) - 200
-            remainder = "[...earlier turns truncated...]\n\n" + remainder[-keep_tail:]
-        full = prefix + remainder
+    # Apply the history budget to the middle turns only, truncating from the
+    # front (oldest first). The system prompt and current turn are exempt, so a
+    # large Hermes system prompt can never crowd out the user's actual message
+    # (previously a >24KB system prompt drove keep_tail negative and dropped the
+    # current turn entirely).
+    if len(history_part) > _HISTORY_MAX_CHARS:
+        keep_tail = max(_HISTORY_MAX_CHARS - len(_TRUNCATION_MARKER), 0)
+        history_part = _TRUNCATION_MARKER + history_part[-keep_tail:]
 
-    return full
+    sections = [s for s in (system_part, history_part, current_turn) if s]
+    return "\n\n".join(sections)
 
 
 def run_claude_cli_turn(

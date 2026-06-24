@@ -3450,6 +3450,26 @@ def _resolve_auto(
     # config.yaml (auxiliary.<task>.provider) still win over this.
     main_provider = str(runtime_provider or _read_main_provider() or "")
     main_model = str(runtime_model or _read_main_model() or "")
+
+    # ── Zero-cost guard for claude-cli ───────────────────────────────────
+    # When the user's MAIN provider is the keyless claude-cli subprocess
+    # (Pro/OAuth, no per-token billing), auxiliary tasks must NOT fall through
+    # to the paid Step-2/Step-3 fallback chain (OpenRouter / Nous / etc.).
+    # The owner is Pro-only and explicitly does not want hidden per-token
+    # spend for side tasks. Return (None, None) so auxiliary work degrades to
+    # a graceful no-op. Users who want auxiliary on a free/local model can
+    # still set an explicit ``auxiliary.<task>.provider`` (e.g. ollama), which
+    # is resolved before this auto path is ever reached.
+    # Mirrors the xAI-OAuth "surprise bill" guard documented above.
+    if _normalize_aux_provider(main_provider) == "claude-cli":
+        _log_degraded_once(
+            "aux_claude_cli_skip",
+            "Auxiliary auto-detect: main provider is claude-cli (keyless "
+            "subprocess); skipping auxiliary tasks to avoid paid fallback. "
+            "Set auxiliary.<task>.provider to a free/local model to enable them.",
+        )
+        return None, None
+
     if (main_provider and main_model
             and main_provider not in {"auto", ""}):
         try:
@@ -3764,6 +3784,21 @@ def resolve_provider_client(
         final_model = model or resolved
         return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
                 else (client, final_model))
+
+    # ── Claude Code CLI (keyless subprocess) ─────────────────────────
+    # claude-cli drives the MAIN turn via the `claude` CLI subprocess
+    # (Pro/OAuth, zero per-token cost). It has no HTTP endpoint, so it cannot
+    # back auxiliary tasks (compression, memory/skill review, vision, etc.).
+    # Return (None, None) so the caller degrades gracefully instead of
+    # misrouting auxiliary calls to a paid provider. The _resolve_auto guard
+    # below ensures a claude-cli *main* provider never falls through to the
+    # paid Step-2/Step-3 fallback chain.
+    if provider == "claude-cli":
+        logger.debug(
+            "resolve_provider_client: claude-cli has no auxiliary HTTP client "
+            "(keyless subprocess provider); auxiliary task will degrade."
+        )
+        return None, None
 
     # ── OpenRouter ───────────────────────────────────────────
     if provider == "openrouter":
@@ -5436,6 +5471,17 @@ def call_llm(
             # credentials were found, fail fast instead of silently routing
             # through OpenRouter (which causes confusing 404s).
             _explicit = (resolved_provider or "").strip().lower()
+            if _explicit == "claude-cli":
+                # Keyless subprocess provider — no auxiliary HTTP client and no
+                # API key by design. Do NOT emit the misleading
+                # "set CLAUDE_CLI_API_KEY" message and do NOT fall through to a
+                # paid auto-detection chain (the owner is Pro-only, zero spend).
+                # Raise a neutral error callers treat as expected degradation.
+                raise RuntimeError(
+                    "Auxiliary tasks are unavailable on the claude-cli provider "
+                    "(keyless subprocess). Configure a free/local auxiliary "
+                    "provider via auxiliary.<task>.provider to enable them."
+                )
             if _explicit and _explicit not in {"auto", "openrouter", "custom"}:
                 raise RuntimeError(
                     f"Provider '{_explicit}' is set in config.yaml but no API key "
@@ -5942,6 +5988,17 @@ async def async_call_llm(
         )
         if client is None:
             _explicit = (resolved_provider or "").strip().lower()
+            if _explicit == "claude-cli":
+                # Keyless subprocess provider — no auxiliary HTTP client and no
+                # API key by design. Do NOT emit the misleading
+                # "set CLAUDE_CLI_API_KEY" message and do NOT fall through to a
+                # paid auto-detection chain (the owner is Pro-only, zero spend).
+                # Raise a neutral error callers treat as expected degradation.
+                raise RuntimeError(
+                    "Auxiliary tasks are unavailable on the claude-cli provider "
+                    "(keyless subprocess). Configure a free/local auxiliary "
+                    "provider via auxiliary.<task>.provider to enable them."
+                )
             if _explicit and _explicit not in {"auto", "openrouter", "custom"}:
                 raise RuntimeError(
                     f"Provider '{_explicit}' is set in config.yaml but no API key "
