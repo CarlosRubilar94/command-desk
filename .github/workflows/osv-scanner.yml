@@ -43,6 +43,15 @@ on:
 permissions:
   actions: read
   contents: read
+  # Required by the google/osv-scanner reusable workflow, which declares
+  # security-events: write at the workflow level. A reusable workflow cannot
+  # request more permission than its caller grants, so omitting this triggers a
+  # startup_failure even though SARIF upload is disabled below (upload-sarif: false).
+  security-events: write
+
+concurrency:
+  group: osv-scanner-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scan:

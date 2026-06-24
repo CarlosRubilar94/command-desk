@@ -4,11 +4,23 @@ name: Typecheck
 on:
   push:
     branches: [devssd/command-desk]
-  # No paths filter — the job must always run so the required check
-  # reports a status (path-gated workflows leave checks "pending" forever
-  # when no matching files change, which blocks merge).
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "website/**"
+  # Free-tier minutes: this private fork has no branch-protection required
+  # checks (that needs GitHub Pro), so docs-only PRs can skip typecheck
+  # without leaving a required check "pending".
   pull_request:
     branches: [devssd/command-desk]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "website/**"
+
+concurrency:
+  group: typecheck-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   typecheck:
