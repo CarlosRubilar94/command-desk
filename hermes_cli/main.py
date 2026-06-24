@@ -255,11 +255,14 @@ if _try_termux_ultrafast_version():
 import argparse
 import hashlib
 import json
+import shlex
 import shutil
 import stat
 import subprocess
+import tomllib
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+from hermes_cli.subprocess_utils import safe_run
 
 
 from hermes_cli.subcommands._shared import add_accept_hooks_flag as _add_accept_hooks_flag
@@ -5919,20 +5922,30 @@ def _kill_stale_dashboard_processes(
     failed: list[tuple[int, str]] = []
 
     if sys.platform == "win32":
+        from gateway.status import _pid_exists
         for pid in pids:
             try:
-                result = subprocess.run(
+                result = safe_run(
                     ["taskkill", "/PID", str(pid), "/F"],
                     capture_output=True,
-                    text=True,
                     timeout=10,
                 )
                 if result.returncode == 0:
                     killed.append(pid)
                 else:
-                    failed.append((pid, (result.stderr or result.stdout or "").strip()))
+                    detail = (result.stderr or result.stdout or "").strip()
+                    denied = "access is denied" in detail.lower()
+                    if not denied and not _pid_exists(pid):
+                        killed.append(pid)
+                    else:
+                        failed.append((pid, detail))
             except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
-                failed.append((pid, str(e)))
+                detail = str(e)
+                denied = "access is denied" in detail.lower()
+                if not denied and not _pid_exists(pid):
+                    killed.append(pid)
+                else:
+                    failed.append((pid, detail))
     else:
         import signal as _signal
         import time as _time
@@ -6790,6 +6803,89 @@ def _clear_update_incomplete_marker() -> None:
         logger.debug("Could not clear update-incomplete marker: %s", exc)
 
 
+def _discover_optional_extras_for_repair(pyproject_path: Path) -> list[str]:
+    """Best-effort list of optional extras to retry individually."""
+    try:
+        with pyproject_path.open("rb") as handle:
+            data = tomllib.load(handle)
+        optional = data.get("project", {}).get("optional-dependencies", {})
+        if not isinstance(optional, dict):
+            return []
+        blocked = {"dev", "test", "tests", "docs", "lint", "ci"}
+        return [
+            str(name)
+            for name in optional.keys()
+            if str(name).strip() and str(name).lower() not in blocked
+        ]
+    except Exception:
+        return []
+
+
+def run_repair_install_sequence(*, project_root: Path | None = None) -> dict[str, Any]:
+    """Repair editable install state without blocking on interactive prompts."""
+    root = project_root or PROJECT_ROOT
+    py = sys.executable
+    logs: list[str] = []
+
+    def _append_output(prefix: str, text: str) -> None:
+        body = (text or "").strip()
+        if not body:
+            return
+        for line in body.splitlines():
+            logs.append(f"{prefix}{line}")
+
+    def _run(cmd: list[str], *, required: bool = True) -> bool:
+        rendered = " ".join(shlex.quote(part) for part in cmd)
+        logs.append(f"$ {rendered}")
+        try:
+            result = safe_run(cmd, cwd=root, capture_output=True)
+        except Exception as exc:
+            logs.append(f"! subprocess failed to start: {exc}")
+            return False
+        _append_output("  ", result.stdout or "")
+        _append_output("  ", result.stderr or "")
+        if result.returncode == 0:
+            return True
+        if required:
+            logs.append(f"! command failed with exit code {result.returncode}")
+        return False
+
+    base_cmds = [
+        [py, "-m", "ensurepip", "--upgrade"],
+        [py, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"],
+        [py, "-m", "pip", "install", "-e", "."],
+    ]
+    for cmd in base_cmds:
+        if not _run(cmd, required=True):
+            return {
+                "status": "failed",
+                "message": "Base install repair failed before optional extras.",
+                "log_lines": logs,
+                "failed_extras": [],
+            }
+
+    extras_failures: list[str] = []
+    if not _run([py, "-m", "pip", "install", "-e", ".[all]"], required=False):
+        extras = _discover_optional_extras_for_repair(root / "pyproject.toml")
+        for extra in extras:
+            if not _run([py, "-m", "pip", "install", "-e", f".[{extra}]"], required=False):
+                extras_failures.append(extra)
+        if extras_failures:
+            return {
+                "status": "degraded_optional_extras_failed",
+                "message": "Base install repaired, but optional extras failed.",
+                "log_lines": logs,
+                "failed_extras": extras_failures,
+            }
+
+    return {
+        "status": "ok",
+        "message": "Install repair completed successfully.",
+        "log_lines": logs,
+        "failed_extras": [],
+    }
+
+
 def _recover_from_interrupted_install() -> None:
     """Finish a dependency install that a prior ``hermes update`` left half-done.
 
@@ -6864,37 +6960,17 @@ def _recover_from_interrupted_install() -> None:
         )
 
         try:
-            from hermes_cli.managed_uv import ensure_uv
-
-            # Always bootstrap pip first: a killed install can leave the venv with
-            # no pip module at all, and uv may also be gone. ensurepip restores a
-            # known-good pip so at least the plain-pip path below can proceed.
-            try:
-                subprocess.run(
-                    [sys.executable, "-m", "ensurepip", "--upgrade", "--default-pip"],
-                    cwd=PROJECT_ROOT,
-                    capture_output=True,
+            result = run_repair_install_sequence(project_root=PROJECT_ROOT)
+            for line in result.get("log_lines", []):
+                print(line)
+            if result.get("status") == "failed":
+                raise RuntimeError(result.get("message") or "repair failed")
+            if result.get("status") == "degraded_optional_extras_failed":
+                failed = ", ".join(result.get("failed_extras") or [])
+                print(
+                    "⚠ Base install repaired, but optional extras failed: "
+                    + (failed or "unknown extras")
                 )
-            except Exception as exc:
-                logger.debug("ensurepip during install recovery failed: %s", exc)
-
-            uv_bin = ensure_uv()
-            if uv_bin:
-                uv_env = {**os.environ, "VIRTUAL_ENV": str(PROJECT_ROOT / "venv")}
-                if _is_termux_env(uv_env):
-                    uv_env.pop("PYTHONPATH", None)
-                    uv_env.pop("PYTHONHOME", None)
-                _install_python_dependencies_with_optional_fallback(
-                    [uv_bin, "pip"],
-                    env=uv_env,
-                    group="termux-all" if _is_termux_env(uv_env) else "all",
-                )
-            else:
-                _install_python_dependencies_with_optional_fallback(
-                    [sys.executable, "-m", "pip"],
-                    group="termux-all" if _is_termux_env() else "all",
-                )
-
             _clear_update_incomplete_marker()
             print("✓ Dependency installation recovered — your install is healthy again.")
         except Exception as exc:
@@ -6905,7 +6981,8 @@ def _recover_from_interrupted_install() -> None:
             print("  Recover manually with:")
             print(f"    cd {PROJECT_ROOT}")
             print(f"    {sys.executable} -m ensurepip --upgrade")
-            print(f"    {sys.executable} -m pip install -e '.[all]'")
+            print(f"    {sys.executable} -m pip install -e .")
+            print(f"    {sys.executable} -m pip install -e \".[all]\"")
     finally:
         sys.stdout = saved_sys_stdout
         if saved_stdout_fd is not None:

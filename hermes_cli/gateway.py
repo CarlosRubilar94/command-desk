@@ -1306,6 +1306,8 @@ def kill_gateway_processes(
         all_profiles: When ``True``, kill across all profiles.  Passed
             through to :func:`find_gateway_pids`.
     """
+    from gateway.status import _pid_exists
+
     pids = find_gateway_pids(exclude_pids=exclude_pids, all_profiles=all_profiles)
     killed = 0
 
@@ -1315,11 +1317,15 @@ def kill_gateway_processes(
             killed += 1
         except ProcessLookupError:
             # Process already gone
-            pass
+            killed += 1
         except PermissionError:
             print(f"⚠ Permission denied to kill PID {pid}")
 
         except OSError as exc:
+            if not _pid_exists(pid):
+                # Idempotent stop: race where the PID exited between scan and kill.
+                killed += 1
+                continue
             print(f"Failed to kill PID {pid}: {exc}")
     return killed
 

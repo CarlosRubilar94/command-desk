@@ -179,6 +179,23 @@ export function GatewayStatusPage() {
               <ActionButton label="Start gateway" action={api.startGateway} />
               <ActionButton label="Restart gateway" action={api.restartGateway} />
               <ActionButton label="Stop gateway" action={api.stopGateway} />
+              <ActionButton
+                label="Install gateway service"
+                action={api.installGatewayService}
+              />
+              <ActionButton
+                label="Repair install"
+                action={async () => {
+                  const resp = await api.repairInstall();
+                  return {
+                    ok: resp.ok,
+                    name: "repair-install",
+                    pid: null,
+                    message: resp.message,
+                    error: resp.ok ? undefined : resp.message,
+                  };
+                }}
+              />
             </DeckToolbar>
           </DeckCard>
         </LayoutGrid>

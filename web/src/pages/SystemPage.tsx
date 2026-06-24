@@ -43,6 +43,7 @@ import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import { cn, themedBody } from "@/lib/utils";
 import { api } from "@/lib/api";
 import type {
+  ActionResponse,
   StatusResponse,
   MemoryStatus,
   CredentialPoolProvider,
@@ -54,6 +55,7 @@ import type {
   CuratorStatus,
   PortalStatus,
   DebugShareResponse,
+  RepairInstallResponse,
 } from "@/lib/api";
 
 function formatBytes(n: number): string {
@@ -162,6 +164,12 @@ export default function SystemPage() {
   const [loading, setLoading] = useState(true);
 
   const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [gatewayRecovery, setGatewayRecovery] = useState<{
+    status: string;
+    message: string;
+    probableCause: string;
+    details: string[];
+  } | null>(null);
 
   // Add-credential form.
   const [credProvider, setCredProvider] = useState("openrouter");
@@ -232,22 +240,109 @@ export default function SystemPage() {
   // ── Gateway lifecycle ──────────────────────────────────────────────
   const runGateway = async (verb: "start" | "stop" | "restart") => {
     try {
+      let resp: ActionResponse;
       if (verb === "start") {
-        await api.startGateway();
+        resp = await api.startGateway();
         setActiveAction("gateway-start");
       } else if (verb === "stop") {
-        await api.stopGateway();
+        resp = await api.stopGateway();
         setActiveAction("gateway-stop");
       } else {
-        await api.restartGateway();
+        resp = await api.restartGateway();
         setActiveAction("gateway-restart");
       }
+      if (!resp.ok) {
+        setGatewayRecovery({
+          status: resp.status ?? "failed",
+          message: resp.message ?? `Gateway ${verb} failed.`,
+          probableCause:
+            resp.status === "needs_service_install"
+              ? "Gateway service is not installed on this Windows profile."
+              : "Local runtime install is incomplete or a dependency repair is needed.",
+          details: [resp.error, resp.message].filter(
+            (part): part is string => Boolean(part),
+          ),
+        });
+        showToast(resp.message ?? `Gateway ${verb} failed`, "error");
+        return;
+      }
+      setGatewayRecovery(null);
       showToast(`Gateway ${verb} started`, "success");
       setTimeout(loadAll, 3000);
     } catch (e) {
+      setGatewayRecovery({
+        status: "failed",
+        message: `Gateway ${verb} failed.`,
+        probableCause: "Unexpected runtime or platform error during gateway action.",
+        details: [String(e)],
+      });
       showToast(`Gateway ${verb} failed: ${e}`, "error");
     }
   };
+
+  const installGatewayService = useCallback(async () => {
+    try {
+      const resp = await api.installGatewayService();
+      if (!resp.ok) {
+        showToast(resp.message ?? "Gateway service install failed", "error");
+        return;
+      }
+      setActiveAction(resp.name ?? "gateway-install");
+      showToast("Gateway service install started", "success");
+      setTimeout(loadAll, 3000);
+    } catch (e) {
+      showToast(`Gateway service install failed: ${e}`, "error");
+    }
+  }, [loadAll, showToast]);
+
+  const runRepairInstall = useCallback(async () => {
+    try {
+      const resp: RepairInstallResponse = await api.repairInstall();
+      const detailLines = [
+        ...(resp.failed_extras.length
+          ? [`failed optional extras: ${resp.failed_extras.join(", ")}`]
+          : []),
+        ...resp.log_lines.slice(-120),
+      ];
+      setGatewayRecovery({
+        status: resp.status,
+        message: resp.message,
+        probableCause:
+          resp.status === "degraded_optional_extras_failed"
+            ? "Base install recovered, but optional extras still failed."
+            : "Editable install repair was required for the local runtime.",
+        details: detailLines,
+      });
+      showToast(
+        resp.status === "ok"
+          ? "Repair install completed"
+          : resp.status === "degraded_optional_extras_failed"
+            ? "Repair completed with optional extra failures"
+            : "Repair install failed",
+        resp.status === "failed" ? "error" : "success",
+      );
+      setTimeout(loadAll, 1500);
+    } catch (e) {
+      showToast(`Repair install failed: ${e}`, "error");
+    }
+  }, [loadAll, showToast]);
+
+  const copyGatewayDiagnostics = useCallback(async () => {
+    if (!gatewayRecovery) return;
+    const blob = [
+      `status: ${gatewayRecovery.status}`,
+      `message: ${gatewayRecovery.message}`,
+      `probable_cause: ${gatewayRecovery.probableCause}`,
+      "",
+      ...gatewayRecovery.details,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(blob);
+      showToast("Diagnostics copied", "success");
+    } catch {
+      showToast("Couldn't copy diagnostics", "error");
+    }
+  }, [gatewayRecovery, showToast]);
 
   // ── Curator ────────────────────────────────────────────────────────
   const toggleCuratorPaused = async () => {
@@ -892,45 +987,89 @@ export default function SystemPage() {
           <Power className="h-4 w-4" /> Gateway
         </H2>
         <Card>
-          <CardContent className="flex items-center justify-between py-4">
-            <div className="flex items-center gap-3">
-              <Badge tone={gatewayRunning ? "success" : "secondary"}>
-                {gatewayRunning ? "running" : "stopped"}
-              </Badge>
-              <span className="text-sm text-muted-foreground">
-                {status?.gateway_state ?? "—"}
-                {status?.gateway_pid ? ` · pid ${status.gateway_pid}` : ""}
-              </span>
+          <CardContent className="flex flex-col gap-4 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Badge tone={gatewayRunning ? "success" : "secondary"}>
+                  {gatewayRunning ? "running" : "stopped"}
+                </Badge>
+                <span className="text-sm text-muted-foreground">
+                  {status?.gateway_state ?? "—"}
+                  {status?.gateway_pid ? ` · pid ${status.gateway_pid}` : ""}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  className="uppercase"
+                  onClick={() => runGateway("start")}
+                  disabled={gatewayRunning}
+                  prefix={<Play className="h-3.5 w-3.5" />}
+                >
+                  Start
+                </Button>
+                <Button
+                  size="sm"
+                  className="uppercase"
+                  onClick={() => runGateway("restart")}
+                  prefix={<RotateCw className="h-3.5 w-3.5" />}
+                >
+                  Restart
+                </Button>
+                <Button
+                  size="sm"
+                  className="uppercase text-warning"
+                  ghost
+                  onClick={() => runGateway("stop")}
+                  disabled={!gatewayRunning}
+                  prefix={<Power className="h-3.5 w-3.5" />}
+                >
+                  Stop
+                </Button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                className="uppercase"
-                onClick={() => runGateway("start")}
-                disabled={gatewayRunning}
-                prefix={<Play className="h-3.5 w-3.5" />}
-              >
-                Start
-              </Button>
-              <Button
-                size="sm"
-                className="uppercase"
-                onClick={() => runGateway("restart")}
-                prefix={<RotateCw className="h-3.5 w-3.5" />}
-              >
-                Restart
-              </Button>
-              <Button
-                size="sm"
-                className="uppercase text-warning"
-                ghost
-                onClick={() => runGateway("stop")}
-                disabled={!gatewayRunning}
-                prefix={<Power className="h-3.5 w-3.5" />}
-              >
-                Stop
-              </Button>
-            </div>
+            {gatewayRecovery && (
+              <div className="border border-warning/30 bg-warning/[0.06] p-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <p className="text-sm font-medium text-foreground">
+                      {gatewayRecovery.message}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {gatewayRecovery.probableCause}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Gateway restart failed because the local install is incomplete
+                      or the Windows gateway service is not installed. Run Repair
+                      Install, then Install Gateway Service, then Restart Gateway.
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => void installGatewayService()}>
+                    Install Gateway Service
+                  </Button>
+                  <Button size="sm" ghost onClick={() => void runRepairInstall()}>
+                    Repair Install
+                  </Button>
+                  <Button size="sm" ghost onClick={() => void runGateway("restart")}>
+                    Restart Gateway
+                  </Button>
+                  <Button size="sm" ghost onClick={() => void copyGatewayDiagnostics()}>
+                    Copy diagnostics
+                  </Button>
+                </div>
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-xs text-muted-foreground">
+                    Details
+                  </summary>
+                  <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all border border-border bg-background/60 p-2 text-[11px]">
+                    {gatewayRecovery.details.join("\n") || "No diagnostics captured."}
+                  </pre>
+                </details>
+              </div>
+            )}
           </CardContent>
         </Card>
       </section>

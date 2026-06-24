@@ -369,6 +369,7 @@ class TestProfileScopedGateway:
             "_spawn_hermes_action",
             lambda subcommand, name: calls.append((list(subcommand), name)) or _FakeProc(),
         )
+        monkeypatch.setattr(web_server, "_gateway_service_is_installed", lambda profile=None: True)
         web_server._ACTION_PROCS.pop("gateway-restart", None)
         web_server._ACTION_COMMANDS.pop("gateway-restart", None)
 
