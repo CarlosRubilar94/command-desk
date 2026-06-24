@@ -15,7 +15,8 @@ name: OSV-Scanner
 # "currently-pinned dep became known-vulnerable" case.
 #
 # Uses Google's officially-recommended reusable workflow, pinned by SHA.
-# Findings land in the repo's Security tab (Code Scanning > OSV-Scanner).
+# Findings are uploaded as a workflow artifact. Code Scanning is disabled on
+# this fork, so SARIF upload is intentionally off.
 # fail-on-vuln is disabled so the job does not block merges on pre-existing
 # vulnerabilities in pinned deps that we may need to patch deliberately.
 
@@ -40,10 +41,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  # Required by the reusable workflow to upload SARIF to the Security tab.
   actions: read
   contents: read
-  security-events: write
 
 jobs:
   scan:
@@ -56,4 +55,5 @@ jobs:
         --lockfile=uv.lock
         --lockfile=package-lock.json
         --lockfile=website/package-lock.json
+      upload-sarif: false
       fail-on-vuln: false
