@@ -26,11 +26,13 @@ import { Button } from "@nous-research/ui/ui/components/button";
 import { Typography } from "@nous-research/ui/ui/components/typography/index";
 import { HERMES_BASE_PATH, buildWsAuthParam } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { Copy, GitBranch, PanelRight, RotateCcw, X } from "lucide-react";
+import { ArrowDown, GitBranch, PanelRight, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 
+import { ChatHeader } from "@/components/ChatHeader";
+import { ChatQuickStart } from "@/components/ChatQuickStart";
 import { ChatSidebar } from "@/components/ChatSidebar";
 import { ChatSessionList } from "@/components/ChatSessionList";
 import { usePageHeader } from "@/contexts/usePageHeader";
@@ -158,6 +160,14 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
   );
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Whether the user has engaged with this PTY yet (typed a key or fired a
+  // quick-start chip). Gates the empty-state suggestions so they disappear
+  // once the conversation begins, handing vertical space back to the terminal.
+  const [hasStarted, setHasStarted] = useState(false);
+  const hasStartedRef = useRef(false);
+  // Tracks whether the xterm viewport is pinned to the bottom so the
+  // "jump to latest" affordance only appears when the user has scrolled up.
+  const [atBottom, setAtBottom] = useState(true);
   // NS-504: when the agent process exits cleanly (the user typed `/exit`, or
   // started a new session that ended the current PTY child), the PTY socket
   // closes with a normal code. Before this fix the terminal just printed
@@ -412,6 +422,53 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     termRef.current?.focus();
   };
 
+  // Mark the conversation as started so the empty-state quick-start hides.
+  const markStarted = useCallback(() => {
+    if (hasStartedRef.current) return;
+    hasStartedRef.current = true;
+    setHasStarted(true);
+  }, []);
+
+  // Inject input into the live PTY — the same mechanism the copy button uses.
+  // The TUI's own prompt is the real composer; these helpers just type into
+  // it on the user's behalf from React affordances.
+  const runSlash = useCallback(
+    (command: string) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // Send the command as its own burst, then Return once Ink's tokenizer
+      // has registered the keystrokes (mirrors handleCopyLast's timing).
+      ws.send(command);
+      setTimeout(() => {
+        const s = wsRef.current;
+        if (s && s.readyState === WebSocket.OPEN) s.send("\r");
+      }, 100);
+      markStarted();
+      termRef.current?.focus();
+    },
+    [markStarted],
+  );
+
+  const insertPrompt = useCallback(
+    (text: string) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      // Insert only — no Return — so the user can review/edit before sending.
+      ws.send(text);
+      markStarted();
+      termRef.current?.focus();
+    },
+    [markStarted],
+  );
+
+  const jumpToLatest = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.scrollToBottom();
+    setAtBottom(true);
+    term.focus();
+  }, []);
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -595,6 +652,17 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         );
       }
     }
+
+    // Track whether the viewport is pinned to the bottom. xterm keeps it
+    // pinned while new output arrives *unless* the user scrolls up to read
+    // history; we surface a "jump to latest" pill for that case. viewportY
+    // is the top visible line; baseY is the top line when fully scrolled.
+    const updateAtBottom = () => {
+      const buf = term.buffer.active;
+      setAtBottom(buf.viewportY >= buf.baseY);
+    };
+    const onScrollDisposable = term.onScroll(updateAtBottom);
+    updateAtBottom();
 
     // Initial fit + resize observer.  fit.fit() reads the container's
     // current bounding box and resizes the terminal grid to match.
@@ -808,6 +876,11 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           return;
         }
 
+        if (!hasStartedRef.current) {
+          hasStartedRef.current = true;
+          setHasStarted(true);
+        }
+
         ws.send(data);
       });
 
@@ -825,6 +898,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       syncMetricsRef.current = null;
       onDataDisposable?.dispose();
       onResizeDisposable?.dispose();
+      onScrollDisposable.dispose();
       if (metricsDebounce) clearTimeout(metricsDebounce);
       window.removeEventListener("resize", scheduleSyncTerminalMetrics);
       window.visualViewport?.removeEventListener(
@@ -851,6 +925,15 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
       }
     };
   }, [channel, resumeParam, scopedProfile, reconnectNonce]);
+
+  // A new PTY identity (profile/resume switch or manual reconnect) resets the
+  // empty-state suggestions and the scroll affordance so the fresh session
+  // starts from a clean slate.
+  useEffect(() => {
+    hasStartedRef.current = false;
+    setHasStarted(false);
+    setAtBottom(true);
+  }, [channel, reconnectNonce]);
 
   // When the user returns to the chat tab (isActive: false → true), the
   // terminal host just transitioned from display:none to display:flex.
@@ -1028,6 +1111,20 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
           )}
           style={{ backgroundColor: terminalBg }}
         >
+          <ChatHeader
+            profile={scopedProfile}
+            onCopyLast={handleCopyLast}
+            copyState={copyState}
+          />
+
+          {isActive &&
+            !hasStarted &&
+            !resumeParam &&
+            !banner &&
+            !sessionEnded && (
+              <ChatQuickStart onRun={runSlash} onInsert={insertPrompt} />
+            )}
+
           <div
             ref={hostRef}
             className="hermes-chat-xterm-host min-h-0 min-w-0 flex-1"
@@ -1051,30 +1148,17 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
             </div>
           )}
 
-          <Button
-            ghost
-            onClick={handleCopyLast}
-            title="Copy last assistant response as raw markdown"
-            aria-label="Copy last assistant response"
-            className={cn(
-              "absolute z-10",
-              "normal-case tracking-normal font-normal",
-              "rounded border border-current/30",
-              "bg-black/20 backdrop-blur-sm",
-              "opacity-70 hover:opacity-100 hover:border-current/60",
-              "transition-opacity duration-150",
-              "bottom-2 right-2 px-2 py-1 text-xs sm:bottom-3 sm:right-3 sm:px-2.5 sm:py-1.5",
-              "lg:bottom-4 lg:right-4",
-            )}
-            style={{ color: TERMINAL_THEME_STATIC.foreground }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <Copy className="h-3 w-3 shrink-0" />
-              <span className="hidden min-[400px]:inline tracking-wide">
-                {copyState === "copied" ? "copied" : "copy last response"}
-              </span>
-            </span>
-          </Button>
+          {isActive && !atBottom && !sessionEnded && (
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              aria-label="Jump to latest output"
+              className="deck-chat-jump absolute bottom-3 left-1/2 z-10 -translate-x-1/2"
+            >
+              <ArrowDown className="size-3.5 shrink-0" />
+              <span>Latest</span>
+            </button>
+          )}
         </div>
 
         {!narrow && (
