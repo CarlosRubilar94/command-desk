@@ -1175,9 +1175,15 @@ def status(deep: bool = False) -> None:
         print("  hermes gateway install")
 
 
-def start() -> None:
+def start(non_interactive: bool | None = None) -> None:
     """Start the gateway. Prefers /Run on the scheduled task if present."""
     _assert_windows()
+    if non_interactive is None:
+        non_interactive = os.environ.get("HERMES_NONINTERACTIVE", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
     running_pids = _gateway_pids()
     if running_pids:
         print(f"✓ Gateway already running (PID: {', '.join(map(str, running_pids))})")
@@ -1187,9 +1193,12 @@ def start() -> None:
     startup_installed = is_startup_entry_installed()
 
     if not task_installed and not startup_installed:
-        from hermes_cli.setup import prompt_yes_no
-
         print("✗ Gateway service is not installed")
+        if non_interactive:
+            print("  Non-interactive mode: skipping install prompt.")
+            print("  Run: hermes gateway install")
+            return
+        from hermes_cli.setup import prompt_yes_no
         if not prompt_yes_no("  Install it now so the gateway starts on login?", True):
             print("  Run: hermes gateway install")
             return

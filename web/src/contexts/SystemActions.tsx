@@ -70,7 +70,18 @@ export function SystemActionsProvider({
       setActionStatus(null);
       try {
         if (action === "restart") {
-          await api.restartGateway();
+          const resp = await api.restartGateway();
+          if (!resp.ok) {
+            const hint =
+              resp.status === "needs_service_install"
+                ? "Install Gateway Service, then run Restart Gateway."
+                : "Run Repair Install, then try Restart Gateway again.";
+            setToast({
+              type: "error",
+              message: `${resp.message ?? t.status.actionFailed} ${hint}`,
+            });
+            return;
+          }
           setActiveAction(action);
         } else {
           const resp = await api.updateHermes();

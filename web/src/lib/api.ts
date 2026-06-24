@@ -856,6 +856,12 @@ export const api = {
   // Gateway / update actions
   restartGateway: () =>
     fetchJSON<ActionResponse>("/api/gateway/restart", { method: "POST" }),
+  installGatewayService: () =>
+    fetchJSON<ActionResponse>("/api/gateway/install-service", { method: "POST" }),
+  repairInstall: () =>
+    fetchJSON<RepairInstallResponse>("/api/system/repair-install", {
+      method: "POST",
+    }),
   updateHermes: () =>
     fetchJSON<ActionResponse>("/api/hermes/update", { method: "POST" }),
   checkHermesUpdate: (force = false) =>
@@ -984,6 +990,8 @@ export const api = {
         body: JSON.stringify({ name, env, enable }),
       },
     ),
+  getMcpControlCenter: () =>
+    fetchJSON<McpControlCenter>("/api/mcp/control-center"),
 
   // ── Admin: Pairing ──────────────────────────────────────────────────
   getPairing: () => fetchJSON<PairingResponse>("/api/pairing"),
@@ -1354,7 +1362,17 @@ export interface ActionResponse {
   pid: number | null;
   error?: string;
   message?: string;
+  status?: string;
+  action?: string;
   update_command?: string;
+}
+
+export interface RepairInstallResponse {
+  ok: boolean;
+  status: "ok" | "degraded_optional_extras_failed" | "failed";
+  message: string;
+  failed_extras: string[];
+  log_lines: string[];
 }
 
 export interface DebugShareResponse {
@@ -1513,6 +1531,46 @@ export interface McpTestResult {
   ok: boolean;
   error?: string;
   tools: Array<{ name: string; description: string }>;
+}
+
+export type McpStatusChip =
+  | "READY"
+  | "DEGRADED"
+  | "WAITING_CREDENTIAL"
+  | "WAITING_SERVICE"
+  | "WAITING_BITWARDEN"
+  | "FAILED"
+  | "DISABLED"
+  | "NOT_INSTALLED";
+
+export interface McpControlCenterServer {
+  name: string;
+  transport: "http" | "stdio" | "unknown";
+  url: string | null;
+  command: string | null;
+  args: string[];
+  env: Record<string, string>;
+  enabled: boolean;
+  status: McpStatusChip;
+}
+
+export interface McpControlCenterCatalogEntry {
+  name: string;
+  description: string;
+  transport: "http" | "stdio";
+  auth_type: "api_key" | "oauth" | "none";
+  required_env: Array<{ name: string; prompt: string; required: boolean }>;
+  installed: boolean;
+  enabled: boolean;
+  status: McpStatusChip;
+}
+
+export interface McpControlCenter {
+  bitwarden: { status: string; locked: boolean };
+  gateway_running: boolean;
+  platform: "windows" | "posix";
+  servers: McpControlCenterServer[];
+  catalog: McpControlCenterCatalogEntry[];
 }
 
 export interface MessagingPlatformEnvVar {
