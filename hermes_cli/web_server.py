@@ -9496,6 +9496,47 @@ def _setup_key_present(env_vars: list[str]) -> bool:
     return False
 
 
+def _anthropic_cli_ready() -> bool:
+    """True when the Claude Code CLI subscription is authenticated locally.
+
+    Mirrors the Codex CLI-fallback model: a logged-in Claude Code session
+    (Pro/Max subscription) satisfies Anthropic readiness without an
+    ``ANTHROPIC_API_KEY``. Reads the existing adapter credential sources
+    (``~/.claude/.credentials.json`` / macOS Keychain, or a Hermes-managed
+    PKCE login) — only a boolean is returned, never the token value.
+    """
+    try:
+        from agent.anthropic_adapter import (
+            read_claude_code_credentials,
+            is_claude_code_token_valid,
+        )
+        creds = read_claude_code_credentials()
+        if creds and is_claude_code_token_valid(creds):
+            return True
+    except Exception:
+        pass
+    try:
+        from agent.anthropic_adapter import read_hermes_oauth_credentials
+        creds = read_hermes_oauth_credentials()
+        if creds and creds.get("accessToken"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _cursor_cli_ready() -> bool:
+    """True when a Cursor subscription CLI is installed locally.
+
+    Mirrors the Codex CLI-fallback model: the presence of the Cursor CLI
+    (``cursor-agent``, or the ``cursor`` launcher that ships with the
+    subscription desktop app) satisfies Cursor readiness without a
+    ``CURSOR_API_KEY``.
+    """
+    import shutil as _shutil
+    return bool(_shutil.which("cursor-agent") or _shutil.which("cursor"))
+
+
 def _setup_skill_counts() -> dict[str, int]:
     """Return {active, disabled, total} skill counts (no values, no paths)."""
     try:
@@ -9624,30 +9665,43 @@ async def get_setup_health():
     # ── Model providers ──────────────────────────────────────────────────
     providers: list[dict] = []
 
-    # Anthropic
+    # Anthropic — READY via API key OR an authenticated Claude Code CLI
+    # (Pro/Max subscription), so no ANTHROPIC_API_KEY is required. This
+    # mirrors the Codex CLI-fallback model below.
     anth_vars = ["ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]
     anth_present = _setup_key_present(anth_vars)
+    anth_cli_ready = _anthropic_cli_ready()
+    anth_ready = anth_present or anth_cli_ready
     providers.append({
         "name": "Anthropic",
         "key_env": "ANTHROPIC_API_KEY",
         "key_present": anth_present,
-        "status": _SETUP_STATUS_READY if anth_present else _SETUP_STATUS_WAITING_CREDENTIAL,
-        "hint": None if anth_present else (
-            "Set ANTHROPIC_API_KEY in ~/.hermes/.env or Bitwarden "
-            "(or run `hermes setup model`)."
+        "cli_present": anth_cli_ready,
+        "status": _SETUP_STATUS_READY if anth_ready else _SETUP_STATUS_WAITING_CREDENTIAL,
+        "fallback_active": anth_cli_ready and not anth_present,
+        "hint": None if anth_ready else (
+            "Set ANTHROPIC_API_KEY in ~/.hermes/.env or Bitwarden, sign in with "
+            "`claude` (Claude Code subscription), or run `hermes setup model`."
         ),
     })
 
-    # Cursor SDK
+    # Cursor — READY via API key OR the Cursor subscription CLI
+    # (cursor-agent / cursor), so no CURSOR_API_KEY is required. Mirrors the
+    # Codex CLI-fallback model below.
     cursor_var = "CURSOR_API_KEY"
     cursor_present = _setup_key_present([cursor_var])
+    cursor_cli_ready = _cursor_cli_ready()
+    cursor_ready = cursor_present or cursor_cli_ready
     providers.append({
         "name": "Cursor SDK",
         "key_env": cursor_var,
         "key_present": cursor_present,
-        "status": _SETUP_STATUS_READY if cursor_present else _SETUP_STATUS_WAITING_CREDENTIAL,
-        "hint": None if cursor_present else (
-            f"Set {cursor_var} in ~/.hermes/.env; install with `pip install cursor-sdk`."
+        "cli_present": cursor_cli_ready,
+        "status": _SETUP_STATUS_READY if cursor_ready else _SETUP_STATUS_WAITING_CREDENTIAL,
+        "fallback_active": cursor_cli_ready and not cursor_present,
+        "hint": None if cursor_ready else (
+            f"Set {cursor_var} in ~/.hermes/.env, or install the Cursor CLI "
+            "(`cursor-agent`) and sign in with your subscription."
         ),
     })
 
