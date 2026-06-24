@@ -1499,6 +1499,65 @@ aside.deck-sidebar.lg\:is-rail {
   border-radius: calc(var(--dsd-radius-lg) - 4px);
 }
 
+/* Chat chrome: empty-state suggestion chips + jump-to-latest pill.
+   React affordances that wrap the embedded TUI terminal — themed with the
+   same deck tokens as the rest of the dashboard so they sit quietly inside
+   the chat surface. */
+.deck-chat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--dsd-text-caption);
+  line-height: 1.2;
+  border-radius: 999px;
+  border: 1px solid var(--dsd-border-subtle);
+  background: var(--dsd-surface-3);
+  color: var(--dsd-text-secondary);
+  cursor: pointer;
+  text-decoration: none;
+  font-family: inherit;
+  transition: border-color 150ms, color 150ms, background 150ms;
+}
+
+.deck-chat-chip:hover {
+  border-color: var(--dsd-border-strong);
+  color: var(--dsd-text-primary);
+  background: var(--dsd-surface-2);
+}
+
+.deck-chat-chip:focus-visible {
+  outline: 2px solid var(--dsd-border-glow);
+  outline-offset: 1px;
+}
+
+.deck-chat-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: var(--dsd-text-caption);
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.4);
+  color: var(--dsd-sem-info);
+  background: color-mix(in srgb, var(--dsd-sem-info) 14%, var(--dsd-surface-2-solid));
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35), 0 0 18px rgba(125, 211, 252, 0.12);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 150ms, background 150ms;
+}
+
+.deck-chat-jump:hover {
+  border-color: rgba(125, 211, 252, 0.6);
+  background: color-mix(in srgb, var(--dsd-sem-info) 22%, var(--dsd-surface-2-solid));
+}
+
+.deck-chat-jump:focus-visible {
+  outline: 2px solid var(--dsd-border-glow);
+  outline-offset: 2px;
+}
+
 /* ------------------------------------------------------------------ */
 /* Entry animations (ops pages)                                       */
 /* ------------------------------------------------------------------ */
