@@ -588,6 +588,21 @@ def run_conversation(
             should_review_memory=_should_review_memory,
         )
 
+    # Cursor CLI subprocess path: single-shot text generation using the
+    # local Cursor subscription session (no API key or billing).
+    # See agent/cursor_cli_runtime.py and docs/setup/CURSOR-CLI-PROVIDER.md.
+    if agent.api_mode == "cursor_cli":
+        from agent.cursor_cli_runtime import run_cursor_cli_turn
+
+        return run_cursor_cli_turn(
+            agent,
+            user_message=user_message,
+            original_user_message=original_user_message,
+            messages=messages,
+            effective_task_id=effective_task_id,
+            should_review_memory=_should_review_memory,
+        )
+
     # Optional opt-in runtime: if api_mode == codex_app_server, hand the
     # turn to the codex app-server subprocess (terminal/file ops/patching
     # all run inside Codex). Default Hermes path is bypassed entirely.

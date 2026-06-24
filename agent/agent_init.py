@@ -321,7 +321,13 @@ def init_agent(
         # api_mode (e.g. chat_completions from a prior provider) can never
         # route this provider down the HTTP path.
         agent.api_mode = "claude_cli"
-    elif api_mode in {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse", "codex_app_server", "claude_cli"}:
+    elif agent.provider == "cursor-cli":
+        # Cursor CLI subprocess runtime — driven via `cursor-agent -p`, no
+        # HTTP client / API key (see agent/cursor_cli_runtime.py). Forced
+        # ahead of the generic api_mode whitelist for the same reason as
+        # claude-cli above.
+        agent.api_mode = "cursor_cli"
+    elif api_mode in {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse", "codex_app_server", "claude_cli", "cursor_cli"}:
         agent.api_mode = api_mode
     elif agent.provider == "openai-codex":
         agent.api_mode = "codex_responses"
@@ -755,7 +761,7 @@ def init_agent(
         # limit is hit (claude -p exits non-zero).  Read from config.yaml
         # ``model.claude_cli_fallback`` (default "openai-codex" = ON; ""/"none"
         # disables).  Consumed by agent/claude_cli_runtime.py via getattr.
-        agent.claude_cli_fallback = "openai-codex"
+        agent.claude_cli_fallback = "openai-codex,cursor-cli"
         try:
             from hermes_cli.config import load_config as _load_cc_cfg
             _cc_model = _load_cc_cfg().get("model", {})
@@ -770,6 +776,20 @@ def init_agent(
             print(
                 f"🤖 AI Agent initialized with model: {agent.model} "
                 f"(Claude Code CLI subprocess, fallback={_fb_label})"
+            )
+    elif agent.api_mode == "cursor_cli":
+        # Cursor CLI subprocess runtime: the conversation loop drives
+        # `cursor-agent -p` via subprocess (see agent/cursor_cli_runtime.py),
+        # so no OpenAI/HTTP client and no API key are needed.  Auth is handled
+        # entirely by the local Cursor subscription session (no CURSOR_API_KEY).
+        # Mirrors the claude-cli / bedrock paths that bypass the key gate.
+        agent.client = None
+        agent._client_kwargs = {}
+        agent.api_key = ""
+        if not agent.quiet_mode:
+            print(
+                f"🤖 AI Agent initialized with model: {agent.model} "
+                "(Cursor CLI subprocess)"
             )
     else:
         if api_key and base_url:

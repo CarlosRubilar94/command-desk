@@ -3470,6 +3470,15 @@ def _resolve_auto(
         )
         return None, None
 
+    if _normalize_aux_provider(main_provider) == "cursor-cli":
+        _log_degraded_once(
+            "aux_cursor_cli_skip",
+            "Auxiliary auto-detect: main provider is cursor-cli (keyless "
+            "subprocess); skipping auxiliary tasks to avoid paid fallback. "
+            "Set auxiliary.<task>.provider to a free/local model to enable them.",
+        )
+        return None, None
+
     if (main_provider and main_model
             and main_provider not in {"auto", ""}):
         try:
@@ -3796,6 +3805,17 @@ def resolve_provider_client(
     if provider == "claude-cli":
         logger.debug(
             "resolve_provider_client: claude-cli has no auxiliary HTTP client "
+            "(keyless subprocess provider); auxiliary task will degrade."
+        )
+        return None, None
+
+    # ── Cursor CLI (keyless subprocess) ──────────────────────────────
+    # cursor-cli drives the MAIN turn via the `cursor-agent` CLI subprocess
+    # (subscription, zero per-token cost). No HTTP endpoint — auxiliary tasks
+    # degrade gracefully, same as claude-cli.
+    if provider == "cursor-cli":
+        logger.debug(
+            "resolve_provider_client: cursor-cli has no auxiliary HTTP client "
             "(keyless subprocess provider); auxiliary task will degrade."
         )
         return None, None
@@ -5482,6 +5502,12 @@ def call_llm(
                     "(keyless subprocess). Configure a free/local auxiliary "
                     "provider via auxiliary.<task>.provider to enable them."
                 )
+            if _explicit == "cursor-cli":
+                raise RuntimeError(
+                    "Auxiliary tasks are unavailable on the cursor-cli provider "
+                    "(keyless subprocess). Configure a free/local auxiliary "
+                    "provider via auxiliary.<task>.provider to enable them."
+                )
             if _explicit and _explicit not in {"auto", "openrouter", "custom"}:
                 raise RuntimeError(
                     f"Provider '{_explicit}' is set in config.yaml but no API key "
@@ -5996,6 +6022,12 @@ async def async_call_llm(
                 # Raise a neutral error callers treat as expected degradation.
                 raise RuntimeError(
                     "Auxiliary tasks are unavailable on the claude-cli provider "
+                    "(keyless subprocess). Configure a free/local auxiliary "
+                    "provider via auxiliary.<task>.provider to enable them."
+                )
+            if _explicit == "cursor-cli":
+                raise RuntimeError(
+                    "Auxiliary tasks are unavailable on the cursor-cli provider "
                     "(keyless subprocess). Configure a free/local auxiliary "
                     "provider via auxiliary.<task>.provider to enable them."
                 )
