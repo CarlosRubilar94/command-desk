@@ -1351,6 +1351,10 @@ export const api = {
     }),
   getMcpControlCenter: () =>
     fetchJSON<McpControlCenter>("/api/mcp/control-center"),
+
+  // ── Setup / Integration Health ───────────────────────────────────────
+  getSetupHealth: () =>
+    fetchJSON<SetupHealthResponse>("/api/setup/health"),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -3125,4 +3129,87 @@ export interface CustomTemplateSaveRequest {
   owner?: string;
   tasks: DraftTask[];
   defaults?: Record<string, string>;
+}
+
+// ── Setup / Integration Health types ─────────────────────────────────────────
+
+export type SetupStatusChip =
+  | "READY"
+  | "WAITING_CREDENTIAL"
+  | "WAITING_SERVICE"
+  | "LOCKED"
+  | "DISABLED"
+  | "FAILED";
+
+export interface SetupSecretsSection {
+  status: SetupStatusChip;
+  bw_cli_available: boolean;
+  bw_locked: boolean;
+  bws_token_env: string;
+  bws_token_present: boolean;
+  env_fallback_exists: boolean;
+  hint: string | null;
+}
+
+export interface SetupProviderEntry {
+  name: string;
+  key_env: string | null;
+  key_present: boolean | null;
+  status: SetupStatusChip;
+  hint: string | null;
+  cli_present?: boolean;
+  fallback_active?: boolean;
+}
+
+export interface SetupMcpSection {
+  status: SetupStatusChip;
+  total: number;
+  ready: number;
+  waiting: number;
+  disabled: number;
+  failed: number;
+  hint: string | null;
+}
+
+export interface SetupSkillsSection {
+  status: SetupStatusChip;
+  active: number;
+  disabled: number;
+  total: number;
+  hint: string | null;
+}
+
+export interface SetupGatewaySection {
+  status: SetupStatusChip;
+  running: boolean;
+  state: string | null;
+  hint: string | null;
+}
+
+export interface SetupObservabilitySection {
+  status: SetupStatusChip;
+  otel_enabled: boolean;
+  otel_env: string;
+  obsidian_bridge_status: SetupStatusChip;
+  hint: string | null;
+}
+
+export interface SetupSummary {
+  ready: number;
+  waiting_credential: number;
+  waiting_service: number;
+  failed: number;
+  disabled: number;
+  total: number;
+  readiness_pct: number;
+}
+
+export interface SetupHealthResponse {
+  secrets: SetupSecretsSection;
+  providers: SetupProviderEntry[];
+  mcp: SetupMcpSection;
+  skills: SetupSkillsSection;
+  gateway: SetupGatewaySection;
+  observability: SetupObservabilitySection;
+  summary: SetupSummary;
 }

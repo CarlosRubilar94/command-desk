@@ -129,6 +129,7 @@ const DevssdDoctorPage = lazy(() =>
 const GatewayStatusPage = lazy(() =>
   import("@/pages/DevssdDeckPages").then((m) => ({ default: m.GatewayStatusPage })),
 ) as unknown as ComponentType;
+const SetupPage = lazy(() => import("@/pages/SetupPage")) as unknown as ComponentType;
 import { CommandDeckUX } from "@/components/CommandPalette";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -248,6 +249,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/skills": SkillsPage,
   "/plugins": PluginsPage,
   "/mcp": McpPage,
+  "/setup": SetupPage,
   "/pairing": PairingPage,
   "/channels": ChannelsPage,
   "/webhooks": WebhooksPage,
@@ -307,6 +309,7 @@ const BUILTIN_NAV_REST: NavItem[] = [
   { path: "/skills", labelKey: "skills", label: "Skills", icon: Package },
   { path: "/plugins", labelKey: "plugins", label: "Plugins", icon: Puzzle },
   { path: "/mcp", label: "MCP", icon: Plug },
+  { path: "/setup", label: "Integration Health", icon: Zap },
   { path: "/channels", label: "Channels", icon: Radio },
   { path: "/webhooks", label: "Webhooks", icon: Webhook },
   { path: "/pairing", label: "Pairing", icon: ShieldCheck },
