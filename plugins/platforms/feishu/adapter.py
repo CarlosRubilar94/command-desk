@@ -84,45 +84,126 @@ try:
 except ImportError:
     websockets = None  # type: ignore[assignment]
 
-try:
-    import lark_oapi as lark
-    from lark_oapi.api.application.v6 import GetApplicationRequest
-    from lark_oapi.api.im.v1 import (
-        CreateFileRequest,
-        CreateFileRequestBody,
-        CreateImageRequest,
-        CreateImageRequestBody,
-        CreateMessageRequest,
-        CreateMessageRequestBody,
-        GetChatRequest,
-        GetMessageRequest,
-        GetMessageResourceRequest,
-        P2ImMessageMessageReadV1,
-        ReplyMessageRequest,
-        ReplyMessageRequestBody,
-        UpdateMessageRequest,
-        UpdateMessageRequestBody,
-    )
-    from lark_oapi.core import AccessTokenType, HttpMethod
-    from lark_oapi.core.const import FEISHU_DOMAIN, LARK_DOMAIN
-    from lark_oapi.core.model import BaseRequest
-    from lark_oapi.event.callback.model.p2_card_action_trigger import (
-        CallBackCard,
-        P2CardActionTriggerResponse,
-    )
-    from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
-    from lark_oapi.ws import Client as FeishuWSClient
+# lark_oapi is imported lazily via _ensure_lark_imports() to avoid a 5-10 s
+# blocking import during plugin discovery (Defender scans on Windows cold-start).
+# Use find_spec for a fast availability probe — no import cost.
+import importlib.util as _importlib_util
 
-    FEISHU_AVAILABLE = True
-except ImportError:
-    FEISHU_AVAILABLE = False
-    lark = None  # type: ignore[assignment]
-    CallBackCard = None  # type: ignore[assignment]
-    P2CardActionTriggerResponse = None  # type: ignore[assignment]
-    EventDispatcherHandler = None  # type: ignore[assignment]
-    FeishuWSClient = None  # type: ignore[assignment]
-    FEISHU_DOMAIN = None  # type: ignore[assignment]
-    LARK_DOMAIN = None  # type: ignore[assignment]
+FEISHU_AVAILABLE: bool = _importlib_util.find_spec("lark_oapi") is not None
+
+# Module-level stubs; populated on first call to _ensure_lark_imports().
+lark = None  # type: ignore[assignment]
+CallBackCard = None  # type: ignore[assignment]
+P2CardActionTriggerResponse = None  # type: ignore[assignment]
+EventDispatcherHandler = None  # type: ignore[assignment]
+FeishuWSClient = None  # type: ignore[assignment]
+FEISHU_DOMAIN: str | None = None
+LARK_DOMAIN: str | None = None
+# lark_oapi types used in adapter methods — all None until _ensure_lark_imports().
+GetApplicationRequest = None  # type: ignore[assignment]
+CreateFileRequest = None  # type: ignore[assignment]
+CreateFileRequestBody = None  # type: ignore[assignment]
+CreateImageRequest = None  # type: ignore[assignment]
+CreateImageRequestBody = None  # type: ignore[assignment]
+CreateMessageRequest = None  # type: ignore[assignment]
+CreateMessageRequestBody = None  # type: ignore[assignment]
+GetChatRequest = None  # type: ignore[assignment]
+GetMessageRequest = None  # type: ignore[assignment]
+GetMessageResourceRequest = None  # type: ignore[assignment]
+P2ImMessageMessageReadV1 = None  # type: ignore[assignment]
+ReplyMessageRequest = None  # type: ignore[assignment]
+ReplyMessageRequestBody = None  # type: ignore[assignment]
+UpdateMessageRequest = None  # type: ignore[assignment]
+UpdateMessageRequestBody = None  # type: ignore[assignment]
+AccessTokenType = None  # type: ignore[assignment]
+HttpMethod = None  # type: ignore[assignment]
+BaseRequest = None  # type: ignore[assignment]
+
+# Internal sentinel — True once lark_oapi has been loaded successfully.
+_LARK_LOADED: bool = False
+
+
+def _ensure_lark_imports() -> bool:
+    """Import lark_oapi and populate module-level names on first use.
+
+    Returns True when the SDK is available and loaded, False otherwise.
+    Subsequent calls after a successful load are a no-op.
+    """
+    global _LARK_LOADED, FEISHU_AVAILABLE
+    global lark, CallBackCard, P2CardActionTriggerResponse
+    global EventDispatcherHandler, FeishuWSClient, FEISHU_DOMAIN, LARK_DOMAIN
+    # Also bind types used directly in class methods as module globals.
+    global GetApplicationRequest, CreateFileRequest, CreateFileRequestBody
+    global CreateImageRequest, CreateImageRequestBody
+    global CreateMessageRequest, CreateMessageRequestBody
+    global GetChatRequest, GetMessageRequest, GetMessageResourceRequest
+    global P2ImMessageMessageReadV1
+    global ReplyMessageRequest, ReplyMessageRequestBody
+    global UpdateMessageRequest, UpdateMessageRequestBody
+    global AccessTokenType, HttpMethod, BaseRequest
+    if _LARK_LOADED:
+        return True
+    if not FEISHU_AVAILABLE:
+        return False
+    try:
+        import lark_oapi as _lark
+        from lark_oapi.api.application.v6 import GetApplicationRequest as _GAR
+        from lark_oapi.api.im.v1 import (
+            CreateFileRequest as _CFileR,
+            CreateFileRequestBody as _CFileRB,
+            CreateImageRequest as _CImgR,
+            CreateImageRequestBody as _CImgRB,
+            CreateMessageRequest as _CMsgR,
+            CreateMessageRequestBody as _CMsgRB,
+            GetChatRequest as _GChatR,
+            GetMessageRequest as _GMsgR,
+            GetMessageResourceRequest as _GMsgResR,
+            P2ImMessageMessageReadV1 as _P2ImMsg,
+            ReplyMessageRequest as _RMsgR,
+            ReplyMessageRequestBody as _RMsgRB,
+            UpdateMessageRequest as _UMsgR,
+            UpdateMessageRequestBody as _UMsgRB,
+        )
+        from lark_oapi.core import AccessTokenType as _ATT, HttpMethod as _HM
+        from lark_oapi.core.const import FEISHU_DOMAIN as _FD, LARK_DOMAIN as _LD
+        from lark_oapi.core.model import BaseRequest as _BR
+        from lark_oapi.event.callback.model.p2_card_action_trigger import (
+            CallBackCard as _CBC,
+            P2CardActionTriggerResponse as _P2,
+        )
+        from lark_oapi.event.dispatcher_handler import EventDispatcherHandler as _EDH
+        from lark_oapi.ws import Client as _FeishuWSClient
+
+        lark = _lark
+        GetApplicationRequest = _GAR
+        CreateFileRequest = _CFileR
+        CreateFileRequestBody = _CFileRB
+        CreateImageRequest = _CImgR
+        CreateImageRequestBody = _CImgRB
+        CreateMessageRequest = _CMsgR
+        CreateMessageRequestBody = _CMsgRB
+        GetChatRequest = _GChatR
+        GetMessageRequest = _GMsgR
+        GetMessageResourceRequest = _GMsgResR
+        P2ImMessageMessageReadV1 = _P2ImMsg
+        ReplyMessageRequest = _RMsgR
+        ReplyMessageRequestBody = _RMsgRB
+        UpdateMessageRequest = _UMsgR
+        UpdateMessageRequestBody = _UMsgRB
+        AccessTokenType = _ATT
+        HttpMethod = _HM
+        BaseRequest = _BR
+        FEISHU_DOMAIN = _FD
+        LARK_DOMAIN = _LD
+        CallBackCard = _CBC
+        P2CardActionTriggerResponse = _P2
+        EventDispatcherHandler = _EDH
+        FeishuWSClient = _FeishuWSClient
+        _LARK_LOADED = True
+        return True
+    except ImportError:
+        FEISHU_AVAILABLE = False
+        return False
 
 FEISHU_WEBSOCKET_AVAILABLE = websockets is not None
 FEISHU_WEBHOOK_AVAILABLE = aiohttp is not None
@@ -1351,7 +1432,9 @@ def check_feishu_requirements() -> bool:
     on first call if not present. Rebinds all module-level globals on success.
     """
     if FEISHU_AVAILABLE:
-        return True
+        # lark_oapi package is present; ensure it is actually imported now
+        # (the module-level import was deferred to avoid slow startup).
+        return _ensure_lark_imports()
 
     def _import():
         import lark_oapi as lark
