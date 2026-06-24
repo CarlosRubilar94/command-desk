@@ -53,16 +53,20 @@ _HISTORY_MAX_CHARS = 24_000
 _TRUNCATION_MARKER = "[...earlier turns truncated...]\n\n"
 
 # ---------------------------------------------------------------------------
-# Automatic fallback to Codex when the Claude Pro session/usage/rate limit is
-# hit (see docs/setup/CLAUDE-CLI-PROVIDER.md → "Automatic fallback").
+# Automatic fallback chain when the Claude Pro session/usage/rate limit is hit
+# (see docs/setup/CLAUDE-CLI-PROVIDER.md → "Automatic fallback").
 #
 # Observed live: when the Pro quota is exhausted, ``claude -p`` exits 1 with
 # stderr like:
 #   "You've hit your session limit · resets 7:50pm (America/Sao_Paulo)"
 # We detect that (and any non-zero exit) and route the SAME turn through the
-# Codex app-server runtime, which uses the user's Codex subscription/CLI and
-# needs no API key.  The fallback ALWAYS prepends a banner — it never swallows
-# the failure silently.
+# next provider in the fallback chain (default: Codex → cursor-cli).  The
+# fallback ALWAYS prepends a banner — it never swallows the failure silently.
+#
+# The chain is configured via ``model.claude_cli_fallback`` in config.yaml as
+# a comma-separated list of provider names (e.g. "openai-codex,cursor-cli").
+# A single value still works for backward compatibility.  Set to "none" / ""
+# / "off" to disable fallback entirely.
 # ---------------------------------------------------------------------------
 
 # Case-insensitive substrings that mark a usage/session/rate limit.
@@ -80,21 +84,25 @@ _LIMIT_PATTERNS = (
     "429",
 )
 
-# Banner prepended to the Codex answer so the user always sees a fallback ran.
-_FALLBACK_BANNER_LIMIT = "[claude-cli no limite Pro — respondendo via Codex]\n\n"
-_FALLBACK_BANNER_ERROR = "[claude-cli falhou — respondendo via Codex]\n\n"
-
 # Config values that disable the fallback.
 _FALLBACK_DISABLED_VALUES = {"", "none", "off", "false", "0", "no", "disabled"}
-# Config values that select the Codex app-server fallback.
-_FALLBACK_CODEX_VALUES = {
-    "openai-codex",
-    "openai_codex",
-    "codex",
-    "codex-cli",
-    "codex_app_server",
-    "codex-app-server",
+# Aliases → canonical provider names.
+_FALLBACK_ALIASES: Dict[str, str] = {
+    "openai-codex": "openai-codex",
+    "openai_codex": "openai-codex",
+    "codex": "openai-codex",
+    "codex-cli": "openai-codex",
+    "codex_app_server": "openai-codex",
+    "codex-app-server": "openai-codex",
+    "cursor-cli": "cursor-cli",
+    "cursor_cli": "cursor-cli",
+    "cursor": "cursor-cli",
 }
+# Supported providers in the chain.
+_SUPPORTED_FALLBACK_PROVIDERS = {"openai-codex", "cursor-cli"}
+
+# Default chain: Codex first, then cursor-cli as second leg.
+_DEFAULT_FALLBACK_CHAIN = "openai-codex,cursor-cli"
 
 
 def _is_usage_limit_error(text: str) -> bool:
@@ -106,33 +114,231 @@ def _is_usage_limit_error(text: str) -> bool:
 
 
 def _resolve_codex_fallback(agent) -> str:
-    """Normalize the configured claude-cli fallback target.
+    """Normalize the configured claude-cli fallback target (legacy single-provider API).
 
-    Returns ``"openai-codex"`` when the Codex fallback is enabled, or ``""``
-    when it is disabled / unconfigured / unsupported.
+    Returns ``"openai-codex"`` when the Codex fallback is the *first* entry in
+    the chain, or ``""`` when the chain is disabled.  Kept for backward-compat
+    with callers that expected a single string.
+    """
+    chain = _resolve_fallback_chain(agent)
+    return chain[0] if chain else ""
+
+
+def _resolve_fallback_chain(agent) -> List[str]:
+    """Return the ordered list of fallback providers for a failed claude-cli turn.
+
+    Reads ``agent.claude_cli_fallback`` (set by agent_init from config.yaml
+    ``model.claude_cli_fallback``).  Accepts a comma-separated string of
+    provider names; falls back to the module default when absent.
 
     Default is ON for real agents: when the attribute is absent, ``getattr``
-    yields the ``"openai-codex"`` default string.  Test doubles (MagicMock)
-    yield a non-string sentinel, which is treated as disabled so unit tests
-    never spawn a real Codex subprocess unless they opt in with an explicit
-    string value.
+    yields ``_DEFAULT_FALLBACK_CHAIN`` (``"openai-codex,cursor-cli"``).  Test
+    doubles (MagicMock) yield a non-string sentinel, treated as disabled so
+    unit tests never spawn real subprocesses unless they opt in explicitly.
     """
-    raw = getattr(agent, "claude_cli_fallback", "openai-codex")
+    raw = getattr(agent, "claude_cli_fallback", _DEFAULT_FALLBACK_CHAIN)
     if not isinstance(raw, str):
-        return ""
+        return []
     val = raw.strip().lower()
     if val in _FALLBACK_DISABLED_VALUES:
-        return ""
-    if val in _FALLBACK_CODEX_VALUES:
-        return "openai-codex"
-    logger.warning(
-        "claude_cli_fallback=%r is not a supported fallback provider "
-        "(only 'openai-codex'); treating claude-cli failure as a hard error.",
-        raw,
-    )
-    return ""
+        return []
+
+    chain: List[str] = []
+    seen: set = set()
+    for token in val.split(","):
+        token = token.strip()
+        if not token or token in _FALLBACK_DISABLED_VALUES:
+            continue
+        canonical = _FALLBACK_ALIASES.get(token)
+        if canonical and canonical not in seen:
+            chain.append(canonical)
+            seen.add(canonical)
+        elif canonical is None:
+            logger.warning(
+                "claude_cli_fallback token %r is not a supported fallback provider "
+                "(supported: %s); skipping.",
+                token,
+                ", ".join(sorted(_SUPPORTED_FALLBACK_PROVIDERS)),
+            )
+    return chain
 
 
+def _run_one_fallback(
+    agent,
+    *,
+    provider: str,
+    banner: str,
+    claude_error: str,
+    user_message: str,
+    original_user_message: Any,
+    messages: List[Dict[str, Any]],
+    effective_task_id: str,
+    should_review_memory: bool,
+) -> Optional[Dict[str, Any]]:
+    """Attempt one fallback provider.  Returns the result dict on success/hard
+    failure, or ``None`` when the provider is unavailable and the chain should
+    continue to the next entry.
+
+    ``None`` means "this provider is absent/unavailable, try next in chain."
+    A dict (even a failed one) means "this provider was reached and is the
+    terminal result" — the caller must not try further providers.
+    """
+    if provider == "openai-codex":
+        logger.warning("claude-cli failed (%s) — falling back to Codex", claude_error)
+        try:
+            result = agent._run_codex_app_server_turn(
+                user_message=user_message,
+                original_user_message=original_user_message,
+                messages=messages,
+                effective_task_id=effective_task_id,
+                should_review_memory=should_review_memory,
+            )
+        except Exception as exc:
+            logger.exception("claude-cli → Codex fallback raised")
+            exc_str = str(exc)
+            # Missing Codex CLI (FileNotFoundError / WinError 2) — signal
+            # "not available" so the chain can try cursor-cli next.
+            if isinstance(exc, (FileNotFoundError, OSError)) and (
+                "não encontrado" in exc_str
+                or "não está no PATH" in exc_str
+                or getattr(exc, "errno", None) == 2  # ENOENT / WinError 2
+            ):
+                logger.warning(
+                    "Codex CLI ausente no PATH — continuando cadeia de fallback: %s", exc
+                )
+                return None  # try next in chain
+            combined = f"claude-cli failed ({claude_error}); Codex fallback also failed: {exc}"
+            return {
+                "final_response": (
+                    f"[claude-cli error] {claude_error}\n"
+                    f"[codex fallback error] {exc}"
+                ),
+                "messages": messages,
+                "api_calls": 1,
+                "completed": False,
+                "partial": True,
+                "error": combined,
+                "claude_cli_fallback": "openai-codex",
+            }
+
+        if not isinstance(result, dict):
+            return {
+                "final_response": f"[claude-cli error] {claude_error}",
+                "messages": messages,
+                "api_calls": 1,
+                "completed": False,
+                "partial": True,
+                "error": claude_error,
+            }
+
+        result["claude_cli_fallback"] = "openai-codex"
+        if not result.get("completed"):
+            codex_err = result.get("error") or "unknown Codex error"
+            # Codex completed but failed (non-zero, etc.) — continue chain
+            # only when it looks like a missing binary / install problem.
+            low_err = codex_err.lower()
+            if any(kw in low_err for kw in (
+                "não encontrado", "não está no path", "not found", "winError 2",
+                "winerror 2", "enoent",
+            )):
+                logger.warning(
+                    "Codex fallback indisponível (%s) — continuando cadeia de fallback",
+                    codex_err,
+                )
+                return None  # try next in chain
+            result["error"] = (
+                f"claude-cli failed ({claude_error}); Codex fallback failed: {codex_err}"
+            )
+            result["final_response"] = (
+                "[claude-cli falhou + Codex também falhou]\n\n"
+                f"claude-cli: {claude_error}\ncodex: {codex_err}"
+            )
+            return result
+
+        result["final_response"] = banner + (result.get("final_response") or "")
+        return result
+
+    if provider == "cursor-cli":
+        logger.warning("Fallback chain: trying cursor-cli after previous providers failed")
+        from agent.cursor_cli_runtime import run_cursor_cli_turn
+
+        cursor_banner = "[cursor-cli fallback]\n\n"
+        try:
+            result = run_cursor_cli_turn(
+                agent,
+                user_message=user_message,
+                original_user_message=original_user_message,
+                messages=messages,
+                effective_task_id=effective_task_id,
+                should_review_memory=should_review_memory,
+            )
+        except Exception as exc:
+            logger.exception("claude-cli → cursor-cli fallback raised")
+            combined = f"claude-cli failed ({claude_error}); cursor-cli fallback also failed: {exc}"
+            return {
+                "final_response": (
+                    f"[claude-cli error] {claude_error}\n"
+                    f"[cursor-cli fallback error] {exc}"
+                ),
+                "messages": messages,
+                "api_calls": 1,
+                "completed": False,
+                "partial": True,
+                "error": combined,
+            }
+
+        if not isinstance(result, dict):
+            return {
+                "final_response": f"[claude-cli error] {claude_error}",
+                "messages": messages,
+                "api_calls": 1,
+                "completed": False,
+                "partial": True,
+                "error": claude_error,
+            }
+
+        if not result.get("completed"):
+            # cursor-agent not installed → signal "not available" so the chain ends.
+            cursor_err = result.get("error") or "unknown cursor-cli error"
+            low_err = cursor_err.lower()
+            if any(kw in low_err for kw in (
+                "não encontrado", "not found", "cursor-agent", "install",
+            )):
+                logger.warning(
+                    "cursor-cli fallback indisponível (%s) — fim da cadeia", cursor_err
+                )
+                # No more providers: return the combined failure.
+                return {
+                    "final_response": (
+                        f"[claude-cli error] {claude_error}\n"
+                        f"[cursor-cli fallback error] {cursor_err}\n\n"
+                        "Instale cursor-agent: irm 'https://cursor.com/install?win32=true' | iex"
+                    ),
+                    "messages": messages,
+                    "api_calls": 1,
+                    "completed": False,
+                    "partial": True,
+                    "error": f"all fallbacks failed: claude-cli({claude_error}); cursor-cli({cursor_err})",
+                }
+            result["error"] = (
+                f"claude-cli failed ({claude_error}); cursor-cli fallback failed: {cursor_err}"
+            )
+            result["final_response"] = (
+                "[claude-cli falhou + cursor-cli também falhou]\n\n"
+                f"claude-cli: {claude_error}\ncursor-cli: {cursor_err}"
+            )
+            return result
+
+        result["final_response"] = cursor_banner + (result.get("final_response") or "")
+        return result
+
+    # Unknown provider — skip silently.
+    logger.warning("Unknown fallback provider %r — skipping", provider)
+    return None
+
+
+# Backwards-compat alias: kept so existing call-sites that import
+# _run_codex_fallback by name still resolve (e.g. tests).
 def _run_codex_fallback(
     agent,
     *,
@@ -144,97 +350,35 @@ def _run_codex_fallback(
     effective_task_id: str,
     should_review_memory: bool,
 ) -> Dict[str, Any]:
-    """Route a failed claude-cli turn through the Codex app-server runtime.
-
-    Reuses the exact path the conversation loop uses for ``codex_app_server``
-    (``agent._run_codex_app_server_turn`` →
-    ``agent.codex_runtime.run_codex_app_server_turn``), which drives the local
-    Codex CLI subprocess and requires **no API key** (the user's Codex
-    subscription/OAuth).  ``banner`` is prepended to the Codex answer so the
-    user always sees that a fallback occurred — the failure is never silent.
-    """
-    logger.warning("claude-cli failed (%s) — falling back to Codex", claude_error)
-    try:
-        result = agent._run_codex_app_server_turn(
-            user_message=user_message,
-            original_user_message=original_user_message,
-            messages=messages,
-            effective_task_id=effective_task_id,
-            should_review_memory=should_review_memory,
-        )
-    except Exception as exc:  # never let the fallback hide the original error
-        logger.exception("claude-cli → Codex fallback raised")
-        # Surface a clear, actionable message when Codex CLI is simply not
-        # installed (FileNotFoundError / WinError 2 on Windows).
-        exc_str = str(exc)
-        if isinstance(exc, (FileNotFoundError, OSError)) and (
-            "não encontrado" in exc_str
-            or "não está no PATH" in exc_str
-            or getattr(exc, "errno", None) == 2  # ENOENT / WinError 2
-        ):
-            actionable = (
-                "Codex CLI não encontrado/instalado — "
-                "instale com: npm install -g @openai/codex  "
-                "e depois rode `codex login` para autenticar com sua assinatura."
-            )
-            logger.error("Codex CLI ausente no PATH: %s", exc)
-            combined = f"claude-cli failed ({claude_error}); {actionable}"
-            return {
-                "final_response": (
-                    f"[claude-cli error] {claude_error}\n"
-                    f"[codex fallback error] {actionable}"
-                ),
-                "messages": messages,
-                "api_calls": 1,
-                "completed": False,
-                "partial": True,
-                "error": combined,
-                "claude_cli_fallback": "openai-codex",
-            }
-        combined = (
-            f"claude-cli failed ({claude_error}); "
-            f"Codex fallback also failed: {exc}"
-        )
-        return {
-            "final_response": (
-                f"[claude-cli error] {claude_error}\n"
-                f"[codex fallback error] {exc}"
-            ),
-            "messages": messages,
-            "api_calls": 1,
-            "completed": False,
-            "partial": True,
-            "error": combined,
-            "claude_cli_fallback": "openai-codex",
-        }
-
-    if not isinstance(result, dict):
-        # Defensive: a misconfigured forwarder returned a non-dict.
-        return {
-            "final_response": f"[claude-cli error] {claude_error}",
-            "messages": messages,
-            "api_calls": 1,
-            "completed": False,
-            "partial": True,
-            "error": claude_error,
-        }
-
-    result["claude_cli_fallback"] = "openai-codex"
-    if not result.get("completed"):
-        codex_err = result.get("error") or "unknown Codex error"
-        result["error"] = (
-            f"claude-cli failed ({claude_error}); "
-            f"Codex fallback failed: {codex_err}"
-        )
-        result["final_response"] = (
-            "[claude-cli falhou + Codex também falhou]\n\n"
-            f"claude-cli: {claude_error}\n"
-            f"codex: {codex_err}"
-        )
+    """Run the Codex fallback leg only (backward-compat wrapper)."""
+    result = _run_one_fallback(
+        agent,
+        provider="openai-codex",
+        banner=banner,
+        claude_error=claude_error,
+        user_message=user_message,
+        original_user_message=original_user_message,
+        messages=messages,
+        effective_task_id=effective_task_id,
+        should_review_memory=should_review_memory,
+    )
+    if result is not None:
         return result
-
-    result["final_response"] = banner + (result.get("final_response") or "")
-    return result
+    # Codex unavailable — return a clear hard-error without cursor-cli
+    # (the compat wrapper doesn't know about the chain).
+    return {
+        "final_response": (
+            f"[claude-cli error] {claude_error}\n"
+            "[codex fallback error] Codex CLI não encontrado/instalado — "
+            "instale com: npm install -g @openai/codex e depois rode `codex login`."
+        ),
+        "messages": messages,
+        "api_calls": 1,
+        "completed": False,
+        "partial": True,
+        "error": f"claude-cli failed ({claude_error}); Codex CLI não encontrado.",
+        "claude_cli_fallback": "openai-codex",
+    }
 
 
 def _claude_failure_result(
@@ -251,15 +395,55 @@ def _claude_failure_result(
 ) -> Dict[str, Any]:
     """Result builder for a claude-cli failure.
 
-    When the Codex fallback is enabled, route the same turn to Codex (with a
-    clear banner).  Otherwise return the original claude-cli error unchanged —
-    the error is always surfaced, never swallowed.
+    Walks the fallback chain (default: openai-codex → cursor-cli) until one
+    provider succeeds.  The chain is configured via ``model.claude_cli_fallback``
+    in config.yaml.  The error is always surfaced, never swallowed.
     """
-    fallback = _resolve_codex_fallback(agent)
-    if fallback == "openai-codex":
-        banner = _FALLBACK_BANNER_LIMIT if is_limit else _FALLBACK_BANNER_ERROR
-        return _run_codex_fallback(
+    chain = _resolve_fallback_chain(agent)
+    if not chain:
+        return {
+            "final_response": f"[claude-cli error] {err}",
+            "messages": messages,
+            "api_calls": api_calls,
+            "completed": False,
+            "partial": True,
+            "error": err,
+        }
+
+    # Codex-specific banners (kept for backward compat with existing tests/logs).
+    _banner_limit_codex = "[claude-cli no limite Pro — respondendo via Codex]\n\n"
+    _banner_error_codex = "[claude-cli falhou — respondendo via Codex]\n\n"
+    _banner_limit_cursor = "[claude-cli no limite Pro — respondendo via Cursor]\n\n"
+    _banner_error_cursor = "[claude-cli falhou — respondendo via Cursor]\n\n"
+    _banner_limit_generic = "[claude-cli no limite Pro — respondendo via fallback]\n\n"
+    _banner_error_generic = "[claude-cli falhou — respondendo via fallback]\n\n"
+
+    def _banner_for(provider: str) -> str:
+        if provider == "openai-codex":
+            return _banner_limit_codex if is_limit else _banner_error_codex
+        if provider == "cursor-cli":
+            return _banner_limit_cursor if is_limit else _banner_error_cursor
+        return _banner_limit_generic if is_limit else _banner_error_generic
+
+    # Collect actionable hints for each unavailable provider so the final
+    # "all failed" message is still helpful even when the chain exhausts.
+    unavailable_hints: List[str] = []
+    _CODEX_HINT = (
+        "Codex CLI não encontrado/instalado — "
+        "instale com: npm install -g @openai/codex  "
+        "e depois rode `codex login` para autenticar com sua assinatura."
+    )
+    _CURSOR_HINT = (
+        "Cursor CLI (cursor-agent) não encontrado — "
+        "instale via: irm 'https://cursor.com/install?win32=true' | iex  "
+        "e depois rode: cursor-agent login"
+    )
+
+    for provider in chain:
+        banner = _banner_for(provider)
+        result = _run_one_fallback(
             agent,
+            provider=provider,
             banner=banner,
             claude_error=err,
             user_message=user_message,
@@ -268,13 +452,29 @@ def _claude_failure_result(
             effective_task_id=effective_task_id,
             should_review_memory=should_review_memory,
         )
+        if result is not None:
+            return result
+        # result is None → this provider was unavailable, try next.
+        if provider == "openai-codex":
+            unavailable_hints.append(_CODEX_HINT)
+        elif provider == "cursor-cli":
+            unavailable_hints.append(_CURSOR_HINT)
+
+    # All providers in the chain were unavailable — surface actionable hints.
+    hints_str = "\n".join(unavailable_hints) if unavailable_hints else "nenhum provedor disponível"
+    combined_err = (
+        f"claude-cli failed ({err}); all fallback providers unavailable: {hints_str}"
+    )
     return {
-        "final_response": f"[claude-cli error] {err}",
+        "final_response": (
+            f"[claude-cli error] {err}\n"
+            f"[todos os fallbacks indisponíveis]\n{hints_str}"
+        ),
         "messages": messages,
         "api_calls": api_calls,
         "completed": False,
         "partial": True,
-        "error": err,
+        "error": combined_err,
     }
 
 

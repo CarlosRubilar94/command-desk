@@ -267,6 +267,10 @@ _VALID_API_MODES = {
     # local Pro/OAuth session (no API key / billing). Enabled via
     # `model.provider: claude-cli` in config.yaml.
     "claude_cli",
+    # Cursor CLI subprocess: drives one turn via `cursor-agent -p` using the
+    # local Cursor subscription session (no API key / billing). Enabled via
+    # `model.provider: cursor-cli` in config.yaml.
+    "cursor_cli",
 }
 
 
@@ -347,6 +351,13 @@ def _resolve_runtime_from_pool_entry(
         # the local Pro/OAuth session.  No HTTP client needed; api_key and
         # base_url are intentionally left empty — the subprocess handles auth.
         api_mode = "claude_cli"
+        base_url = ""
+        api_key = ""
+    elif provider == "cursor-cli":
+        # Cursor CLI subprocess: drives one turn via `cursor-agent -p` using
+        # the local Cursor subscription session. No HTTP client; subprocess
+        # handles auth.
+        api_mode = "cursor_cli"
         base_url = ""
         api_key = ""
     elif provider == "anthropic":
@@ -1421,6 +1432,19 @@ def resolve_runtime_provider(
             "base_url": "",
             "api_key": "",
             "source": "claude-cli-subprocess",
+            "requested_provider": requested_provider,
+        }
+
+    # Cursor CLI short-circuit: no HTTP client, no API key, no base_url.
+    # Auth is handled entirely by the `cursor-agent` subprocess via the
+    # user's local Cursor subscription session (no CURSOR_API_KEY required).
+    if requested_provider == "cursor-cli":
+        return {
+            "provider": "cursor-cli",
+            "api_mode": "cursor_cli",
+            "base_url": "",
+            "api_key": "",
+            "source": "cursor-cli-subprocess",
             "requested_provider": requested_provider,
         }
 

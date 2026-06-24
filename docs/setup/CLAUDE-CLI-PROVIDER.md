@@ -67,9 +67,12 @@ model:
   # Optional: override which Claude model the CLI uses (requires --model support)
   # claude_bin: C:\Users\Me\AppData\Roaming\npm\claude.cmd
   # claude_cli_model: claude-opus-4-8
-  # Automatic fallback when the Pro session/usage/rate limit is hit.
-  # Default: openai-codex (ON). Set to "" or "none" to disable.
-  # claude_cli_fallback: openai-codex
+  # Automatic fallback chain when the Pro session/usage/rate limit is hit.
+  # Comma-separated ordered list of providers to try on claude-cli failure.
+  # Default: openai-codex,cursor-cli (Codex first, then Cursor).
+  # Single value still works for backward compat (e.g. "openai-codex").
+  # Set to "" or "none" to disable completely.
+  # claude_cli_fallback: openai-codex,cursor-cli
 ```
 
 To revert to direct API:
@@ -80,7 +83,7 @@ model:
   default: anthropic/claude-sonnet-4.6
 ```
 
-## Automatic fallback to Codex (Pro limit)
+## Automatic fallback chain (Pro limit → Codex → Cursor)
 
 When the local Claude **Pro** session runs out of quota, `claude -p` exits
 non-zero with a stderr notice such as:
@@ -89,9 +92,9 @@ non-zero with a stderr notice such as:
 You've hit your session limit · resets 7:50pm (America/Sao_Paulo)
 ```
 
-Rather than surfacing a dead end, `run_claude_cli_turn()` automatically routes
-the **same turn** through the Codex runtime and returns the Codex answer,
-prefixed with a short banner so the fallback is never silent:
+Rather than surfacing a dead end, `run_claude_cli_turn()` walks an ordered
+**fallback chain** (default: `openai-codex,cursor-cli`) and returns the first
+successful response, prefixed with a short banner:
 
 ```
 [claude-cli no limite Pro — respondendo via Codex]
@@ -99,33 +102,41 @@ prefixed with a short banner so the fallback is never silent:
 <codex answer…>
 ```
 
+If Codex is also unavailable (not installed / WinError 2), the chain continues
+to cursor-cli automatically:
+
+```
+[claude-cli no limite Pro — respondendo via Cursor]
+
+<cursor-cli answer…>
+```
+
 ### How it works
 
 - **Detection** — `_is_usage_limit_error()` matches (case-insensitive)
   `session limit`, `usage limit`, `rate limit`, `limit reached`, `resets`,
-  `too many requests`, `quota`, `429`, … in the CLI's stderr/stdout. The limit
-  banner is used when a limit is detected; **any other non-zero exit** (auth
-  error, timeout, launch failure, binary missing) also falls back, but with the
-  generic banner `[claude-cli falhou — respondendo via Codex]`.
-- **Routing** — the failed turn is handed to `agent._run_codex_app_server_turn`
-  (→ `agent/codex_runtime.py::run_codex_app_server_turn`), the **same path the
-  conversation loop uses for `codex_app_server`**. It drives the local Codex
-  CLI subprocess via the user's Codex subscription/OAuth and **requires no API
-  key**.
-- **Never silent** — if Codex *also* fails, the result combines both errors
-  (`claude-cli failed (...); Codex fallback failed: ...`) instead of hiding the
-  original limit message.
+  `too many requests`, `quota`, `429`, … in the CLI's stderr/stdout.
+- **Chain execution** — `_resolve_fallback_chain(agent)` returns an ordered list
+  from `model.claude_cli_fallback` (comma-separated). Each provider is tried in
+  order. If a provider is unavailable (binary absent / WinError 2), the chain
+  continues. A provider that actually ran and failed is **terminal** — the chain
+  stops and the combined error is surfaced.
+- **Never silent** — if all providers fail or are absent, the result includes
+  actionable hints for each (`npm install -g @openai/codex`, `cursor-agent login`).
 
 ### Config
 
 `model.claude_cli_fallback` (read in `agent/agent_init.py`, consumed by
-`agent/claude_cli_runtime.py`):
+`agent/claude_cli_runtime.py`). Accepts a comma-separated ordered list:
 
 | Value | Effect |
 |-------|--------|
-| `openai-codex` (default) | Fallback **ON** via Codex app-server |
-| `codex`, `codex_app_server` | Same as above (aliases) |
-| `""`, `none`, `off` | Fallback **OFF** — the original claude-cli error is shown |
+| `openai-codex,cursor-cli` (default) | Chain: Codex first, Cursor second |
+| `openai-codex` | Codex only (backward compat) |
+| `cursor-cli` | Cursor only |
+| `cursor-cli,openai-codex` | Cursor first, Codex second |
+| `codex`, `codex_app_server` | Aliases for `openai-codex` |
+| `""`, `none`, `off` | Fallback **OFF** — original claude-cli error shown |
 
 > Native `fallback_providers` does **not** cover this case: the `claude_cli`
 > path returns early in `conversation_loop.run_conversation()` (before the HTTP
