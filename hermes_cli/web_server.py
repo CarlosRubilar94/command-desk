@@ -9283,9 +9283,18 @@ _WINDOWS_ONLY_SERVERS = frozenset({
     "dns-domain", "env-manager",
 })
 
-# Servers that require Bitwarden SM to be authenticated.
+# Servers that require the personal Bitwarden vault (`bw`) to be UNLOCKED at
+# runtime — only the bitwarden MCP itself, which talks to the live vault.
+#
+# github/openrouter were previously listed here, which conflated the personal
+# `bw` vault lock with credential availability: their API tokens are
+# provisioned independently in the environment / ~/.hermes/.env (originally via
+# Bitwarden Secrets Manager) and do NOT need the personal vault unlocked. A
+# locked `bw` was therefore forcing them to WAITING_BITWARDEN even when their
+# own credentials were present and usable. They now fall through to the normal
+# credential check below and report READY on their own tokens.
 _BITWARDEN_DEPENDENT_SERVERS = frozenset({
-    "bitwarden", "github", "openrouter",
+    "bitwarden",
 })
 
 

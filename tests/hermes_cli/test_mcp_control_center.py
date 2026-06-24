@@ -117,10 +117,46 @@ class TestResolveServerStatus:
         status = _resolve_server_status("github", {"enabled": False}, bw_locked=False)
         assert status == "DISABLED"
 
-    def test_bitwarden_dependent_when_locked(self):
+    def test_bitwarden_mcp_gated_when_locked(self):
+        # The bitwarden MCP itself talks to the live personal vault, so it
+        # stays WAITING_BITWARDEN until the operator runs `bw unlock`.
         _resolve_server_status = _import_helpers()[3]
-        status = _resolve_server_status("github", {"enabled": True}, bw_locked=True)
+        status = _resolve_server_status("bitwarden", {"enabled": True}, bw_locked=True)
         assert status == "WAITING_BITWARDEN"
+
+    def test_github_not_gated_by_bw_lock_when_credential_present(self, monkeypatch):
+        # Regression: github/openrouter carry their own API tokens (env /
+        # ~/.hermes/.env) and must NOT be forced to WAITING_BITWARDEN just
+        # because the personal `bw` vault is locked.
+        _resolve_server_status = _import_helpers()[3]
+        monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "ghp_fake")
+        with patch("hermes_cli.web_server._is_platform_windows", return_value=True):
+            status = _resolve_server_status(
+                "github", {"enabled": True}, bw_locked=True
+            )
+        assert status == "READY"
+
+    def test_openrouter_not_gated_by_bw_lock_when_credential_present(self, monkeypatch):
+        _resolve_server_status = _import_helpers()[3]
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-fake")
+        with patch("hermes_cli.web_server._is_platform_windows", return_value=True):
+            status = _resolve_server_status(
+                "openrouter", {"enabled": True}, bw_locked=True
+            )
+        assert status == "READY"
+
+    def test_github_waiting_credential_not_bitwarden_when_locked_no_token(self, monkeypatch):
+        # With no token anywhere, github reports WAITING_CREDENTIAL (accurate),
+        # not WAITING_BITWARDEN, even while the personal `bw` vault is locked.
+        _resolve_server_status = _import_helpers()[3]
+        monkeypatch.delenv("GITHUB_PERSONAL_ACCESS_TOKEN", raising=False)
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        with patch("hermes_cli.web_server._is_platform_windows", return_value=True):
+            with patch("hermes_cli.config.get_env_value", return_value=None):
+                status = _resolve_server_status(
+                    "github", {"enabled": True}, bw_locked=True
+                )
+        assert status == "WAITING_CREDENTIAL"
 
     def test_bitwarden_dependent_when_unlocked_no_env(self, monkeypatch):
         _resolve_server_status = _import_helpers()[3]
