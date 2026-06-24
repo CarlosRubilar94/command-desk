@@ -16,7 +16,7 @@ import { FleetRoutingSummaryCard } from "@/components/FleetRoutingSummaryCard";
 import { CommandDeckLandingSummary } from "@/components/CommandDeckLandingSummary";
 import { useI18n } from "@/i18n";
 import { api } from "@/lib/api";
-import type { CommandDeckOverviewResponse } from "@/lib/api";
+import type { CommandDeckOverviewResponse, CommandDeckFleetBottleneck, CommandDeckFleetError } from "@/lib/api";
 import {
   ActionButton,
   CommandList,
@@ -276,14 +276,14 @@ export function CommandDeckOpsPage() {
               />
               <MetricTile
                 label="Queue"
-                value={overview.fleet.queue}
-                context="pending runs"
-                state={overview.fleet.queue > 10 ? "warning" : "ok"}
+                value={overview.fleet.queue.ready + overview.fleet.queue.in_progress}
+                context={`${overview.fleet.queue.ready} ready · ${overview.fleet.queue.in_progress} active · ${overview.fleet.queue.blocked} blocked`}
+                state={(overview.fleet.queue.ready + overview.fleet.queue.in_progress) > 10 ? "warning" : "ok"}
               />
               <MetricTile
                 label="Throughput"
-                value={overview.fleet.throughput}
-                context="runs/min"
+                value={overview.fleet.throughput.spans_per_min.toFixed(1)}
+                context="spans/min"
               />
               <MetricTile
                 label="Spend Today"
@@ -315,9 +315,9 @@ export function CommandDeckOpsPage() {
                     Bottlenecks
                   </div>
                   <ul className="flex flex-col gap-1">
-                    {overview.fleet.bottlenecks.map((b, i) => (
+                    {overview.fleet.bottlenecks.map((b: CommandDeckFleetBottleneck, i: number) => (
                       <li key={i} className="text-xs font-mono text-[var(--dsd-status-warning)]">
-                        {b}
+                        {b.name ?? "unknown"}{b.kind ? ` [${b.kind}]` : ""}{b.avg_duration_ms ? ` — ${b.avg_duration_ms.toFixed(0)}ms avg` : ""}
                       </li>
                     ))}
                   </ul>
@@ -330,9 +330,9 @@ export function CommandDeckOpsPage() {
                     Recurring Errors
                   </div>
                   <ul className="flex flex-col gap-1">
-                    {overview.fleet.recurring_errors.map((e, i) => (
+                    {overview.fleet.recurring_errors.map((e: CommandDeckFleetError, i: number) => (
                       <li key={i} className="text-xs font-mono text-[var(--dsd-status-error)]">
-                        {e}
+                        {e.error}{e.count > 1 ? ` (×${e.count})` : ""}
                       </li>
                     ))}
                   </ul>
