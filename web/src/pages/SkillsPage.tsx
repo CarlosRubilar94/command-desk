@@ -66,6 +66,8 @@ import { Input } from "@nous-research/ui/ui/components/input";
 import { useI18n } from "@/i18n";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
+import { DeckPageShell } from "@/components/DeckPageShell";
+import { SkeletonTable, EmptyState } from "@/components/ds";
 
 /* ------------------------------------------------------------------ */
 /*  Types & helpers                                                    */
@@ -534,14 +536,17 @@ export default function SkillsPage() {
   /* ---- Loading ---- */
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <Spinner className="text-2xl text-primary" />
-      </div>
+      <DeckPageShell>
+        <div className="flex flex-col gap-4 p-5">
+          <SkeletonTable rows={8} cols={3} />
+        </div>
+      </DeckPageShell>
     );
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <DeckPageShell>
+    <div className="flex flex-col gap-4 p-5">
       <PluginSlot name="skills:top" />
       <Toast toast={toast} />
 
@@ -695,9 +700,11 @@ export default function SkillsPage() {
               </CardHeader>
               <CardContent className="px-4 pb-4">
                 {searchMatchedSkills.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    {t.skills.noSkillsMatch}
-                  </p>
+                  <EmptyState
+                    icon={<Search className="h-6 w-6" />}
+                    title={t.skills.noSkillsMatch}
+                    compact
+                  />
                 ) : (
                   <div className="grid gap-1">
                     {searchMatchedSkills.map((skill) => (
@@ -747,11 +754,11 @@ export default function SkillsPage() {
               </CardHeader>
               <CardContent className="px-4 pb-4">
                 {activeSkills.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    {skills.length === 0
-                      ? t.skills.noSkills
-                      : t.skills.noSkillsMatch}
-                  </p>
+                  <EmptyState
+                    icon={<Package className="h-6 w-6" />}
+                    title={skills.length === 0 ? t.skills.noSkills : t.skills.noSkillsMatch}
+                    compact
+                  />
                 ) : (
                   <div className="grid gap-1">
                     {activeSkills.map((skill) => (
@@ -772,11 +779,11 @@ export default function SkillsPage() {
             /* Toolsets grid */
             <>
               {filteredToolsets.length === 0 ? (
-                <Card className="rounded-none">
-                  <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                    {t.skills.noToolsetsMatch}
-                  </CardContent>
-                </Card>
+                <EmptyState
+                  icon={<Wrench className="h-6 w-6" />}
+                  title={t.skills.noToolsetsMatch}
+                  compact
+                />
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {filteredToolsets.map((ts) => {
@@ -880,6 +887,7 @@ export default function SkillsPage() {
       />
       <PluginSlot name="skills:bottom" />
     </div>
+    </DeckPageShell>
   );
 }
 

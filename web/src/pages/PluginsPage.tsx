@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, RefreshCw, Trash2, Eye, EyeOff } from "lucide-react";
+import { ExternalLink, Package, RefreshCw, Trash2, Eye, EyeOff } from "lucide-react";
 import type { Translations } from "@/i18n/types";
 import { Link } from "react-router-dom";
+import { DeckPageShell } from "@/components/DeckPageShell";
+import { SkeletonCard, EmptyState } from "@/components/ds";
 import { api } from "@/lib/api";
 import type { HubAgentPluginRow, PluginsHubResponse } from "@/lib/api";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -149,7 +151,8 @@ export default function PluginsPage() {
   const providers = hub?.providers;
 
   return (
-    <div className="flex flex-col gap-4">
+    <DeckPageShell>
+    <div className="flex flex-col gap-4 p-5">
       <PluginSlot name="plugins:top" />
 
       <div className={cn("flex w-full flex-col gap-8")}>
@@ -296,15 +299,16 @@ export default function PluginsPage() {
           </h3>
 
           {loading ? (
-
-            <div className="flex items-center gap-2 py-8 text-xs text-text-tertiary">
-
-              <Spinner />
-              <span>{t.common.loading}</span>
+            <div className="flex flex-col gap-3">
+              <SkeletonCard />
+              <SkeletonCard />
             </div>
           ) : rows.length === 0 ? (
-
-            <p className="text-xs text-text-tertiary">{t.common.noResults}</p>
+            <EmptyState
+              icon={<Package className="h-6 w-6" />}
+              title={t.common.noResults}
+              compact
+            />
           ) : (
 
             <ul className="flex flex-col gap-3">
@@ -364,6 +368,7 @@ export default function PluginsPage() {
       <Toast toast={toast} />
       <PluginSlot name="plugins:bottom" />
     </div>
+    </DeckPageShell>
   );
 }
 

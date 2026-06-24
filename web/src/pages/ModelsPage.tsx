@@ -33,6 +33,8 @@ import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
 import { ModelReloadConfirm } from "@/components/ModelReloadConfirm";
+import { DeckPageShell } from "@/components/DeckPageShell";
+import { SkeletonBlock, EmptyState, ErrorState } from "@/components/ds";
 
 const PERIODS = [
   { label: "7d", days: 7 },
@@ -961,7 +963,7 @@ export default function ModelsPage() {
   }, [refreshAux]);
 
   return (
-    <div className="deck-page-shell flex min-w-0 max-w-full flex-col gap-6">
+    <DeckPageShell className="flex min-w-0 max-w-full flex-col gap-6 p-5">
       <PluginSlot name="models:top" />
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-2 deck-animate">
@@ -1037,17 +1039,22 @@ export default function ModelsPage() {
       </div>
 
       {loading && !data && (
-        <div className="flex items-center justify-center py-24">
-          <Spinner className="text-2xl text-primary" />
+        <div className="flex flex-col gap-4">
+          <SkeletonBlock height={120} />
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <SkeletonBlock height={200} />
+            <SkeletonBlock height={200} />
+            <SkeletonBlock height={200} />
+          </div>
         </div>
       )}
 
       {error && (
-        <Card className="deck-hermes-card">
-          <CardContent className="py-6">
-            <p className="text-sm text-[var(--dsd-sem-critical)] text-center">{error}</p>
-          </CardContent>
-        </Card>
+        <ErrorState
+          message={error}
+          onRetry={load}
+          compact
+        />
       )}
 
       {data && (
@@ -1067,22 +1074,16 @@ export default function ModelsPage() {
               ))}
             </div>
           ) : (
-            <Card className="deck-hermes-card">
-              <CardContent className="py-12">
-                <div className="flex flex-col items-center text-[var(--dsd-text-secondary)]">
-                  <Cpu className="h-8 w-8 mb-3 opacity-40" />
-                  <p className="text-sm font-medium">{t.models.noModelsData}</p>
-                  <p className="text-xs mt-1 text-text-tertiary">
-                    {t.models.startSession}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Cpu className="h-7 w-7" />}
+              title={t.models.noModelsData}
+              description={t.models.startSession}
+            />
           )}
         </>
       )}
 
       <PluginSlot name="models:bottom" />
-    </div>
+    </DeckPageShell>
   );
 }
