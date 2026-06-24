@@ -70,6 +70,7 @@ const PROFILE_SCOPED_PREFIXES = [
   "/api/tools/toolsets",
   "/api/config",
   "/api/env",
+  "/api/secrets",
   "/api/mcp",
   "/api/messaging/platforms",
   "/api/messaging/telegram/onboarding",
@@ -492,6 +493,7 @@ export const api = {
       body: JSON.stringify({ yaml_text }),
     }),
   getEnvVars: () => fetchJSON<Record<string, EnvVarInfo>>("/api/env"),
+  getSecrets: () => fetchJSON<SecretsListResponse>("/api/secrets"),
   setEnvVar: (key: string, value: string) =>
     fetchJSON<{ ok: boolean }>("/api/env", {
       method: "PUT",
@@ -513,6 +515,17 @@ export const api = {
         [SESSION_HEADER]: token,
       },
       body: JSON.stringify({ key }),
+    });
+  },
+  revealSecret: async (name: string) => {
+    const token = await getSessionToken();
+    return fetchJSON<{ value: string }>("/api/secrets/reveal", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [SESSION_HEADER]: token,
+      },
+      body: JSON.stringify({ name }),
     });
   },
 
@@ -2025,6 +2038,23 @@ export interface EnvVarInfo {
   advanced: boolean;
   /** True when this var is a messaging-platform credential owned by the Channels page. */
   channel_managed?: boolean;
+}
+
+export interface SecretListItem {
+  name: string;
+  source: "bitwarden" | "env";
+  is_set: boolean;
+}
+
+export interface BitwardenSecretsState {
+  available: boolean;
+  locked: boolean;
+  message: string;
+}
+
+export interface SecretsListResponse {
+  items: SecretListItem[];
+  bitwarden: BitwardenSecretsState;
 }
 
 export interface TelegramOnboardingStartResponse {

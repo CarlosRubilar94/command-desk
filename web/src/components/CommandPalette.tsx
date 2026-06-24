@@ -65,7 +65,7 @@ const PALETTE_ITEMS: PaletteItem[] = [
   { path: "/pairing",      label: "Pairing",       group: "Hermes", keywords: "connect" },
   { path: "/profiles",     label: "Profiles",      group: "Hermes", keywords: "accounts" },
   { path: "/config",       label: "Config",        group: "Hermes", keywords: "settings configuration" },
-  { path: "/env",          label: "Keys",          group: "Hermes", keywords: "env environment secrets" },
+  { path: "/secrets",      label: "Secrets",       group: "Hermes", keywords: "env environment keys bitwarden" },
   { path: "/system",       label: "System",        group: "Hermes", keywords: "system info" },
   { path: "/docs",         label: "Documentation", group: "Hermes", keywords: "help docs" },
 ];

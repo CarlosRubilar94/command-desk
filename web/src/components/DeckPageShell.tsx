@@ -29,6 +29,7 @@ const PATH_LABELS: Record<string, string> = {
   "/pairing":      "Pairing",
   "/profiles":     "Profiles",
   "/config":       "Config",
+  "/secrets":      "Secrets",
   "/env":          "Keys",
   "/system":       "System",
   "/docs":         "Documentation",

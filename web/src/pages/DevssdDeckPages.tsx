@@ -127,8 +127,8 @@ export function BitwardenStatusPage() {
           </DeckCard>
           <DeckCard title="Actions" colClass="col-6">
             <DeckToolbar>
-              <Link to="/env" className="deck-btn-sm">
-                Open Keys page
+              <Link to="/secrets" className="deck-btn-sm">
+                Open Secrets Center
               </Link>
             </DeckToolbar>
             <div className="mt-4 grid gap-2 font-mono text-xs text-[var(--dsd-text-secondary)]">

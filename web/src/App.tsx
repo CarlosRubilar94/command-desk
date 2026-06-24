@@ -89,8 +89,8 @@ import { SkeletonTable } from "@/components/ds/Skeleton";
 // loading state for every lazy route uniformly.
 const ConfigPage = lazy(() => import("@/pages/ConfigPage")) as unknown as ComponentType;
 const DocsPage = lazy(() => import("@/pages/DocsPage")) as unknown as ComponentType;
-const EnvPage = lazy(() => import("@/pages/EnvPage")) as unknown as ComponentType;
 const FilesPage = lazy(() => import("@/pages/FilesPage")) as unknown as ComponentType;
+const SecretsCenterPage = lazy(() => import("@/pages/SecretsCenterPage")) as unknown as ComponentType;
 const ChatPage = lazy(() => import("@/pages/ChatPage")) as unknown as ComponentType<{
   isActive?: boolean;
 }>;
@@ -205,6 +205,10 @@ function UnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
   return <Navigate to="/agent" replace />;
 }
 
+function EnvRouteRedirect() {
+  return <Navigate to="/secrets" replace />;
+}
+
 const CHAT_NAV_ITEM: NavItem = {
   path: "/chat",
   labelKey: "chat",
@@ -251,7 +255,8 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/profiles": ProfilesPage,
   "/profiles/new": ProfileBuilderPage,
   "/config": ConfigPage,
-  "/env": EnvPage,
+  "/secrets": SecretsCenterPage,
+  "/env": EnvRouteRedirect,
   "/docs": DocsPage,
   "/replay": ReplayPage,
 };
@@ -307,7 +312,7 @@ const BUILTIN_NAV_REST: NavItem[] = [
   { path: "/pairing", label: "Pairing", icon: ShieldCheck },
   { path: "/profiles", labelKey: "profiles", label: "Profiles", icon: Users },
   { path: "/config", labelKey: "config", label: "Config", icon: Settings },
-  { path: "/env", labelKey: "keys", label: "Keys", icon: KeyRound },
+  { path: "/secrets", label: "Secrets", icon: KeyRound },
   { path: "/system", label: "System", icon: Wrench },
   {
     path: "/docs",

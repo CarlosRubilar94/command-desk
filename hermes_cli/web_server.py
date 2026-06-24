@@ -259,6 +259,7 @@ _DASHBOARD_EMBEDDED_CHAT_ENABLED = True
 _reveal_timestamps: List[float] = []
 _REVEAL_MAX_PER_WINDOW = 5
 _REVEAL_WINDOW_SECONDS = 30
+_secrets_reveal_timestamps: List[float] = []
 
 # CORS: restrict to localhost origins only.  The web UI is intended to run
 # locally; binding to 0.0.0.0 with allow_origins=["*"] would let any website
@@ -746,6 +747,11 @@ class EnvVarDelete(BaseModel):
 
 class EnvVarReveal(BaseModel):
     key: str
+    profile: Optional[str] = None
+
+
+class SecretRevealRequest(BaseModel):
+    name: str
     profile: Optional[str] = None
 
 
@@ -2163,6 +2169,196 @@ def _build_bitwarden_status_payload(cfg: dict[str, Any]) -> dict[str, Any]:
         "warnings": warnings,
     }
     return payload
+
+
+def _safe_bitwarden_unlock_instruction() -> str:
+    return (
+        "Bitwarden is locked or unavailable. Unlock in your own terminal "
+        "(`bw login` then `bw unlock`) and refresh this page."
+    )
+
+
+def _bitwarden_state_unavailable(message: str) -> dict[str, Any]:
+    return {"available": False, "locked": False, "message": message}
+
+
+def _bitwarden_state_locked(message: Optional[str] = None) -> dict[str, Any]:
+    return {
+        "available": False,
+        "locked": True,
+        "message": message or _safe_bitwarden_unlock_instruction(),
+    }
+
+
+def _bitwarden_state_available(message: str = "Bitwarden is available.") -> dict[str, Any]:
+    return {"available": True, "locked": False, "message": message}
+
+
+def _bitwarden_cli_status() -> dict[str, Any]:
+    """Read-only Bitwarden CLI status payload.
+
+    Uses only ``bw --version`` and ``bw status`` (no unlock/login prompts).
+    """
+    bw_bin = shutil.which("bw")
+    if not bw_bin:
+        return _bitwarden_state_unavailable(
+            "Bitwarden CLI (`bw`) not found. Install it and unlock in your own terminal.",
+        )
+    try:
+        subprocess.run(
+            [bw_bin, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception:
+        return _bitwarden_state_unavailable("Unable to run `bw --version`.")
+    try:
+        status_proc = subprocess.run(
+            [bw_bin, "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception:
+        return _bitwarden_state_unavailable("Unable to run `bw status`.")
+    if status_proc.returncode != 0:
+        return _bitwarden_state_locked()
+    try:
+        payload = json.loads((status_proc.stdout or "").strip() or "{}")
+    except Exception:
+        return _bitwarden_state_unavailable("`bw status` returned an invalid response.")
+    status_value = str(payload.get("status") or "unknown").strip().lower()
+    if status_value in {"unlocked"}:
+        return _bitwarden_state_available("Bitwarden CLI is unlocked.")
+    if status_value in {"locked", "unauthenticated"}:
+        return _bitwarden_state_locked()
+    return _bitwarden_state_unavailable("Bitwarden status is unknown.")
+
+
+def _bitwarden_runtime_config(profile: Optional[str] = None) -> dict[str, str]:
+    with _profile_scope(profile):
+        cfg = load_config()
+    bw_cfg = (cfg.get("secrets") or {}).get("bitwarden") or {}
+    return {
+        "enabled": "1" if bool(bw_cfg.get("enabled")) else "0",
+        "token_env": str(bw_cfg.get("access_token_env") or "BWS_ACCESS_TOKEN"),
+        "project_id": str(bw_cfg.get("project_id") or "").strip(),
+        "server_url": str(bw_cfg.get("server_url") or "").strip(),
+    }
+
+
+def _list_bitwarden_secret_refs(profile: Optional[str] = None) -> tuple[Dict[str, str], dict[str, Any]]:
+    """Return ``{name -> secret_id}`` from BWS (names only, no values)."""
+    cfg = _bitwarden_runtime_config(profile)
+    if cfg["enabled"] != "1":
+        return {}, _bitwarden_state_unavailable("Bitwarden integration is disabled in config.")
+    access_token = os.environ.get(cfg["token_env"], "").strip()
+    if not access_token:
+        return {}, _bitwarden_state_unavailable(
+            f"{cfg['token_env']} is not set. Configure it locally and refresh.",
+        )
+    if not cfg["project_id"]:
+        return {}, _bitwarden_state_unavailable(
+            "Bitwarden project_id is not configured. Run setup in your own terminal.",
+        )
+    from agent.secret_sources import bitwarden as bw
+    bws_bin = bw.find_bws(install_if_missing=False)
+    if not bws_bin:
+        return {}, _bitwarden_state_unavailable(
+            "Bitwarden Secrets CLI (`bws`) not found. Run `command-desk secrets bitwarden setup`.",
+        )
+    cmd = [str(bws_bin), "secret", "list", cfg["project_id"], "--output", "json"]
+    env = os.environ.copy()
+    env["BWS_ACCESS_TOKEN"] = access_token
+    if cfg["server_url"]:
+        env["BWS_SERVER_URL"] = cfg["server_url"]
+    env.setdefault("NO_COLOR", "1")
+    try:
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return {}, _bitwarden_state_unavailable("Timed out listing Bitwarden secrets.")
+    except OSError:
+        return {}, _bitwarden_state_unavailable("Failed to invoke Bitwarden Secrets CLI.")
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").lower()
+        if "locked" in err or "unauthorized" in err or "unauthenticated" in err:
+            return {}, _bitwarden_state_locked()
+        return {}, _bitwarden_state_unavailable(
+            "Bitwarden Secrets Manager is unavailable. Check local CLI auth/config.",
+        )
+    try:
+        payload = json.loads((proc.stdout or "").strip() or "[]")
+    except Exception:
+        return {}, _bitwarden_state_unavailable("Bitwarden list returned invalid JSON.")
+    if not isinstance(payload, list):
+        return {}, _bitwarden_state_unavailable("Bitwarden list returned an unexpected payload.")
+    refs: Dict[str, str] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("key") or item.get("name")
+        sid = item.get("id")
+        if isinstance(name, str) and name and isinstance(sid, str) and sid:
+            refs[name] = sid
+    state = _bitwarden_state_available("Bitwarden Secrets Manager is available.")
+    return refs, state
+
+
+def _reveal_bitwarden_secret_value(name: str, profile: Optional[str] = None) -> tuple[Optional[str], dict[str, Any]]:
+    refs, state = _list_bitwarden_secret_refs(profile)
+    if not state.get("available"):
+        return None, state
+    secret_id = refs.get(name)
+    if not secret_id:
+        return None, state
+    cfg = _bitwarden_runtime_config(profile)
+    access_token = os.environ.get(cfg["token_env"], "").strip()
+    from agent.secret_sources import bitwarden as bw
+    bws_bin = bw.find_bws(install_if_missing=False)
+    if not bws_bin or not access_token:
+        return None, _bitwarden_state_unavailable("Bitwarden Secrets CLI is not available.")
+    cmd = [str(bws_bin), "secret", "get", secret_id, "--output", "json"]
+    env = os.environ.copy()
+    env["BWS_ACCESS_TOKEN"] = access_token
+    if cfg["server_url"]:
+        env["BWS_SERVER_URL"] = cfg["server_url"]
+    env.setdefault("NO_COLOR", "1")
+    try:
+        proc = subprocess.run(
+            cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired:
+        return None, _bitwarden_state_unavailable("Timed out revealing Bitwarden secret.")
+    except OSError:
+        return None, _bitwarden_state_unavailable("Failed to invoke Bitwarden Secrets CLI.")
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").lower()
+        if "locked" in err or "unauthorized" in err or "unauthenticated" in err:
+            return None, _bitwarden_state_locked()
+        return None, _bitwarden_state_unavailable("Bitwarden reveal failed.")
+    try:
+        payload = json.loads((proc.stdout or "").strip() or "{}")
+    except Exception:
+        return None, _bitwarden_state_unavailable("Bitwarden reveal returned invalid JSON.")
+    value = payload.get("value")
+    if not isinstance(value, str):
+        return None, _bitwarden_state_unavailable("Bitwarden secret payload did not include a value.")
+    return value, state
 
 
 def _probe_command_deck_status() -> dict[str, Any]:
@@ -5001,6 +5197,64 @@ async def reveal_env_var(
 
     _log.info("env/reveal: %s", body.key)
     return {"key": body.key, "value": value}
+
+
+@app.get("/api/secrets")
+async def list_secrets(profile: Optional[str] = None):
+    """Unified names-only secret inventory: Bitwarden (primary) + .env fallback."""
+    bitwarden_refs, bitwarden_state = _list_bitwarden_secret_refs(profile)
+    if not bitwarden_state.get("available") and not bitwarden_state.get("locked"):
+        cli_state = _bitwarden_cli_status()
+        if cli_state.get("locked"):
+            bitwarden_state = cli_state
+    with _profile_scope(profile):
+        env_on_disk = load_env()
+    rows: Dict[str, dict[str, Any]] = {}
+    for env_name in env_on_disk:
+        rows[env_name] = {"name": env_name, "source": "env", "is_set": True}
+    for bw_name in bitwarden_refs:
+        rows[bw_name] = {"name": bw_name, "source": "bitwarden", "is_set": True}
+    items = [rows[name] for name in sorted(rows)]
+    return {"items": items, "bitwarden": bitwarden_state}
+
+
+@app.post("/api/secrets/reveal")
+async def reveal_secret(
+    body: SecretRevealRequest, request: Request, profile: Optional[str] = None
+):
+    """Reveal a single secret value to an authenticated dashboard user."""
+    _require_token(request)
+
+    now = time.time()
+    cutoff = now - _REVEAL_WINDOW_SECONDS
+    _secrets_reveal_timestamps[:] = [t for t in _secrets_reveal_timestamps if t > cutoff]
+    if len(_secrets_reveal_timestamps) >= _REVEAL_MAX_PER_WINDOW:
+        raise HTTPException(status_code=429, detail="Too many reveal requests. Try again shortly.")
+    _secrets_reveal_timestamps.append(now)
+
+    bitwarden_refs, bitwarden_state = _list_bitwarden_secret_refs(body.profile or profile)
+    source = "bitwarden" if body.name in bitwarden_refs else "env"
+    if source == "bitwarden":
+        value, state = _reveal_bitwarden_secret_value(body.name, body.profile or profile)
+        if value is None:
+            detail = state.get("message") or "Bitwarden is unavailable."
+            if state.get("locked"):
+                raise HTTPException(status_code=423, detail=detail)
+            raise HTTPException(status_code=503, detail=detail)
+    else:
+        with _profile_scope(body.profile or profile):
+            env_on_disk = load_env()
+        value = env_on_disk.get(body.name)
+        if value is None:
+            if bitwarden_state.get("locked"):
+                raise HTTPException(
+                    status_code=423,
+                    detail=bitwarden_state.get("message") or _safe_bitwarden_unlock_instruction(),
+                )
+            raise HTTPException(status_code=404, detail=f"{body.name} not found")
+
+    _log.info("secrets/reveal: %s", body.name)
+    return {"value": value}
 
 
 # Entries omit fields they don't need to override; the catalog builder fills
