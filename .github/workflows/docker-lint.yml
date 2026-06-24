@@ -12,7 +12,7 @@ name: Docker / shell lint
 
 on:
   push:
-    branches: [main]
+    branches: [devssd/command-desk]
     paths:
       - Dockerfile
       - docker/**
@@ -23,7 +23,7 @@ on:
   # reports a status (path-gated workflows leave checks "pending" forever
   # when no matching files change, which blocks merge).
   pull_request:
-    branches: [main]
+    branches: [devssd/command-desk]
 
 permissions:
   contents: read

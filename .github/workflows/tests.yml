@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [devssd/command-desk]
     paths-ignore:
       - "**/*.md"
       - "docs/**"
@@ -10,7 +10,7 @@ on:
   # reports a status (path-gated workflows leave checks "pending" forever
   # when no matching files change, which blocks merge).
   pull_request:
-    branches: [main]
+    branches: [devssd/command-desk]
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: test_durations.json
-          # main always writes a new suffix, but jobs pick the latest one with the same prefix
+          # devssd/command-desk always writes a new suffix, but jobs pick the latest one with the same prefix
           # quote from https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#cache-hits-and-misses
           # If you provide restore-keys, the cache action sequentially searches for any caches that match the list of restore-keys.
           # If there are no exact matches, the action searches for partial matches of the restore keys.
@@ -129,7 +129,7 @@ jobs:
   # (including PRs) get balanced slicing.
   save-durations:
     needs: test
-    if: needs.test.result == 'success' && github.ref == 'refs/heads/main'
+    if: needs.test.result == 'success' && github.ref == 'refs/heads/devssd/command-desk'
     runs-on: ubuntu-latest
     steps:
       - name: Download all slice durations

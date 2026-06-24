@@ -30,6 +30,15 @@ function Test-Step {
     }
 }
 
+function Get-DashboardSessionHeaders {
+    $html = (Invoke-WebRequest -Uri "http://127.0.0.1:9119/" -UseBasicParsing -TimeoutSec 8).Content
+    $match = [regex]::Match($html, 'window\.__HERMES_SESSION_TOKEN__="([^"]+)"')
+    if (-not $match.Success) {
+        throw "dashboard session token not found in loopback HTML"
+    }
+    return @{ "X-Hermes-Session-Token" = $match.Groups[1].Value }
+}
+
 if (-not (Test-Path $Cli)) {
     Write-Error "CLI ausente. Rode: .\scripts\install-command-desk-dev.ps1"
 }
@@ -41,7 +50,8 @@ Test-Step "Dashboard /api/status" {
     if ($r.StatusCode -ne 200) { throw "HTTP $($r.StatusCode)" }
 }
 Test-Step "DevSSD /api/devssd/status" {
-    $r = Invoke-WebRequest -Uri "http://127.0.0.1:9119/api/devssd/status" -UseBasicParsing -TimeoutSec 8
+    $headers = Get-DashboardSessionHeaders
+    $r = Invoke-WebRequest -Uri "http://127.0.0.1:9119/api/devssd/status" -Headers $headers -UseBasicParsing -TimeoutSec 8
     if ($r.StatusCode -ne 200) { throw "HTTP $($r.StatusCode)" }
     $data = $r.Content | ConvertFrom-Json
     if (-not $data.version) { throw "missing version in payload" }
@@ -49,7 +59,7 @@ Test-Step "DevSSD /api/devssd/status" {
 Test-Step "web_dist index.html" {
     $idx = Join-Path $RepoRoot "hermes_cli\web_dist\index.html"
     if (-not (Test-Path -LiteralPath $idx)) {
-        throw "missing $idx — run .\scripts\build-command-desk-web.ps1"
+        throw "missing $idx - run .\scripts\build-command-desk-web.ps1"
     }
 }
 
