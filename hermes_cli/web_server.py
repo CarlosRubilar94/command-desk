@@ -1821,8 +1821,8 @@ async def get_status(profile: Optional[str] = None):
         configured_gateway_platforms: set[str] | None = None
         try:
             from gateway.config import load_gateway_config
-
-            gateway_config = load_gateway_config()
+            _loop = asyncio.get_running_loop()
+            gateway_config = await _loop.run_in_executor(None, load_gateway_config)
             configured_gateway_platforms = {
                 platform.value for platform in gateway_config.get_connected_platforms()
             }
@@ -2032,16 +2032,33 @@ def _resolve_command_deck_target() -> tuple[_CommandDeckProbeTarget | None, str 
 
 
 def _probe_http_get(url: str, *, timeout: float) -> tuple[bool, int, str | None]:
-    """Blocking GET probe. Returns ``(ok, latency_ms, error)``."""
+    """Blocking GET probe. Returns ``(ok, latency_ms, error)``.
+
+    Uses http.client directly instead of urllib.request.build_opener to avoid
+    a hang caused by _NoRedirectHandler interacting with chunked-encoded
+    responses (urllib's custom-opener path stalls reading chunked bodies from
+    Node.js-style servers that don't send a Content-Length header).
+    """
+    import http.client as _http_client
     started = time.perf_counter()
     try:
-        req = urllib.request.Request(url, method="GET")
-        opener = urllib.request.build_opener(_NoRedirectHandler())
-        with opener.open(req, timeout=timeout) as resp:
+        parsed = urllib.parse.urlparse(url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        conn = _http_client.HTTPConnection(host, port, timeout=timeout)
+        try:
+            conn.request("GET", path, headers={"Host": host, "Connection": "close"})
+            resp = conn.getresponse()
             latency_ms = int((time.perf_counter() - started) * 1000)
-            if 200 <= resp.status < 300:
-                return True, latency_ms, None
-            return False, latency_ms, "unavailable"
+            # Read only the status line — skip body to avoid blocking on
+            # chunked/slow Node.js responses (Connection: close closes cleanly).
+            ok = 200 <= resp.status < 400
+            return ok, latency_ms, None if ok else "unavailable"
+        finally:
+            conn.close()
     except Exception:  # noqa: BLE001 — probe must not raise
         latency_ms = int((time.perf_counter() - started) * 1000)
         return False, latency_ms, "unavailable"
@@ -2898,6 +2915,7 @@ _ACTION_LOG_FILES: Dict[str, str] = {
     "gateway-restart": "gateway-restart.log",
     "gateway-start": "gateway-start.log",
     "gateway-stop": "gateway-stop.log",
+    "gateway-install": "gateway-install.log",
     "hermes-update": "hermes-update.log",
     "doctor": "action-doctor.log",
     "security-audit": "action-security-audit.log",
@@ -3005,6 +3023,17 @@ def _gateway_display_command(profile: Optional[str], verb: str) -> str:
     return " ".join(["hermes", *_gateway_subcommand(profile, verb)])
 
 
+def _gateway_service_is_installed(profile: Optional[str] = None) -> bool:
+    """Best-effort check for whether a managed gateway service is installed."""
+    try:
+        with _config_profile_scope(profile):
+            from hermes_cli.gateway import _is_service_installed
+
+            return bool(_is_service_installed())
+    except Exception:
+        return True
+
+
 # Slack member IDs (users U..., Enterprise Grid W...). Kept in sync with the
 # frontend SLACK_MEMBER_ID_RE in web/src/pages/ChannelsPage.tsx.
 _SLACK_MEMBER_ID_RE = re.compile(r"[UW][A-Z0-9]{2,}")
@@ -3088,6 +3117,18 @@ def _restart_gateway_after_webhook_enable(profile: Optional[str] = None) -> dict
 @app.post("/api/gateway/restart")
 async def restart_gateway(profile: Optional[str] = None):
     """Kick off a ``hermes gateway restart`` in the background."""
+    if sys.platform == "win32" and not _gateway_service_is_installed(profile):
+        message = "Gateway service is not installed."
+        _record_completed_action("gateway-restart", message, exit_code=1)
+        return {
+            "ok": False,
+            "pid": None,
+            "name": "gateway-restart",
+            "status": "needs_service_install",
+            "message": message,
+            "action": "install_gateway_service",
+            "error": "needs_service_install",
+        }
     try:
         proc, _reused = _spawn_gateway_restart(profile)
     except HTTPException:
@@ -8940,6 +8981,207 @@ _ACTION_LOG_FILES.setdefault("mcp-install", "action-mcp-install.log")
 
 
 # ---------------------------------------------------------------------------
+# MCP Control Center — enhanced status endpoint for the /mcp dashboard.
+#
+# Returns Bitwarden auth state, gateway running state, per-server status chips
+# (READY / DEGRADED / WAITING_CREDENTIAL / WAITING_SERVICE / FAILED / DISABLED),
+# and catalog entries with install/credential status.
+#
+# Secrets are NEVER included in any response field — env dicts are redacted
+# (keys only, values replaced with "***") by _redact_mcp_env.
+# ---------------------------------------------------------------------------
+
+_MCP_STATUS_WAITING_CREDENTIAL = "WAITING_CREDENTIAL"
+_MCP_STATUS_WAITING_SERVICE = "WAITING_SERVICE"
+_MCP_STATUS_WAITING_BITWARDEN = "WAITING_BITWARDEN"
+_MCP_STATUS_DISABLED = "DISABLED"
+_MCP_STATUS_READY = "READY"
+_MCP_STATUS_FAILED = "FAILED"
+_MCP_STATUS_DEGRADED = "DEGRADED"
+
+# Env vars whose presence signals a server is credential-ready.
+_CREDENTIAL_ENV_HINTS: Dict[str, List[str]] = {
+    "github": ["GITHUB_PERSONAL_ACCESS_TOKEN", "GH_TOKEN"],
+    "vercel": ["VERCEL_TOKEN"],
+    "hetzner": ["HCLOUD_TOKEN"],
+    "openrouter": ["OPENROUTER_API_KEY"],
+    "bitwarden": ["BWS_ACCESS_TOKEN"],
+    "google-workspace": ["GOOGLE_MCP_PROFILE"],
+    "deploy-orchestrator": ["HCLOUD_TOKEN"],
+    "n8n": ["N8N_API_KEY"],
+}
+
+# Servers that are inherently Windows-only (PowerShell/COM/Win32 API).
+_WINDOWS_ONLY_SERVERS = frozenset({
+    "windows-admin", "ps-tasks", "app-control",
+    "computer-control-center", "outlook-desktop",
+    "dns-domain", "env-manager",
+})
+
+# Servers that require Bitwarden SM to be authenticated.
+_BITWARDEN_DEPENDENT_SERVERS = frozenset({
+    "bitwarden", "github", "openrouter",
+})
+
+
+def _bw_status() -> Dict[str, str]:
+    """Return Bitwarden CLI status: {status, locked}.
+
+    Runs ``bw status`` (read-only; never unlocks). Returns a safe dict —
+    never propagates the vault contents or session token.
+    """
+    import shutil
+    import subprocess as _sp
+
+    bw = shutil.which("bw")
+    if not bw:
+        return {"status": "not_installed", "locked": True}
+    try:
+        result = _sp.run(
+            [bw, "status"],
+            capture_output=True, text=True, timeout=5,
+        )
+        raw = result.stdout.strip()
+        import json as _json
+        data = _json.loads(raw)
+        status_val = data.get("status", "unknown")
+        locked = status_val not in ("unlocked",)
+        return {"status": status_val, "locked": locked}
+    except Exception:
+        return {"status": "unknown", "locked": True}
+
+
+def _is_platform_windows() -> bool:
+    import platform
+    return platform.system() == "Windows"
+
+
+def _resolve_server_status(
+    name: str,
+    cfg: Dict[str, Any],
+    bw_locked: bool,
+) -> str:
+    """Compute a status chip for a configured MCP server."""
+    if not cfg.get("enabled", True):
+        return _MCP_STATUS_DISABLED
+
+    # Check Bitwarden dependency first.
+    if bw_locked and name in _BITWARDEN_DEPENDENT_SERVERS:
+        return _MCP_STATUS_WAITING_BITWARDEN
+
+    # Check Windows-only services on non-Windows hosts.
+    if name in _WINDOWS_ONLY_SERVERS and not _is_platform_windows():
+        return _MCP_STATUS_WAITING_SERVICE
+
+    # Check credential availability via env vars.
+    required_vars = _CREDENTIAL_ENV_HINTS.get(name, [])
+    if required_vars:
+        import os as _os
+        any_present = any(bool(_os.environ.get(v)) for v in required_vars)
+        # Also check ~/.hermes/.env for the key names.
+        if not any_present:
+            try:
+                from hermes_cli.config import get_env_value as _gev
+                any_present = any(bool(_gev(v)) for v in required_vars)
+            except Exception:
+                pass
+        if not any_present:
+            return _MCP_STATUS_WAITING_CREDENTIAL
+
+    return _MCP_STATUS_READY
+
+
+@app.get("/api/mcp/control-center")
+async def mcp_control_center(profile: Optional[str] = None):
+    """MCP Control Center — enhanced status for the /mcp dashboard.
+
+    Returns:
+      - bitwarden: {status, locked}
+      - gateway_running: bool (true when gateway process is active)
+      - servers: list of configured servers with status chips + redacted env
+      - catalog: catalog entries with install status + required_env names
+
+    SECURITY: env values are always redacted (keys visible, values = "***").
+    Bitwarden vault contents are never included.
+    """
+    from hermes_cli.mcp_config import _get_mcp_servers
+
+    bw = _bw_status()
+    bw_locked = bw.get("locked", True)
+
+    # Gateway running check — best-effort, no crash if unavailable.
+    gateway_running = False
+    try:
+        from hermes_cli import status as _hs
+        gateway_running = bool(getattr(_hs, "is_gateway_running", lambda: False)())
+    except Exception:
+        pass
+
+    with _profile_scope(profile):
+        servers_raw = _get_mcp_servers()
+
+    servers_out = []
+    for sname, scfg in sorted(servers_raw.items()):
+        status_chip = _resolve_server_status(sname, scfg, bw_locked)
+        servers_out.append({
+            "name": sname,
+            "transport": (
+                "http" if scfg.get("url") else
+                "stdio" if scfg.get("command") else "unknown"
+            ),
+            "url": scfg.get("url"),
+            "command": scfg.get("command"),
+            "args": scfg.get("args") or [],
+            "env": _redact_mcp_env(scfg.get("env") or {}),
+            "enabled": scfg.get("enabled", True),
+            "status": status_chip,
+        })
+
+    # Catalog with install/credential status.
+    catalog_out: List[Dict[str, Any]] = []
+    try:
+        from hermes_cli import mcp_catalog
+        with _profile_scope(profile):
+            catalog_entries = list(mcp_catalog.list_catalog())
+        for entry in catalog_entries:
+            auth = entry.auth
+            installed = mcp_catalog.is_installed(entry.name)
+            enabled = mcp_catalog.is_enabled(entry.name) if installed else False
+            required_env = [
+                {"name": e.name, "prompt": e.prompt, "required": e.required}
+                for e in getattr(auth, "env", []) or []
+            ]
+            # Resolve credential status for catalog entry.
+            catalog_status = _MCP_STATUS_READY
+            if not installed:
+                catalog_status = "NOT_INSTALLED"
+            elif not enabled:
+                catalog_status = _MCP_STATUS_DISABLED
+            else:
+                catalog_status = _resolve_server_status(entry.name, {}, bw_locked)
+            catalog_out.append({
+                "name": entry.name,
+                "description": entry.description,
+                "transport": entry.transport.type,
+                "auth_type": getattr(auth, "type", "none"),
+                "required_env": required_env,
+                "installed": installed,
+                "enabled": enabled,
+                "status": catalog_status,
+            })
+    except Exception:
+        _log.debug("mcp_control_center: catalog unavailable", exc_info=True)
+
+    return {
+        "bitwarden": bw,
+        "gateway_running": gateway_running,
+        "platform": "windows" if _is_platform_windows() else "posix",
+        "servers": servers_out,
+        "catalog": catalog_out,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Pairing endpoints — approve / revoke / list messaging pairing codes.
 #
 # These are how a remote admin onboards messaging users (Telegram, Discord, …)
@@ -9213,6 +9455,41 @@ async def stop_gateway(profile: Optional[str] = None):
         _log.exception("Failed to spawn gateway stop")
         raise HTTPException(status_code=500, detail=f"Failed to stop gateway: {exc}")
     return {"ok": True, "pid": proc.pid, "name": "gateway-stop"}
+
+
+@app.post("/api/gateway/install-service")
+async def install_gateway_service(profile: Optional[str] = None):
+    """Install the managed gateway service in a separate, explicit action."""
+    try:
+        proc = _spawn_hermes_action(_gateway_subcommand(profile, "install"), "gateway-install")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _log.exception("Failed to spawn gateway install")
+        raise HTTPException(status_code=500, detail=f"Failed to install gateway service: {exc}")
+    return {"ok": True, "pid": proc.pid, "name": "gateway-install"}
+
+
+@app.post("/api/system/repair-install")
+async def repair_install(profile: Optional[str] = None):
+    """Repair interrupted editable installs without interactive prompts."""
+    try:
+        with _config_profile_scope(profile):
+            from hermes_cli.main import run_repair_install_sequence
+
+            result = run_repair_install_sequence(project_root=PROJECT_ROOT)
+    except Exception as exc:
+        _log.exception("Repair install failed unexpectedly")
+        raise HTTPException(status_code=500, detail=f"Repair install failed: {exc}")
+
+    status = str(result.get("status") or "failed")
+    return {
+        "ok": status in {"ok", "degraded_optional_extras_failed"},
+        "status": status,
+        "message": result.get("message"),
+        "failed_extras": result.get("failed_extras", []),
+        "log_lines": result.get("log_lines", []),
+    }
 
 
 # ---------------------------------------------------------------------------
