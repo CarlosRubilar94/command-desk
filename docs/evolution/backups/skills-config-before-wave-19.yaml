@@ -1,0 +1,103 @@
+# Skills Config Backup — before Wave 19 changes
+# Generated: 2026-06-23
+# Branch: cursor/skills-governance-cleanup
+# Note: No ~/.hermes/config.yaml existed at time of backup.
+#       Skill state inferred from filesystem scan only.
+#       No credentials or secrets included.
+
+skills:
+  disabled: []
+  platform_disabled: {}
+
+# Core skills present on disk (all enabled by default — no config overrides):
+core_skills_on_disk:
+  apple:
+    - apple-notes
+    - apple-reminders
+    - findmy
+    - imessage
+    - macos-computer-use
+  autonomous-ai-agents:
+    - claude-code
+    - codex
+    - hermes-agent
+    - opencode
+  creative:
+    - architecture-diagram
+    - ascii-art
+    - ascii-video
+    - baoyu-infographic
+    - claude-design
+    - comfyui
+    - design-md
+    - excalidraw
+    - humanizer
+    - manim-video
+    - p5js
+    - popular-web-designs
+    - pretext
+    - sketch
+    - songwriting-and-ai-music
+    - touchdesigner-mcp
+  data-science:
+    - jupyter-live-kernel
+  devssd-ops:
+    - devssd-ops
+    - multi-agent-playbook
+  dogfood:
+    - dogfood
+  email:
+    - himalaya
+  github:
+    - codebase-inspection
+    - github-auth
+    - github-code-review
+    - github-issues
+    - github-pr-workflow
+    - github-repo-management
+  media:
+    - gif-search
+    - heartmula
+    - songsee
+    - youtube-content
+  mlops:
+    - lm-evaluation-harness
+    - weights-and-biases
+    - huggingface-hub
+    - llama-cpp
+    - vllm
+    - audiocraft
+    - segment-anything
+  note-taking:
+    - obsidian
+  productivity:
+    - airtable
+    - google-workspace
+    - maps
+    - nano-pdf
+    - notion
+    - ocr-and-documents
+    - powerpoint
+    - teams-meeting-pipeline
+  research:
+    - arxiv
+    - blogwatcher
+    - llm-wiki
+    - polymarket
+    - research-paper-writing
+  smart-home:
+    - openhue
+  social-media:
+    - xurl
+  software-development:
+    - hermes-agent-skill-authoring
+    - node-inspect-debugger
+    - plan
+    - python-debugpy
+    - requesting-code-review
+    - simplify-code
+    - spike
+    - systematic-debugging
+    - test-driven-development
+  yuanbao:
+    - yuanbao
