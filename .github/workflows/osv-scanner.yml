@@ -44,6 +44,10 @@ permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: osv-scanner-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   scan:
     name: Scan lockfiles

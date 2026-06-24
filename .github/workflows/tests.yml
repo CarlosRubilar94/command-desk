@@ -6,11 +6,15 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
-  # No paths filter — the job must always run so the required check
-  # reports a status (path-gated workflows leave checks "pending" forever
-  # when no matching files change, which blocks merge).
+  # Free-tier minutes: this private fork has no branch-protection required
+  # checks (that needs GitHub Pro), so docs-only PRs can skip the heavy test
+  # matrix without leaving a required check "pending".
   pull_request:
     branches: [devssd/command-desk]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "website/**"
 
 permissions:
   contents: read
@@ -27,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slice: [1, 2, 3, 4, 5, 6]
+        slice: [1, 2]
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -85,7 +89,7 @@ jobs:
         # re-download, keeping the persisted cache small and fast to restore.
         run: uv cache prune --ci
 
-      - name: Run tests (slice ${{ matrix.slice }}/6)
+      - name: Run tests (slice ${{ matrix.slice }}/2)
         # Per-file isolation via scripts/run_tests_parallel.py: discovers
         # every test_*.py file under tests/ (excluding integration/ + e2e/),
         # then runs `python -m pytest <file>` in a freshly-spawned subprocess
@@ -104,14 +108,14 @@ jobs:
         # fix. ThreadPoolExecutor + subprocess.run is ~60 lines and does
         # the job with cleaner semantics.
         #
-        # Matrix slicing (--slice I/N): files are distributed across 6
+        # Matrix slicing (--slice I/N): files are distributed across 2
         # jobs by cached duration (LPT algorithm) so each job gets
         # roughly equal wall time. Without a cache, files default to 2s
         # estimate and get split roughly evenly by count — still correct,
         # just not perfectly balanced.
         run: |
           source .venv/bin/activate
-          python scripts/run_tests_parallel.py --slice ${{ matrix.slice }}/6
+          python scripts/run_tests_parallel.py --slice ${{ matrix.slice }}/2
         env:
           # Ensure tests don't accidentally call real APIs
           OPENROUTER_API_KEY: ""
