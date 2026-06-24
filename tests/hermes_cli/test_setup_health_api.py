@@ -234,12 +234,86 @@ class TestProviderStatus:
                 "active": 0, "disabled": 0, "total": 0,
             }),
             patch("hermes_cli.config.get_env_value", return_value=""),
+            # No API key AND no authenticated Claude Code CLI → WAITING.
+            patch("hermes_cli.web_server._anthropic_cli_ready", return_value=False),
         ):
             result = _run_endpoint()
 
         providers = {p["name"]: p for p in result["providers"]}
         assert providers["Anthropic"]["status"] == "WAITING_CREDENTIAL"
         assert providers["Anthropic"]["key_present"] is False
+
+    def test_anthropic_ready_via_claude_code_cli(self, monkeypatch):
+        """Anthropic is READY via an authenticated Claude Code CLI (no API key)."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_TOKEN", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+        with (
+            patch("hermes_cli.web_server._bitwarden_cli_status", return_value={
+                "available": True, "locked": False, "message": "ok"
+            }),
+            patch("hermes_cli.web_server._resolve_gateway_liveness", return_value=(True, "running")),
+            patch("hermes_cli.web_server._setup_mcp_counts", return_value={"total": 0}),
+            patch("hermes_cli.web_server._setup_skill_counts", return_value={
+                "active": 0, "disabled": 0, "total": 0,
+            }),
+            patch("hermes_cli.config.get_env_value", return_value=""),
+            patch("hermes_cli.web_server._anthropic_cli_ready", return_value=True),
+        ):
+            result = _run_endpoint()
+
+        providers = {p["name"]: p for p in result["providers"]}
+        assert providers["Anthropic"]["status"] == "READY"
+        assert providers["Anthropic"]["key_present"] is False
+        assert providers["Anthropic"]["cli_present"] is True
+        assert providers["Anthropic"]["fallback_active"] is True
+
+    def test_cursor_ready_via_subscription_cli(self, monkeypatch):
+        """Cursor is READY when the Cursor subscription CLI is present (no API key)."""
+        monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+
+        with (
+            patch("hermes_cli.web_server._bitwarden_cli_status", return_value={
+                "available": True, "locked": False, "message": "ok"
+            }),
+            patch("hermes_cli.web_server._resolve_gateway_liveness", return_value=(True, "running")),
+            patch("hermes_cli.web_server._setup_mcp_counts", return_value={"total": 0}),
+            patch("hermes_cli.web_server._setup_skill_counts", return_value={
+                "active": 0, "disabled": 0, "total": 0,
+            }),
+            patch("hermes_cli.config.get_env_value", return_value=""),
+            patch("hermes_cli.web_server._cursor_cli_ready", return_value=True),
+        ):
+            result = _run_endpoint()
+
+        providers = {p["name"]: p for p in result["providers"]}
+        assert providers["Cursor SDK"]["status"] == "READY"
+        assert providers["Cursor SDK"]["key_present"] is False
+        assert providers["Cursor SDK"]["cli_present"] is True
+        assert providers["Cursor SDK"]["fallback_active"] is True
+
+    def test_cursor_waiting_when_no_key_and_no_cli(self, monkeypatch):
+        """Cursor stays WAITING when neither API key nor CLI is available."""
+        monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+
+        with (
+            patch("hermes_cli.web_server._bitwarden_cli_status", return_value={
+                "available": True, "locked": False, "message": "ok"
+            }),
+            patch("hermes_cli.web_server._resolve_gateway_liveness", return_value=(True, "running")),
+            patch("hermes_cli.web_server._setup_mcp_counts", return_value={"total": 0}),
+            patch("hermes_cli.web_server._setup_skill_counts", return_value={
+                "active": 0, "disabled": 0, "total": 0,
+            }),
+            patch("hermes_cli.config.get_env_value", return_value=""),
+            patch("hermes_cli.web_server._cursor_cli_ready", return_value=False),
+        ):
+            result = _run_endpoint()
+
+        providers = {p["name"]: p for p in result["providers"]}
+        assert providers["Cursor SDK"]["status"] == "WAITING_CREDENTIAL"
+        assert providers["Cursor SDK"]["key_present"] is False
 
     def test_codex_fallback_active_when_cli_absent(self, monkeypatch):
         with (
