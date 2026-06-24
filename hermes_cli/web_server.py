@@ -8931,13 +8931,16 @@ class MCPServerCreate(BaseModel):
 
 
 def _redact_mcp_env(env: Dict[str, Any]) -> Dict[str, str]:
-    """Mask secret-shaped MCP env values for read responses."""
+    """Fully mask all env values in API responses (keys are preserved).
+
+    Unlike the terminal/status display helpers (which use mask_secret head=4,
+    tail=4 for debuggability), the control-center API is accessible to browser
+    clients and must never expose any secret fragment.  Every non-empty value
+    is replaced with the fixed placeholder "***".
+    """
     out: Dict[str, str] = {}
     for k, v in (env or {}).items():
-        try:
-            out[str(k)] = redact_key(str(v)) if v else ""
-        except Exception:
-            out[str(k)] = "***"
+        out[str(k)] = "***" if v else ""
     return out
 
 
@@ -9249,8 +9252,8 @@ _ACTION_LOG_FILES.setdefault("mcp-install", "action-mcp-install.log")
 # (READY / DEGRADED / WAITING_CREDENTIAL / WAITING_SERVICE / FAILED / DISABLED),
 # and catalog entries with install/credential status.
 #
-# Secrets are NEVER included in any response field — env dicts are redacted
-# (keys only, values replaced with "***") by _redact_mcp_env.
+# Secrets are NEVER included in any response field — env dicts are fully
+# masked (keys preserved, values replaced with "***") by _redact_mcp_env.
 # ---------------------------------------------------------------------------
 
 _MCP_STATUS_WAITING_CREDENTIAL = "WAITING_CREDENTIAL"
