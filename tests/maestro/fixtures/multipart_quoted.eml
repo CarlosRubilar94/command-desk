@@ -1,0 +1,24 @@
+From: Bob Builder <bob@example.com>
+To: me@empresa.com
+Subject: Re: Pergunta importante
+Date: Wed, 24 Jun 2026 11:00:00 +0000
+Message-ID: <def456@example.com>
+In-Reply-To: <abc123@cliente.com>
+References: <root000@cliente.com> <abc123@cliente.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="BOUND42"
+
+--BOUND42
+Content-Type: text/plain; charset="utf-8"
+
+Minha resposta importante e curta.
+
+On Wed, 24 Jun 2026 at 09:00, Ana wrote:
+> texto antigo citado
+> mais uma linha de citacao
+
+--BOUND42
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>Minha resposta importante e curta.</p></body></html>
+--BOUND42--
