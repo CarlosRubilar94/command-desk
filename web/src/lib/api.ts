@@ -1329,6 +1329,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  getMcpControlCenter: () =>
+    fetchJSON<McpControlCenter>("/api/mcp/control-center"),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -1513,6 +1515,43 @@ export interface McpTestResult {
   ok: boolean;
   error?: string;
   tools: Array<{ name: string; description: string }>;
+}
+
+export type McpStatusChip =
+  | "READY"
+  | "DEGRADED"
+  | "WAITING_CREDENTIAL"
+  | "WAITING_SERVICE"
+  | "WAITING_BITWARDEN"
+  | "FAILED"
+  | "DISABLED"
+  | "NOT_INSTALLED";
+
+export interface McpControlCenterServer {
+  name: string;
+  transport: string;
+  enabled: boolean;
+  status: McpStatusChip;
+  env_keys: string[];
+  missing_env: string[];
+}
+
+export interface McpControlCenterCatalogEntry {
+  name: string;
+  description: string;
+  transport: string;
+  auth: string;
+  required_env: string[];
+  installed: boolean;
+  status: McpStatusChip;
+}
+
+export interface McpControlCenter {
+  bitwarden: { status: string; locked: boolean };
+  gateway_running: boolean;
+  platform: string;
+  servers: McpControlCenterServer[];
+  catalog: McpControlCenterCatalogEntry[];
 }
 
 export interface MessagingPlatformEnvVar {
