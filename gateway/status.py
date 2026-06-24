@@ -21,6 +21,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from hermes_constants import get_hermes_home
+from hermes_cli.subprocess_utils import safe_run
 from typing import Any, Optional
 from utils import atomic_json_write
 
@@ -82,10 +83,9 @@ def terminate_pid(pid: int, *, force: bool = False) -> None:
     """
     if force and _IS_WINDOWS:
         try:
-            result = subprocess.run(
+            result = safe_run(
                 ["taskkill", "/PID", str(pid), "/T", "/F"],
                 capture_output=True,
-                text=True,
                 timeout=10,
             )
         except FileNotFoundError:
@@ -93,6 +93,9 @@ def terminate_pid(pid: int, *, force: bool = False) -> None:
             return
 
         if result.returncode != 0:
+            # Treat "already exited" taskkill races as success.
+            if not _pid_exists(pid):
+                return
             details = (result.stderr or result.stdout or "").strip()
             raise OSError(details or f"taskkill failed for PID {pid}")
         return
