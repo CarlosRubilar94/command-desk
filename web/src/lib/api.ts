@@ -2973,11 +2973,35 @@ export interface CommandDeckTracerSummary {
   healthy: boolean;
 }
 
+export interface CommandDeckFleetQueueStats {
+  ready: number;
+  in_progress: number;
+  blocked: number;
+}
+
+export interface CommandDeckFleetThroughput {
+  spans_per_min: number;
+  traces_today: number;
+}
+
+export interface CommandDeckFleetBottleneck {
+  name: string | null;
+  kind: string | null;
+  avg_duration_ms: number;
+  count: number;
+}
+
+export interface CommandDeckFleetError {
+  error: string;
+  count: number;
+  last_seen: number | null;
+}
+
 export interface CommandDeckFleetSummary {
-  queue: number;
-  throughput: number;
-  bottlenecks: string[];
-  recurring_errors: string[];
+  queue: CommandDeckFleetQueueStats;
+  throughput: CommandDeckFleetThroughput;
+  bottlenecks: CommandDeckFleetBottleneck[];
+  recurring_errors: CommandDeckFleetError[];
   cost_today_usd: number;
   tracer: CommandDeckTracerSummary;
 }

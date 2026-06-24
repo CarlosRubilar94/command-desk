@@ -1,14 +1,20 @@
 import { Link } from "react-router-dom";
 import { Activity, Route, Radio, Zap } from "lucide-react";
 import { DeckCard, DeckToolbar, MetricRow, MetricTile } from "@/components/DeckOps";
+import type {
+  CommandDeckFleetQueueStats,
+  CommandDeckFleetThroughput,
+  CommandDeckFleetBottleneck,
+  CommandDeckFleetError,
+} from "@/lib/api";
 
 type FleetRoutingSummaryCardProps = {
   fleet: {
-    queue: number;
-    throughput: number;
+    queue: CommandDeckFleetQueueStats;
+    throughput: CommandDeckFleetThroughput;
     costTodayUsd: number | null;
-    bottlenecks: string[];
-    recurringErrors: string[];
+    bottlenecks: CommandDeckFleetBottleneck[];
+    recurringErrors: CommandDeckFleetError[];
   };
   routing: {
     tracerHealthy: boolean;
@@ -24,20 +30,21 @@ function fmtUsd(n: number | null): string {
 }
 
 export function FleetRoutingSummaryCard({ fleet, routing }: FleetRoutingSummaryCardProps) {
+  const queueTotal = fleet.queue.ready + fleet.queue.in_progress;
   return (
     <DeckCard title="Fleet + Routing summary" subtitle="Read-only snapshot" colClass="col-12">
       <div className="mb-3 flex flex-wrap gap-3">
         <MetricTile
           label="Queue"
-          value={fleet.queue}
-          context="pending runs"
-          state={fleet.queue > 10 ? "warning" : "ok"}
+          value={queueTotal}
+          context={`${fleet.queue.ready} ready · ${fleet.queue.in_progress} active · ${fleet.queue.blocked} blocked`}
+          state={queueTotal > 10 ? "warning" : "ok"}
         />
         <MetricTile
           label="Throughput"
-          value={fleet.throughput}
-          context="runs/min"
-          state={fleet.throughput > 0 ? "ok" : "degraded"}
+          value={fleet.throughput.spans_per_min.toFixed(1)}
+          context="spans/min"
+          state={fleet.throughput.spans_per_min > 0 ? "ok" : "degraded"}
         />
         <MetricTile
           label="Tracer"
@@ -54,12 +61,12 @@ export function FleetRoutingSummaryCard({ fleet, routing }: FleetRoutingSummaryC
       />
       <MetricRow
         label="Bottlenecks"
-        value={fleet.bottlenecks.length > 0 ? fleet.bottlenecks.join(" | ") : "None"}
+        value={fleet.bottlenecks.length > 0 ? fleet.bottlenecks.map((b) => b.name ?? "unknown").join(" | ") : "None"}
         tone={fleet.bottlenecks.length > 0 ? "warn" : "ok"}
       />
       <MetricRow
         label="Recurring errors"
-        value={fleet.recurringErrors.length > 0 ? fleet.recurringErrors.join(" | ") : "None"}
+        value={fleet.recurringErrors.length > 0 ? fleet.recurringErrors.map((e) => e.error).join(" | ") : "None"}
         tone={fleet.recurringErrors.length > 0 ? "bad" : "ok"}
       />
       <MetricRow label="Missions" value={String(routing.missionsCount)} tone="ok" />

@@ -506,6 +506,20 @@ function AnalyticsOverviewSection({ days }: { days: number }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // All hooks must be called unconditionally before any early return.
+  const throughputCounts = useMemo(
+    () => data?.throughput.traces_per_day.map((d) => d.count) ?? [],
+    [data],
+  );
+  const tokenInputSeries = useMemo(
+    () => data?.token_usage.map((d) => d.input_tokens) ?? [],
+    [data],
+  );
+  const tokenOutputSeries = useMemo(
+    () => data?.token_usage.map((d) => d.output_tokens) ?? [],
+    [data],
+  );
+
   if (loading && !data) {
     return (
       <div className="flex flex-col gap-4">
@@ -529,19 +543,6 @@ function AnalyticsOverviewSection({ days }: { days: number }) {
     throughput.traces_total === 0 &&
     model_efficiency.length === 0 &&
     token_usage.length === 0;
-
-  const throughputCounts = useMemo(
-    () => throughput.traces_per_day.map((d) => d.count),
-    [throughput.traces_per_day],
-  );
-  const tokenInputSeries = useMemo(
-    () => token_usage.map((d) => d.input_tokens),
-    [token_usage],
-  );
-  const tokenOutputSeries = useMemo(
-    () => token_usage.map((d) => d.output_tokens),
-    [token_usage],
-  );
 
   if (noData) {
     return (
