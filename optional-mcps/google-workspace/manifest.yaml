@@ -1,0 +1,55 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: google-workspace
+description: Access Gmail, Drive, Calendar, Sheets, Docs, and Slides via Google APIs.
+source: https://www.npmjs.com/package/google-tools-mcp
+
+# Wraps the google-tools-mcp npm package (version 1.2.12). On first run,
+# the package opens a browser OAuth flow to authorize the Google account.
+# A GOOGLE_MCP_PROFILE env var scopes credentials to a named profile so
+# multiple accounts can coexist.
+transport:
+  type: stdio
+  command: npx
+  args:
+    - "-y"
+    - "google-tools-mcp@1.2.12"
+
+auth:
+  type: oauth
+  # OAuth is triggered automatically by the npx package on first connection.
+  # No env var to pre-supply; the package manages the token cache.
+  env:
+    - name: GOOGLE_MCP_PROFILE
+      prompt: "Google MCP profile name (e.g. your username)"
+      required: false
+      secret: false
+      default: "default"
+
+# Status: READY-WAITING-CREDENTIAL (Google OAuth browser flow required on first use)
+
+post_install: |
+  On first connection, Hermes will spawn the npx google-tools-mcp package,
+  which opens a browser window asking you to authorize a Google account.
+  After authorizing, the OAuth token is cached in the package's profile store.
+
+  Set GOOGLE_MCP_PROFILE to separate credential caches per account.
+
+  WARNING: This package has broad Google API access (Gmail, Drive, Calendar,
+  Sheets, Docs, Slides, Forms, Tasks). Review and revoke permissions at
+  https://myaccount.google.com/permissions if you no longer need them.
+
+  Available tools: 150+ tools across Gmail, Drive, Calendar, Sheets, Docs,
+  Slides, Forms, and Tasks.
+
+tools:
+  default_enabled:
+    - get_events
+    - list_messages
+    - get_message
+    - list_drafts
+    - listDriveFiles
+    - readSpreadsheet
+    - readDocument

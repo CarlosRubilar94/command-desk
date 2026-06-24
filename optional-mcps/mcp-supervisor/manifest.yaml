@@ -1,0 +1,35 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: mcp-supervisor
+description: List, health-check, and sync all configured MCP servers in the suite.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Meta MCP server that reads the MCP registry (mcp-supervisor-mcp.js) and
+# provides health aggregation across the full MCP suite. It reads the registry
+# config to list all servers and their statuses. No external credentials needed.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/mcp-supervisor-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/mcp-supervisor-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY (no credentials needed; reads from MCP registry config)
+
+post_install: |
+  No credentials needed. The supervisor reads your MCP registry configuration
+  and reports health status for each server in the suite.
+
+  Available tools: mcp_registry_list, mcp_suite_health, mcp_sync_all.

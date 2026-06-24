@@ -1,0 +1,37 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: vercel
+description: Manage Vercel deployments, projects, and logs from Hermes.
+source: https://vercel.com/docs/mcp
+
+# Vercel ships a production remote MCP server at https://mcp.vercel.com.
+# No local install required — Hermes's HTTP MCP client connects directly.
+# The server authenticates via VERCEL_TOKEN presented as a Bearer header;
+# the user must create a token at https://vercel.com/account/tokens.
+transport:
+  type: http
+  url: https://mcp.vercel.com
+
+auth:
+  type: api_key
+  env:
+    - name: VERCEL_TOKEN
+      prompt: "Vercel API token (create at vercel.com/account/tokens)"
+      required: true
+      secret: true
+
+# Status: READY-WAITING-CREDENTIAL (VERCEL_TOKEN required)
+# The remote server is always available once the token is provided.
+
+post_install: |
+  Set VERCEL_TOKEN in ~/.hermes/.env. Generate a token at:
+    https://vercel.com/account/tokens
+
+  Scope: full account access (or limit to the teams/projects you need).
+  After config, restart Hermes to load the Vercel tools.
+
+  Available tools: list_projects, list_deployments, get_deployment,
+  get_deployment_build_logs, get_runtime_logs, get_runtime_errors,
+  search_vercel_documentation, and more.

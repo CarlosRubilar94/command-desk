@@ -2075,10 +2075,10 @@ def _probe_http_get(url: str, *, timeout: float) -> tuple[bool, int, str | None]
             conn.request("GET", path, headers={"Host": host, "Connection": "close"})
             resp = conn.getresponse()
             latency_ms = int((time.perf_counter() - started) * 1000)
-            resp.read()  # drain body so connection can be reused / closed cleanly
-            if 200 <= resp.status < 400:
-                return True, latency_ms, None
-            return False, latency_ms, "unavailable"
+            # Read only the status line — skip body to avoid blocking on
+            # chunked/slow Node.js responses (Connection: close closes cleanly).
+            ok = 200 <= resp.status < 400
+            return ok, latency_ms, None if ok else "unavailable"
         finally:
             conn.close()
     except Exception:  # noqa: BLE001 — probe must not raise

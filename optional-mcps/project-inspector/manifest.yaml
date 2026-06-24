@@ -1,0 +1,36 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: project-inspector
+description: Detect project type, env keys, ports, npm scripts, and health endpoints.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server for local project analysis. Uses file system reads and
+# native Node.js net module — no external CLIs or API credentials needed.
+# Fully cross-platform.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/project-inspector-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/project-inspector-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY (no credentials needed, fully cross-platform)
+
+post_install: |
+  No credentials needed. Works on any OS. Point the tools at a project path:
+    project_detect(path="C:/Users/.../my-project")
+
+  Available tools: project_detect, project_env_keys, project_ports,
+  project_npm_scripts, project_health_endpoint.

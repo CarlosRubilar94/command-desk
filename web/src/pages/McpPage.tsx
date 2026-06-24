@@ -1,5 +1,21 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
-import { Package, Power, Server, Trash2, X, Zap } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  Key,
+  Lock,
+  Package,
+  Power,
+  RefreshCw,
+  Server,
+  ShieldOff,
+  Trash2,
+  Unlock,
+  WifiOff,
+  X,
+  Zap,
+} from "lucide-react";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Select, SelectOption } from "@nous-research/ui/ui/components/select";
@@ -9,8 +25,11 @@ import { api } from "@/lib/api";
 import type {
   McpCatalogDiagnostic,
   McpCatalogEntry,
+  McpControlCenter,
+  McpControlCenterServer,
   McpServer,
   McpServerCreate,
+  McpStatusChip,
   McpTestResult,
 } from "@/lib/api";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
@@ -25,6 +44,65 @@ import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn, themedBody } from "@/lib/utils";
 
 type Transport = "http" | "stdio";
+
+// ---------------------------------------------------------------------------
+// Status chip helpers
+// ---------------------------------------------------------------------------
+
+const STATUS_TONE: Record<
+  McpStatusChip | string,
+  "success" | "warning" | "destructive" | "outline" | "secondary"
+> = {
+  READY: "success",
+  DEGRADED: "warning",
+  WAITING_CREDENTIAL: "warning",
+  WAITING_SERVICE: "warning",
+  WAITING_BITWARDEN: "warning",
+  FAILED: "destructive",
+  DISABLED: "outline",
+  NOT_INSTALLED: "secondary",
+};
+
+const STATUS_LABEL: Record<McpStatusChip | string, string> = {
+  READY: "Ready",
+  DEGRADED: "Degraded",
+  WAITING_CREDENTIAL: "Waiting credential",
+  WAITING_SERVICE: "Waiting service",
+  WAITING_BITWARDEN: "Waiting Bitwarden",
+  FAILED: "Failed",
+  DISABLED: "Disabled",
+  NOT_INSTALLED: "Not installed",
+};
+
+const STATUS_ICON: Record<McpStatusChip | string, React.ReactNode> = {
+  READY: <CheckCircle className="h-3 w-3" />,
+  DEGRADED: <AlertTriangle className="h-3 w-3" />,
+  WAITING_CREDENTIAL: <Key className="h-3 w-3" />,
+  WAITING_SERVICE: <Clock className="h-3 w-3" />,
+  WAITING_BITWARDEN: <Lock className="h-3 w-3" />,
+  FAILED: <ShieldOff className="h-3 w-3" />,
+  DISABLED: <Power className="h-3 w-3" />,
+  NOT_INSTALLED: <Package className="h-3 w-3" />,
+};
+
+function StatusChip({ status }: { status: McpStatusChip | string }) {
+  return (
+    <Badge tone={STATUS_TONE[status] ?? "secondary"} className="flex items-center gap-1">
+      {STATUS_ICON[status]}
+      {STATUS_LABEL[status] ?? status}
+    </Badge>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Utility helpers
+// ---------------------------------------------------------------------------
+
+const TRANSPORT_TONE: Record<string, "success" | "warning" | "secondary"> = {
+  http: "success",
+  stdio: "warning",
+  unknown: "secondary",
+};
 
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value.trim());
@@ -57,16 +135,78 @@ function parseEnv(raw: string): Record<string, string> {
   return env;
 }
 
-const TRANSPORT_TONE: Record<string, "success" | "warning" | "secondary"> = {
-  http: "success",
-  stdio: "warning",
-  unknown: "secondary",
-};
+// ---------------------------------------------------------------------------
+// Bitwarden status banner
+// ---------------------------------------------------------------------------
+
+function BitwardenBanner({
+  bw,
+}: {
+  bw: McpControlCenter["bitwarden"] | null;
+}) {
+  if (!bw) return null;
+  if (bw.status === "not_installed") {
+    return (
+      <div className="flex items-center gap-2 px-4 py-2 text-xs text-warning bg-warning/10 border border-warning/30">
+        <Lock className="h-3.5 w-3.5 shrink-0" />
+        <span>
+          Bitwarden CLI not found. Some MCP servers use Bitwarden SM for secrets
+          and will show{" "}
+          <strong>Waiting Bitwarden</strong>.
+        </span>
+      </div>
+    );
+  }
+  if (bw.locked) {
+    return (
+      <div className="flex items-center gap-2 px-4 py-2 text-xs text-warning bg-warning/10 border border-warning/30">
+        <Lock className="h-3.5 w-3.5 shrink-0" />
+        <span>
+          Bitwarden is <strong>{bw.status}</strong>. Servers that read secrets
+          from Bitwarden SM show <strong>Waiting Bitwarden</strong>. Unlock with{" "}
+          <code className="font-mono">bw login</code> (or{" "}
+          <code className="font-mono">bw unlock</code> if already logged in).
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 text-xs text-success bg-success/10 border border-success/30">
+      <Unlock className="h-3.5 w-3.5 shrink-0" />
+      <span>Bitwarden is unlocked — secret resolution active.</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Gateway warning banner
+// ---------------------------------------------------------------------------
+
+function GatewayBanner({ running }: { running: boolean }) {
+  if (running) return null;
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 text-xs text-muted-foreground bg-muted/30 border border-border">
+      <WifiOff className="h-3.5 w-3.5 shrink-0" />
+      <span>
+        Gateway is not running. MCP servers in the configured list will not be
+        probed until the gateway starts. Start with{" "}
+        <code className="font-mono">hermes gateway start</code>.
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
 
 export default function McpPage() {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [catalog, setCatalog] = useState<McpCatalogEntry[]>([]);
   const [diagnostics, setDiagnostics] = useState<McpCatalogDiagnostic[]>([]);
+  const [controlCenter, setControlCenter] = useState<McpControlCenter | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const { toast, showToast } = useToast();
   const { setEnd } = usePageHeader();
@@ -125,11 +265,20 @@ export default function McpPage() {
       .catch((e) => showToast(`Error: ${e}`, "error"));
   }, [showToast]);
 
+  const loadControlCenter = useCallback(() => {
+    return api
+      .getMcpControlCenter()
+      .then((res) => setControlCenter(res))
+      .catch(() => {
+        // Non-critical — control center data is supplemental.
+      });
+  }, []);
+
   useEffect(() => {
-    Promise.all([loadServers(), loadCatalog()]).finally(() =>
-      setLoading(false),
+    Promise.all([loadServers(), loadCatalog(), loadControlCenter()]).finally(
+      () => setLoading(false),
     );
-  }, [loadServers, loadCatalog]);
+  }, [loadServers, loadCatalog, loadControlCenter]);
 
   const handleCreate = async () => {
     if (!name.trim()) {
@@ -167,6 +316,7 @@ export default function McpPage() {
       setTransport("http");
       setCreateModalOpen(false);
       loadServers();
+      loadControlCenter();
     } catch (e) {
       showToast(`Failed to add: ${e}`, "error");
     } finally {
@@ -174,7 +324,7 @@ export default function McpPage() {
     }
   };
 
-  const handleTest = async (server: McpServer) => {
+  const handleTest = async (server: McpServer | McpControlCenterServer) => {
     setTesting(server.name);
     try {
       const result = await api.testMcpServer(server.name);
@@ -204,6 +354,7 @@ export default function McpPage() {
       setRestartNote(
         "Enable/disable takes effect on the next gateway restart.",
       );
+      loadControlCenter();
     } catch (e) {
       showToast(`Error: ${e}`, "error");
     } finally {
@@ -223,12 +374,13 @@ export default function McpPage() {
             return next;
           });
           loadServers();
+          loadControlCenter();
         } catch (e) {
           showToast(`Error: ${e}`, "error");
           throw e;
         }
       },
-      [loadServers, showToast],
+      [loadServers, loadControlCenter, showToast],
     ),
   });
 
@@ -245,14 +397,14 @@ export default function McpPage() {
         }
         setInstallEntry(null);
         setInstallEnv({});
-        await Promise.all([loadServers(), loadCatalog()]);
+        await Promise.all([loadServers(), loadCatalog(), loadControlCenter()]);
       } catch (e) {
         showToast(`Failed to install: ${e}`, "error");
       } finally {
         setInstallingName(null);
       }
     },
-    [loadServers, loadCatalog, showToast],
+    [loadServers, loadCatalog, loadControlCenter, showToast],
   );
 
   const handleInstallClick = (entry: McpCatalogEntry) => {
@@ -283,6 +435,12 @@ export default function McpPage() {
     });
     void runInstall(installEntry, envMap);
   };
+
+  // ── Status map from control center (name → status) ──────────────────
+  const ccStatusMap: Record<string, McpStatusChip> = {};
+  (controlCenter?.servers ?? []).forEach((s) => {
+    ccStatusMap[s.name] = s.status;
+  });
 
   // Put "Add Server" button in page header
   useLayoutEffect(() => {
@@ -535,6 +693,14 @@ export default function McpPage() {
         </div>
       )}
 
+      {/* ── MCP Control Center status banners ── */}
+      {controlCenter && (
+        <div className="flex flex-col gap-1">
+          <BitwardenBanner bw={controlCenter.bitwarden} />
+          <GatewayBanner running={controlCenter.gateway_running} />
+        </div>
+      )}
+
       {/* ── Your MCP servers ── */}
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -545,6 +711,15 @@ export default function McpPage() {
             <Server className="h-4 w-4" />
             Your MCP servers ({servers.length})
           </H2>
+          {controlCenter && (
+            <button
+              onClick={() => loadControlCenter()}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Refresh status
+            </button>
+          )}
         </div>
 
         {restartNote && (
@@ -562,6 +737,9 @@ export default function McpPage() {
         {servers.map((server) => {
           const envCount = Object.keys(server.env ?? {}).length;
           const result = testResults[server.name];
+          const statusChip = ccStatusMap[server.name] ?? (
+            server.enabled ? undefined : "DISABLED"
+          );
 
           return (
             <Card key={server.name}>
@@ -572,7 +750,7 @@ export default function McpPage() {
                 )}
               >
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className="font-medium text-sm truncate">
                       {server.name}
                     </span>
@@ -581,7 +759,8 @@ export default function McpPage() {
                     >
                       {server.transport}
                     </Badge>
-                    {!server.enabled && (
+                    {statusChip && <StatusChip status={statusChip} />}
+                    {!server.enabled && !statusChip && (
                       <Badge tone="outline">disabled</Badge>
                     )}
                   </div>
@@ -697,6 +876,9 @@ export default function McpPage() {
         {catalog.map((entry) => {
           const entryDiags = diagnosticsByName[entry.name] ?? [];
           const isInstalling = installingName === entry.name;
+          const ccEntry = controlCenter?.catalog.find(
+            (c) => c.name === entry.name,
+          );
 
           return (
             <Card key={entry.name}>
@@ -712,6 +894,9 @@ export default function McpPage() {
                       {entry.transport}
                     </Badge>
                     <Badge tone="outline">auth: {entry.auth_type}</Badge>
+                    {ccEntry?.status && (
+                      <StatusChip status={ccEntry.status} />
+                    )}
                     {isHttpUrl(entry.source) ? (
                       <a
                         href={entry.source}
@@ -738,7 +923,17 @@ export default function McpPage() {
                       {entry.description}
                     </p>
                   )}
-                  {/* Connection detail: what the agent actually talks to. */}
+                  {/* Required credentials list (names only, no values) */}
+                  {entry.required_env.length > 0 && (
+                    <p className="mt-1 text-xs text-muted-foreground flex items-center gap-1">
+                      <Key className="h-3 w-3 shrink-0" />
+                      Requires:{" "}
+                      {entry.required_env
+                        .map((e) => e.name)
+                        .join(", ")}
+                    </p>
+                  )}
+                  {/* Connection detail */}
                   {entry.transport === "http" && entry.url && (
                     <p className="mt-1 text-xs text-muted-foreground">
                       <span className="font-medium">Endpoint:</span>{" "}
@@ -753,8 +948,6 @@ export default function McpPage() {
                       </code>
                     </p>
                   )}
-                  {/* Git bootstrap — surfaced so users see what gets cloned/run
-                      before they install (matches the docs trust model). */}
                   {entry.install_url && (
                     <p className="mt-1 text-xs text-muted-foreground break-all">
                       <span className="font-medium">Installs from:</span>{" "}

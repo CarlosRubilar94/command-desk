@@ -1,0 +1,41 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: app-control
+description: Open, close, focus, screenshot, and send keys to Windows applications.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server for Windows application control. Uses PowerShell with
+# Windows-specific COM automation (Shell.Application, SendKeys), DPAPI, and
+# Windows Registry. WINDOWS ONLY — will not work on Linux/macOS.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/app-control-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/app-control-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY-WAITING-LOCAL-SERVICE (Windows only — requires Windows + PowerShell)
+# Not functional on Linux or macOS.
+
+post_install: |
+  WINDOWS ONLY. This server controls Windows GUI applications via PowerShell
+  automation. It will not start on Linux or macOS.
+
+  No credentials needed. Ensure PowerShell execution policy allows scripts:
+    Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+
+  Available tools: app_open, app_close, app_focus, app_screenshot,
+  app_send_text, app_send_hotkey, app_targets, app_processes,
+  app_restart, app_mcp_logs, app_mcp_status, app_open_mcp_config.
