@@ -18,13 +18,27 @@ transport:
 install:
   type: git
   url: https://github.com/CarlosRubilar94/command-desk.git
-  ref: main
+  # Pinned to devssd/command-desk HEAD as of 2026-06-23 for reproducible installs.
+  ref: 2f230234e9c224e73c74699a23ec8fdd2f4b131c
   bootstrap:
     - "cp docs/setup/mcp-scripts/app-control-mcp.js ."
     - "cp docs/setup/mcp-scripts/mcp-lib.js ."
 
 auth:
   type: none
+
+# Tool selection: read/inspect tools enabled by default; mutating tools
+# (close, restart, send_text, send_hotkey) require explicit opt-in.
+# Mirrors the n8n/google-workspace pattern.
+tools:
+  default_enabled:
+    - app_targets
+    - app_processes
+    - app_screenshot
+    - app_focus
+    - app_mcp_logs
+    - app_mcp_status
+    - app_open_mcp_config
 
 # Status: READY-WAITING-LOCAL-SERVICE (Windows only — requires Windows + PowerShell)
 # Not functional on Linux or macOS.
@@ -39,3 +53,6 @@ post_install: |
   Available tools: app_open, app_close, app_focus, app_screenshot,
   app_send_text, app_send_hotkey, app_targets, app_processes,
   app_restart, app_mcp_logs, app_mcp_status, app_open_mcp_config.
+
+  Mutating tools (app_open, app_close, app_send_text, app_send_hotkey, app_restart)
+  are opt-in. Enable them in the tool-selection checklist at install time.
