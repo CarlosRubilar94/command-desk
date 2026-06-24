@@ -9479,7 +9479,8 @@ def _setup_key_present(env_vars: list[str]) -> bool:
     try:
         from hermes_cli.config import get_env_value as _gev
         for v in env_vars:
-            if _gev(v, "").strip():
+            val = _gev(v)
+            if val and val.strip():
                 return True
     except Exception:
         pass
