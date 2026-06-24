@@ -27,6 +27,11 @@ import {
   Loader2,
   Pencil,
   Plus,
+  LayoutDashboard,
+  Star,
+  ToggleLeft,
+  HelpCircle,
+  Layers,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
@@ -64,6 +69,173 @@ import { PluginSlot } from "@/plugins";
 
 /* ------------------------------------------------------------------ */
 /*  Types & helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ */
+/*  Governance data                                                    */
+/* ------------------------------------------------------------------ */
+
+type Recommendation =
+  | "CORE"
+  | "USEFUL"
+  | "OPTIONAL"
+  | "RISKY"
+  | "BROKEN"
+  | "DISABLE-UNUSED";
+
+const SKILL_RECOMMENDATIONS: Record<string, Recommendation> = {
+  // CORE — always active
+  "claude-code": "CORE",
+  codex: "CORE",
+  "hermes-agent": "CORE",
+  "devssd-ops": "CORE",
+  "multi-agent-playbook": "CORE",
+  "codebase-inspection": "CORE",
+  "github-auth": "CORE",
+  "github-code-review": "CORE",
+  "github-issues": "CORE",
+  "github-pr-workflow": "CORE",
+  "github-repo-management": "CORE",
+  obsidian: "CORE",
+  "hermes-agent-skill-authoring": "CORE",
+  plan: "CORE",
+  "requesting-code-review": "CORE",
+  spike: "CORE",
+  "systematic-debugging": "CORE",
+  "test-driven-development": "CORE",
+  // USEFUL — enabled in developer profile
+  opencode: "USEFUL",
+  "architecture-diagram": "USEFUL",
+  "claude-design": "USEFUL",
+  excalidraw: "USEFUL",
+  humanizer: "USEFUL",
+  "popular-web-designs": "USEFUL",
+  sketch: "USEFUL",
+  "jupyter-live-kernel": "USEFUL",
+  dogfood: "USEFUL",
+  "node-inspect-debugger": "USEFUL",
+  "python-debugpy": "USEFUL",
+  simplify: "USEFUL",
+  "simplify-code": "USEFUL",
+  "google-workspace": "USEFUL",
+  powerpoint: "USEFUL",
+  arxiv: "USEFUL",
+  blogwatcher: "USEFUL",
+  "llm-wiki": "USEFUL",
+  "youtube-content": "USEFUL",
+  "ocr-and-documents": "USEFUL",
+  "huggingface-hub": "USEFUL",
+  // RISKY
+  "macos-computer-use": "RISKY",
+  // DISABLE-UNUSED — wrong platform or domain
+  "apple-notes": "DISABLE-UNUSED",
+  "apple-reminders": "DISABLE-UNUSED",
+  findmy: "DISABLE-UNUSED",
+  imessage: "DISABLE-UNUSED",
+  openhue: "DISABLE-UNUSED",
+  "teams-meeting-pipeline": "DISABLE-UNUSED",
+  yuanbao: "DISABLE-UNUSED",
+};
+
+const RECOMMENDATION_METADATA: Record<
+  Recommendation,
+  {
+    label: string;
+    tone: "success" | "secondary" | "warning" | "destructive" | "outline";
+    reason: string;
+  }
+> = {
+  CORE: {
+    label: "CORE",
+    tone: "success",
+    reason: "Essential for daily workflow — keep always active.",
+  },
+  USEFUL: {
+    label: "USEFUL",
+    tone: "secondary",
+    reason: "Valuable for developer workflow — active in 'developer' profile.",
+  },
+  OPTIONAL: {
+    label: "OPTIONAL",
+    tone: "outline",
+    reason: "Niche or creative — activate per-task via 'creative-lab' profile.",
+  },
+  RISKY: {
+    label: "RISKY",
+    tone: "destructive",
+    reason:
+      "Potential security risk or unsandboxed platform access — disable unless explicitly needed.",
+  },
+  BROKEN: {
+    label: "BROKEN",
+    tone: "destructive",
+    reason: "Empty or stub SKILL.md — not functional without manual setup.",
+  },
+  "DISABLE-UNUSED": {
+    label: "DISABLE",
+    tone: "warning",
+    reason:
+      "Platform mismatch or no usage evidence — disable to reduce noise.",
+  },
+};
+
+const PROFILES = [
+  {
+    name: "daily",
+    label: "Daily",
+    description: "Minimal daily ops — coding, GitHub, memory, planning.",
+    skills: [
+      "claude-code", "codex", "hermes-agent",
+      "devssd-ops", "multi-agent-playbook",
+      "github-auth", "github-code-review", "github-issues",
+      "github-pr-workflow", "github-repo-management", "codebase-inspection",
+      "obsidian", "plan", "requesting-code-review", "spike",
+      "systematic-debugging", "test-driven-development",
+      "hermes-agent-skill-authoring", "ocr-and-documents", "youtube-content",
+    ],
+  },
+  {
+    name: "developer",
+    label: "Developer",
+    description: "Full dev tooling — research, light creative, MCP, Docker.",
+    skills: [
+      "claude-code", "codex", "hermes-agent", "opencode",
+      "devssd-ops", "multi-agent-playbook",
+      "github-auth", "github-code-review", "github-issues",
+      "github-pr-workflow", "github-repo-management", "codebase-inspection",
+      "obsidian", "plan", "requesting-code-review", "spike",
+      "systematic-debugging", "test-driven-development",
+      "hermes-agent-skill-authoring",
+      "architecture-diagram", "claude-design", "excalidraw", "sketch",
+      "humanizer", "popular-web-designs",
+      "jupyter-live-kernel", "dogfood",
+      "node-inspect-debugger", "python-debugpy", "simplify-code",
+      "google-workspace", "powerpoint", "arxiv", "blogwatcher",
+      "llm-wiki", "ocr-and-documents", "youtube-content",
+    ],
+  },
+  {
+    name: "creative-lab",
+    label: "Creative Lab",
+    description: "Full creative + developer — NOT the default. Activate for creative sprints.",
+    skills: [
+      // inherits developer, plus:
+      "ascii-art", "ascii-video", "baoyu-infographic", "comfyui", "design-md",
+      "manim-video", "p5js", "pretext", "songwriting-and-ai-music",
+      "touchdesigner-mcp", "gif-search", "heartmula", "songsee", "xurl",
+    ],
+  },
+];
+
+const SKILLS_TO_DISABLE_RECOMMENDED = [
+  "apple-notes", "apple-reminders", "findmy", "imessage",
+  "macos-computer-use", "openhue", "teams-meeting-pipeline", "yuanbao",
+];
+
+type StatusFilter = "all" | "enabled" | "disabled";
+
+/* ------------------------------------------------------------------ */
+/*  Category labels                                                    */
 /* ------------------------------------------------------------------ */
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -129,11 +301,11 @@ export default function SkillsPage() {
   const [toolsets, setToolsets] = useState<ToolsetInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [view, setView] = useState<"skills" | "toolsets" | "hub">("skills");
+  const [view, setView] = useState<"skills" | "toolsets" | "hub" | "governance">("skills");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [togglingSkills, setTogglingSkills] = useState<Set<string>>(new Set());
   const [configToolset, setConfigToolset] = useState<ToolsetInfo | null>(null);
-  // Skill editor dialog: open + which skill is being edited (null = create).
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorSkill, setEditorSkill] = useState<string | null>(null);
   const { toast, showToast } = useToast();
@@ -245,16 +417,19 @@ export default function SkillsPage() {
 
   const activeSkills = useMemo(() => {
     if (isSearching) return [];
-    if (!activeCategory)
-      return [...skills].sort((a, b) => a.name.localeCompare(b.name));
-    return skills
-      .filter((s) =>
-        activeCategory === "__none__"
-          ? !s.category
-          : s.category === activeCategory,
-      )
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [skills, activeCategory, isSearching]);
+    let list = activeCategory
+      ? skills.filter((s) =>
+          activeCategory === "__none__"
+            ? !s.category
+            : s.category === activeCategory,
+        )
+      : [...skills];
+
+    if (statusFilter === "enabled") list = list.filter((s) => s.enabled);
+    if (statusFilter === "disabled") list = list.filter((s) => !s.enabled);
+
+    return list.sort((a, b) => a.name.localeCompare(b.name));
+  }, [skills, activeCategory, isSearching, statusFilter]);
 
   const allCategories = useMemo(() => {
     const cats = new Map<string, number>();
@@ -276,6 +451,18 @@ export default function SkillsPage() {
   }, [skills, t]);
 
   const enabledCount = skills.filter((s) => s.enabled).length;
+  const disabledCount = skills.length - enabledCount;
+
+  const riskyActiveCount = useMemo(
+    () =>
+      skills.filter(
+        (s) =>
+          s.enabled &&
+          (SKILL_RECOMMENDATIONS[s.name] === "RISKY" ||
+            SKILL_RECOMMENDATIONS[s.name] === "DISABLE-UNUSED"),
+      ).length,
+    [skills],
+  );
 
   useLayoutEffect(() => {
     if (loading) {
@@ -288,6 +475,12 @@ export default function SkillsPage() {
         {t.skills.enabledOf
           .replace("{enabled}", String(enabledCount))
           .replace("{total}", String(skills.length))}
+        {riskyActiveCount > 0 && (
+          <span className="flex items-center gap-1 text-amber-400 text-xs">
+            <AlertTriangle className="h-3 w-3" />
+            {riskyActiveCount} risky active
+          </span>
+        )}
       </span>,
     );
     setEnd(
@@ -318,6 +511,8 @@ export default function SkillsPage() {
     };
   }, [
     enabledCount,
+    disabledCount,
+    riskyActiveCount,
     loading,
     search,
     setAfterTitle,
@@ -350,6 +545,19 @@ export default function SkillsPage() {
       <PluginSlot name="skills:top" />
       <Toast toast={toast} />
 
+      {/* ── Governance Stats Banner ── */}
+      <GovernanceStatsBanner
+        total={skills.length}
+        enabled={enabledCount}
+        disabled={disabledCount}
+        riskyActive={riskyActiveCount}
+        onGovernanceClick={() => {
+          setView("governance");
+          setSearch("");
+        }}
+        governanceActive={view === "governance"}
+      />
+
       <div className="flex flex-col sm:flex-row sm:items-start gap-4">
         <aside aria-label={t.skills.title} className="sm:w-56 sm:shrink-0">
           <div className="sm:sticky sm:top-0">
@@ -369,6 +577,7 @@ export default function SkillsPage() {
                   onClick={() => {
                     setView("skills");
                     setActiveCategory(null);
+                    setStatusFilter("all");
                     setSearch("");
                   }}
                 />
@@ -378,6 +587,15 @@ export default function SkillsPage() {
                   active={view === "toolsets"}
                   onClick={() => {
                     setView("toolsets");
+                    setSearch("");
+                  }}
+                />
+                <PanelItem
+                  icon={LayoutDashboard}
+                  label="Governance"
+                  active={view === "governance"}
+                  onClick={() => {
+                    setView("governance");
                     setSearch("");
                   }}
                 />
@@ -392,6 +610,30 @@ export default function SkillsPage() {
                 />
               </div>
 
+              {view === "skills" && !isSearching && (
+                <div className="hidden sm:flex flex-col border-t border-border">
+                  <div className="px-3 pt-2 pb-1 font-mondwest text-display text-xs tracking-[0.12em] text-text-tertiary">
+                    Status
+                  </div>
+                  <div className="flex flex-col p-2 pt-1 gap-px">
+                    {(["all", "enabled", "disabled"] as StatusFilter[]).map((s) => (
+                      <ListItem
+                        key={s}
+                        active={statusFilter === s}
+                        onClick={() => setStatusFilter(s)}
+                        className="rounded-none px-2 py-1 text-xs capitalize"
+                      >
+                        {s === "all"
+                          ? `All (${skills.length})`
+                          : s === "enabled"
+                          ? `Active (${enabledCount})`
+                          : `Disabled (${disabledCount})`}
+                      </ListItem>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {view === "skills" &&
                 !isSearching &&
                 allCategories.length > 0 && (
@@ -399,7 +641,7 @@ export default function SkillsPage() {
                     <div className="px-3 pt-2 pb-1 font-mondwest text-display text-xs tracking-[0.12em] text-text-tertiary">
                       {t.skills.categories}
                     </div>
-                    <div className="flex flex-col p-2 pt-1 gap-px max-h-[calc(100vh-340px)] overflow-y-auto">
+                    <div className="flex flex-col p-2 pt-1 gap-px max-h-[calc(100vh-400px)] overflow-y-auto">
                       {allCategories.map(({ key, name, count }) => {
                         const isActive = activeCategory === key;
 
@@ -610,6 +852,12 @@ export default function SkillsPage() {
                 </div>
               )}
             </>
+          ) : view === "governance" ? (
+            <GovernancePanel
+              skills={skills}
+              onToggle={(skill) => handleToggleSkill(skill)}
+              toggling={togglingSkills}
+            />
           ) : (
             <HubBrowser showToast={showToast} profile={selectedProfile || undefined} />
           )}
@@ -642,6 +890,9 @@ function SkillRow({
   onEdit,
   noDescriptionLabel,
 }: SkillRowProps) {
+  const rec = SKILL_RECOMMENDATIONS[skill.name];
+  const recMeta = rec ? RECOMMENDATION_METADATA[rec] : null;
+
   return (
     <div className="group flex items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/40">
       <div className="pt-0.5 shrink-0">
@@ -652,7 +903,7 @@ function SkillRow({
         />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
+        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
           <span
             className={`font-mono-ui text-sm ${
               skill.enabled ? "text-foreground" : "text-muted-foreground"
@@ -660,6 +911,18 @@ function SkillRow({
           >
             {skill.name}
           </span>
+          {recMeta && (
+            <span title={recMeta.reason}>
+              <Badge tone={recMeta.tone} className="text-[0.6rem] px-1 py-0">
+                {recMeta.label}
+              </Badge>
+            </span>
+          )}
+          {skill.category && (
+            <Badge tone="outline" className="text-[0.6rem] px-1 py-0 font-mono">
+              {prettyCategory(skill.category, "general")}
+            </Badge>
+          )}
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
           {skill.description || noDescriptionLabel}
@@ -1531,6 +1794,319 @@ function ScanPanel({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Governance Stats Banner                                            */
+/* ------------------------------------------------------------------ */
+
+function GovernanceStatsBanner({
+  total,
+  enabled,
+  disabled,
+  riskyActive,
+  onGovernanceClick,
+  governanceActive,
+}: {
+  total: number;
+  enabled: number;
+  disabled: number;
+  riskyActive: number;
+  onGovernanceClick: () => void;
+  governanceActive: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-3 px-3 py-2.5 border border-border bg-muted/10 rounded-none text-xs">
+      <LayoutDashboard className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
+      <div className="flex flex-wrap items-center gap-2 flex-1">
+        <span className="text-text-secondary font-mondwest tracking-[0.08em] uppercase text-[0.65rem]">
+          Skills Governance
+        </span>
+        <Badge tone="secondary" className="text-xs">
+          {total} total
+        </Badge>
+        <Badge tone="success" className="text-xs">
+          {enabled} active
+        </Badge>
+        <Badge tone="outline" className="text-xs">
+          {disabled} disabled
+        </Badge>
+        {riskyActive > 0 && (
+          <Badge tone="destructive" className="text-xs flex items-center gap-1">
+            <AlertTriangle className="h-2.5 w-2.5" />
+            {riskyActive} risky active
+          </Badge>
+        )}
+      </div>
+      <Button
+        size="xs"
+        outlined={!governanceActive}
+        onClick={onGovernanceClick}
+        prefix={<Layers className="h-3 w-3" />}
+        className="text-xs whitespace-nowrap"
+      >
+        Governance center
+      </Button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Governance Panel                                                   */
+/* ------------------------------------------------------------------ */
+
+function GovernancePanel({
+  skills,
+  onToggle,
+  toggling,
+}: {
+  skills: SkillInfo[];
+  onToggle: (skill: SkillInfo) => void;
+  toggling: Set<string>;
+}) {
+  const [recFilter, setRecFilter] = useState<Recommendation | "all">("all");
+
+  const riskyActive = skills.filter(
+    (s) =>
+      s.enabled &&
+      (SKILL_RECOMMENDATIONS[s.name] === "RISKY" ||
+        SKILL_RECOMMENDATIONS[s.name] === "DISABLE-UNUSED"),
+  );
+
+  const filtered = useMemo(() => {
+    if (recFilter === "all") return skills;
+    return skills.filter((s) => SKILL_RECOMMENDATIONS[s.name] === recFilter);
+  }, [skills, recFilter]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Attention required */}
+      {riskyActive.length > 0 && (
+        <Card className="rounded-none border-amber-500/40 bg-amber-500/5">
+          <CardHeader className="py-3 px-4">
+            <CardTitle className="text-sm flex items-center gap-2 text-amber-400">
+              <AlertTriangle className="h-4 w-4" />
+              Attention required ({riskyActive.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4">
+            <p className="text-xs text-muted-foreground mb-3">
+              The following skills are currently enabled but are flagged as
+              RISKY or DISABLE-UNUSED based on governance analysis. Consider
+              disabling them or verify they are intentionally active.
+            </p>
+            <div className="grid gap-1">
+              {riskyActive.map((skill) => {
+                const rec = SKILL_RECOMMENDATIONS[skill.name];
+                const meta = rec ? RECOMMENDATION_METADATA[rec] : null;
+                return (
+                  <div
+                    key={skill.name}
+                    className="flex items-center gap-3 px-3 py-2 border border-border bg-background/50"
+                  >
+                    <Switch
+                      checked={skill.enabled}
+                      onCheckedChange={() => onToggle(skill)}
+                      disabled={toggling.has(skill.name)}
+                    />
+                    <span className="font-mono-ui text-sm flex-1">{skill.name}</span>
+                    {meta && (
+                      <Badge tone={meta.tone} className="text-xs">
+                        {meta.label}
+                      </Badge>
+                    )}
+                    {meta && (
+                      <span className="text-xs text-text-tertiary max-w-[200px] truncate hidden sm:block">
+                        {meta.reason}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Recommended profiles */}
+      <Card className="rounded-none">
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Star className="h-4 w-4 text-primary" />
+            Recommended Profiles
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <p className="text-xs text-muted-foreground mb-4">
+            Three curated skill profiles for this workspace. Apply via{" "}
+            <code className="font-mono bg-muted px-1">hermes skills</code> or
+            toggle skills individually above.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {PROFILES.map((profile) => (
+              <div
+                key={profile.name}
+                className="flex flex-col gap-2 border border-border p-3 bg-muted/10"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="font-mondwest text-sm tracking-[0.06em]">
+                    {profile.label}
+                  </span>
+                  {profile.name === "creative-lab" && (
+                    <Badge tone="outline" className="text-[0.6rem]">
+                      not default
+                    </Badge>
+                  )}
+                  {profile.name === "daily" && (
+                    <Badge tone="success" className="text-[0.6rem]">
+                      recommended
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-text-secondary">{profile.description}</p>
+                <p className="text-xs text-text-tertiary">
+                  {profile.skills.length} skills
+                </p>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {profile.skills.slice(0, 5).map((s) => (
+                    <Badge key={s} tone="outline" className="text-[0.6rem] font-mono px-1 py-0">
+                      {s}
+                    </Badge>
+                  ))}
+                  {profile.skills.length > 5 && (
+                    <Badge tone="outline" className="text-[0.6rem] px-1 py-0">
+                      +{profile.skills.length - 5} more
+                    </Badge>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* All skills with recommendation filter */}
+      <Card className="rounded-none">
+        <CardHeader className="py-3 px-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Filter className="h-4 w-4" />
+              Skills by Recommendation
+            </CardTitle>
+            <div className="flex flex-wrap gap-1">
+              {(["all", "CORE", "USEFUL", "OPTIONAL", "DISABLE-UNUSED", "RISKY", "BROKEN"] as const).map(
+                (r) => (
+                  <Button
+                    key={r}
+                    size="xs"
+                    outlined={recFilter !== r}
+                    onClick={() => setRecFilter(r)}
+                    className="text-[0.65rem] h-5 px-1.5"
+                  >
+                    {r === "all" ? `All (${skills.length})` : r}
+                  </Button>
+                ),
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          {filtered.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-6">
+              No skills match this filter.
+            </p>
+          ) : (
+            <div className="grid gap-1">
+              {filtered.map((skill) => {
+                const rec = SKILL_RECOMMENDATIONS[skill.name];
+                const meta = rec ? RECOMMENDATION_METADATA[rec] : null;
+                return (
+                  <div
+                    key={skill.name}
+                    className="flex items-start gap-3 px-3 py-2.5 hover:bg-muted/40 transition-colors"
+                  >
+                    <Switch
+                      checked={skill.enabled}
+                      onCheckedChange={() => onToggle(skill)}
+                      disabled={toggling.has(skill.name)}
+                      className="mt-0.5 shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 mb-0.5">
+                        <span
+                          className={`font-mono-ui text-sm ${
+                            skill.enabled ? "text-foreground" : "text-muted-foreground"
+                          }`}
+                        >
+                          {skill.name}
+                        </span>
+                        {meta ? (
+                          <span title={meta.reason}>
+                            <Badge tone={meta.tone} className="text-[0.6rem] px-1 py-0">
+                              {meta.label}
+                            </Badge>
+                          </span>
+                        ) : (
+                          <Badge tone="outline" className="text-[0.6rem] px-1 py-0">
+                            OPTIONAL
+                          </Badge>
+                        )}
+                        {skill.category && (
+                          <Badge tone="outline" className="text-[0.6rem] px-1 py-0 font-mono">
+                            {prettyCategory(skill.category, "general")}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-muted-foreground line-clamp-1 flex-1">
+                          {skill.description || "No description"}
+                        </p>
+                        {meta && (
+                          <span
+                            className="text-[0.6rem] text-text-tertiary max-w-[160px] truncate hidden lg:block"
+                            title={meta.reason}
+                          >
+                            <HelpCircle className="h-2.5 w-2.5 inline mr-0.5" />
+                            {meta.reason}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Wave 19 disable recommendations */}
+      <Card className="rounded-none border-dashed">
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-sm flex items-center gap-2 text-text-secondary">
+            <ToggleLeft className="h-4 w-4" />
+            Wave 19 Recommended Disables
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <p className="text-xs text-muted-foreground mb-3">
+            The following skills are recommended to disable based on the Wave 19
+            audit (platform mismatch / unused). Run this command to apply:
+          </p>
+          <pre className="text-xs font-mono bg-background/50 border border-border p-3 rounded-none overflow-x-auto whitespace-pre-wrap break-words">
+            {`hermes skills disable \\\n  ${SKILLS_TO_DISABLE_RECOMMENDED.join(" \\\n  ")}`}
+          </pre>
+          <p className="text-xs text-text-tertiary mt-2">
+            Disabling is reversible. See{" "}
+            <code className="font-mono bg-muted px-1">
+              docs/evolution/WAVE-19-SKILLS-GOVERNANCE.md
+            </code>{" "}
+            for rationale per skill.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
