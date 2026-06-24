@@ -1647,7 +1647,10 @@ def _try_openrouter(explicit_api_key: str = None, model: str = None) -> Tuple[Op
     if pool_present:
         or_key = explicit_api_key or _pool_runtime_api_key(entry)
         if not or_key:
-            _mark_provider_unhealthy("openrouter", ttl=60)
+            _mark_provider_unhealthy(
+                "openrouter", ttl=60,
+                reason="no usable OpenRouter pool credential", quiet=True,
+            )
             return None, None
         base_url = _pool_runtime_base_url(entry, OPENROUTER_BASE_URL) or OPENROUTER_BASE_URL
         logger.debug("Auxiliary client: OpenRouter via pool")
@@ -1656,7 +1659,10 @@ def _try_openrouter(explicit_api_key: str = None, model: str = None) -> Tuple[Op
 
     or_key = explicit_api_key or os.getenv("OPENROUTER_API_KEY")
     if not or_key:
-        _mark_provider_unhealthy("openrouter", ttl=60)
+        _mark_provider_unhealthy(
+            "openrouter", ttl=60,
+            reason="OPENROUTER_API_KEY not set", quiet=True,
+        )
         return None, None
     logger.debug("Auxiliary client: OpenRouter")
     return OpenAI(api_key=or_key, base_url=OPENROUTER_BASE_URL,
@@ -1688,7 +1694,10 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
                 "Auxiliary: skipping Nous Portal (rate-limited, resets in %.0fs)",
                 _remaining,
             )
-            _mark_provider_unhealthy("nous", ttl=_remaining)
+            _mark_provider_unhealthy(
+                "nous", ttl=_remaining,
+                reason="Nous Portal rate-limited", quiet=True,
+            )
             return None, None
     except Exception:
         pass
@@ -1696,11 +1705,15 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
     nous = _read_nous_auth()
     runtime = _resolve_nous_runtime_api(force_refresh=False)
     if runtime is None and not nous:
-        logger.warning(
-            "Auxiliary Nous client unavailable: no Nous authentication found "
-            "(run: hermes auth)."
+        _log_degraded_once(
+            "nous:no-auth",
+            "Auxiliary client disabled: Nous Portal not authenticated — "
+            "run `hermes auth` to enable. Auxiliary calls will be skipped "
+            "until then.",
         )
-        _mark_provider_unhealthy("nous", ttl=60)
+        _mark_provider_unhealthy(
+            "nous", ttl=60, reason="not authenticated", quiet=True,
+        )
         return None, None
     if runtime is None and nous:
         logger.debug(
@@ -1744,11 +1757,14 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
     else:
         api_key = _nous_api_key(nous or {})
         if not api_key:
-            logger.warning(
-                "Auxiliary Nous client unavailable: no usable inference JWT found "
-                "(run: hermes auth add nous)."
+            _log_degraded_once(
+                "nous:no-jwt",
+                "Auxiliary client disabled: no usable Nous inference JWT — "
+                "run `hermes auth add nous` to enable.",
             )
-            _mark_provider_unhealthy("nous", ttl=60)
+            _mark_provider_unhealthy(
+                "nous", ttl=60, reason="no usable inference JWT", quiet=True,
+            )
             return None, None
         base_url = str((nous or {}).get("inference_base_url") or _nous_base_url()).rstrip("/")
     return (
@@ -2367,6 +2383,33 @@ _AUX_UNHEALTHY_TTL_SECONDS = 600  # 10 minutes
 _aux_unhealthy_until: Dict[str, float] = {}
 _aux_unhealthy_logged_at: Dict[str, float] = {}
 
+# Throttle for *expected* auxiliary-degradation conditions (missing auth,
+# unconfigured credentials, rate-limit). Without this, an unauthenticated or
+# depleted account re-emits the same WARNING on every auxiliary call — the
+# unhealthy mark uses a short 60s TTL so it expires and re-fires roughly once
+# a minute, flooding the log. Keyed by a stable reason string; the first
+# occurrence within the window logs at WARNING (clear + actionable), repeats
+# drop to DEBUG so the log shows the state once without spamming it.
+_AUX_DEGRADED_WARN_INTERVAL = 600  # re-surface a persistent condition ≤1×/10 min
+_aux_degraded_warned_at: Dict[str, float] = {}
+
+
+def _log_degraded_once(key: str, message: str, *args: Any) -> None:
+    """Log an expected auxiliary-degradation condition once per window.
+
+    Emits ``message`` at WARNING the first time ``key`` is seen (or after the
+    throttle window elapses) and at DEBUG for repeats within the window. Use
+    this for steady-state, user-actionable conditions (e.g. "not
+    authenticated") that would otherwise be logged on every auxiliary call.
+    """
+    now = time.time()
+    last = _aux_degraded_warned_at.get(key, 0.0)
+    if now - last >= _AUX_DEGRADED_WARN_INTERVAL:
+        _aux_degraded_warned_at[key] = now
+        logger.warning(message, *args)
+    else:
+        logger.debug(message, *args)
+
 # Map provider names that show up in resolved_provider / explicit-config
 # back to the chain labels used by _get_provider_chain(). Keep in sync
 # with the alias map in _try_payment_fallback below.
@@ -2392,21 +2435,42 @@ def _normalize_chain_label(provider: str) -> str:
     return _AUX_UNHEALTHY_LABEL_ALIASES.get(p, p)
 
 
-def _mark_provider_unhealthy(provider: str, ttl: Optional[float] = None) -> None:
-    """Mark ``provider`` as recently-402'd, hidden from chain iteration
-    until the TTL expires. Called from the payment-fallback branches in
-    ``call_llm`` and ``acall_llm`` after a confirmed payment error.
+def _mark_provider_unhealthy(
+    provider: str,
+    ttl: Optional[float] = None,
+    *,
+    reason: str = "payment / credit error",
+    quiet: bool = False,
+) -> None:
+    """Mark ``provider`` as temporarily unhealthy, hidden from chain
+    iteration until the TTL expires.
+
+    Called both from the payment-fallback branches in ``call_llm`` /
+    ``acall_llm`` after a confirmed 402 (the default ``reason``) and from
+    resolution helpers that hit an *expected* config/auth gap (no API key,
+    not authenticated, rate-limited).
+
+    ``reason`` is interpolated into the log so the message reflects what
+    actually happened instead of always claiming "payment / credit error".
+
+    ``quiet=True`` downgrades the mark log to DEBUG. Use it when the caller
+    already surfaced a single human-facing WARNING (e.g. via
+    ``_log_degraded_once``) so an unauthenticated/unconfigured provider does
+    not emit a second, misleading warning on every auxiliary call.
     """
     label = _normalize_chain_label(provider)
     if not label:
         return
-    expires_at = time.time() + (ttl if ttl is not None else _AUX_UNHEALTHY_TTL_SECONDS)
+    ttl_seconds = ttl if ttl is not None else _AUX_UNHEALTHY_TTL_SECONDS
+    expires_at = time.time() + ttl_seconds
     _aux_unhealthy_until[label] = expires_at
-    logger.warning(
-        "Auxiliary: marking %s unhealthy for %ds (payment / credit error). "
+    log = logger.debug if quiet else logger.warning
+    log(
+        "Auxiliary: marking %s unhealthy for %ds (%s). "
         "Subsequent auxiliary calls will skip it until %s.",
         label,
-        int(ttl if ttl is not None else _AUX_UNHEALTHY_TTL_SECONDS),
+        int(ttl_seconds),
+        reason,
         time.strftime("%H:%M:%S", time.localtime(expires_at)),
     )
 
@@ -2448,6 +2512,7 @@ def _reset_aux_unhealthy_cache() -> None:
     user trigger (e.g. ``hermes config aux reset``)."""
     _aux_unhealthy_until.clear()
     _aux_unhealthy_logged_at.clear()
+    _aux_degraded_warned_at.clear()
 
 
 def _is_payment_error(exc: Exception) -> bool:

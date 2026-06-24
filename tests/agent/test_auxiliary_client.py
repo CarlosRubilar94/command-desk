@@ -3993,6 +3993,88 @@ class TestAuxUnhealthyCache:
             assert _is_provider_unhealthy("openrouter") is True
 
 
+# ── Auxiliary degraded-state log hygiene (no-auth / config not-spammy) ──────
+
+
+class TestAuxDegradedLogging:
+    """Expected degradation (no auth, missing creds, rate-limit) must log a
+    single clear WARNING and then go quiet, instead of re-warning on every
+    auxiliary call. Regression cover: an unauthenticated session looped
+    ``no Nous authentication found`` + a misleading ``(payment / credit
+    error)`` mark roughly once a minute forever.
+    """
+
+    def setup_method(self):
+        from agent.auxiliary_client import _reset_aux_unhealthy_cache
+        _reset_aux_unhealthy_cache()
+
+    def teardown_method(self):
+        from agent.auxiliary_client import _reset_aux_unhealthy_cache
+        _reset_aux_unhealthy_cache()
+
+    def test_log_degraded_once_warns_then_debug(self, caplog):
+        from agent.auxiliary_client import _log_degraded_once
+        with caplog.at_level(logging.DEBUG, logger="agent.auxiliary_client"):
+            _log_degraded_once("k", "first occurrence")
+            _log_degraded_once("k", "second occurrence")
+            _log_degraded_once("k", "third occurrence")
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        debugs = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(warnings) == 1
+        assert "first occurrence" in warnings[0].message
+        assert any("second occurrence" in r.message for r in debugs)
+        assert any("third occurrence" in r.message for r in debugs)
+
+    def test_quiet_mark_no_warning_but_still_unhealthy(self, caplog):
+        from agent.auxiliary_client import (
+            _mark_provider_unhealthy,
+            _is_provider_unhealthy,
+        )
+        with caplog.at_level(logging.DEBUG, logger="agent.auxiliary_client"):
+            _mark_provider_unhealthy(
+                "nous", ttl=60, reason="not authenticated", quiet=True,
+            )
+        assert _is_provider_unhealthy("nous") is True
+        assert not any(r.levelno == logging.WARNING for r in caplog.records)
+        # The accurate reason replaces the hardcoded payment wording.
+        assert any("not authenticated" in r.message for r in caplog.records)
+        assert not any(
+            "payment / credit error" in r.message for r in caplog.records
+        )
+
+    def test_payment_mark_still_warns_with_default_reason(self, caplog):
+        from agent.auxiliary_client import _mark_provider_unhealthy
+        with caplog.at_level(logging.WARNING, logger="agent.auxiliary_client"):
+            _mark_provider_unhealthy("openrouter")
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "payment / credit error" in warnings[0].message
+
+    def test_try_nous_no_auth_logs_single_actionable_warning(self, caplog):
+        """Five consecutive unauthenticated _try_nous() calls must yield
+        exactly one WARNING (clear + actionable) and zero misleading
+        payment-error warnings — the rest stay at DEBUG."""
+        from agent.auxiliary_client import _try_nous
+        with patch("agent.nous_rate_guard.nous_rate_limit_remaining",
+                   return_value=None), \
+             patch("agent.auxiliary_client._read_nous_auth", return_value=None), \
+             patch("agent.auxiliary_client._resolve_nous_runtime_api",
+                   return_value=None):
+            with caplog.at_level(logging.DEBUG, logger="agent.auxiliary_client"):
+                for _ in range(5):
+                    client, model = _try_nous()
+                    assert client is None and model is None
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, (
+            f"expected one WARNING, got: {[r.message for r in warnings]}"
+        )
+        assert "not authenticated" in warnings[0].message
+        assert "hermes auth" in warnings[0].message
+        assert not any(
+            "payment / credit error" in r.message for r in warnings
+        )
+
+
 # ── auxiliary_max_tokens_param ──────────────────────────────────────────────
 
 
