@@ -1826,23 +1826,23 @@ function GovernanceStatsBanner({
   governanceActive: boolean;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-3 px-3 py-2.5 border border-border bg-muted/10 rounded-none text-xs">
-      <LayoutDashboard className="h-3.5 w-3.5 text-text-tertiary shrink-0" />
-      <div className="flex flex-wrap items-center gap-2 flex-1">
-        <span className="text-text-secondary font-mondwest tracking-[0.08em] uppercase text-[0.65rem]">
+    <div className="flex flex-col gap-2.5 rounded-none border border-border bg-muted/10 px-3 py-2.5 text-xs sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-2">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1.5">
+        <span className="flex items-center gap-1.5 font-mondwest text-[0.65rem] uppercase tracking-[0.08em] text-text-secondary">
+          <LayoutDashboard className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
           Skills Governance
         </span>
-        <Badge tone="secondary" className="text-xs">
+        <Badge tone="secondary" className="text-xs tabular-nums">
           {total} total
         </Badge>
-        <Badge tone="success" className="text-xs">
+        <Badge tone="success" className="text-xs tabular-nums">
           {enabled} active
         </Badge>
-        <Badge tone="outline" className="text-xs">
+        <Badge tone="outline" className="text-xs tabular-nums">
           {disabled} disabled
         </Badge>
         {riskyActive > 0 && (
-          <Badge tone="destructive" className="text-xs flex items-center gap-1">
+          <Badge tone="destructive" className="flex items-center gap-1 text-xs tabular-nums">
             <AlertTriangle className="h-2.5 w-2.5" />
             {riskyActive} risky active
           </Badge>
@@ -1853,7 +1853,7 @@ function GovernanceStatsBanner({
         outlined={!governanceActive}
         onClick={onGovernanceClick}
         prefix={<Layers className="h-3 w-3" />}
-        className="text-xs whitespace-nowrap"
+        className="w-full shrink-0 justify-center whitespace-nowrap text-xs sm:ml-auto sm:w-auto"
       >
         Governance center
       </Button>
