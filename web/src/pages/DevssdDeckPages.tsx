@@ -34,7 +34,7 @@ export function DevssdDoctorPage() {
       onRefresh={refresh}
       loading={loading}
     >
-      <LoadingOrError loading={loading} error={error} />
+      <LoadingOrError loading={loading} error={error} onRetry={refresh} />
       <LayoutGrid>
         <DeckCard title="Ações" colClass="col-12">
           <DeckToolbar>
@@ -114,7 +114,7 @@ export function BitwardenStatusPage() {
       onRefresh={refresh}
       loading={loading}
     >
-      <LoadingOrError loading={loading} error={error} />
+      <LoadingOrError loading={loading} error={error} onRetry={refresh} />
       {bw ? (
         <LayoutGrid>
           <DeckCard title="Bitwarden SM" colClass="col-6">
@@ -159,7 +159,7 @@ export function GatewayStatusPage() {
       onRefresh={refresh}
       loading={loading}
     >
-      <LoadingOrError loading={loading} error={error} />
+      <LoadingOrError loading={loading} error={error} onRetry={refresh} />
       {gateway ? (
         <LayoutGrid>
           <DeckCard title="Gateway" colClass="col-6">
