@@ -770,6 +770,7 @@ function TemplatesDrawer({ open, onClose }: TemplatesDrawerProps) {
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function MissionsPage() {
+  const navigate = useNavigate();
   const { setEnd } = usePageHeader();
   const [missions, setMissions] = useState<MissionRow[]>([]);
   const [total, setTotal] = useState(0);
