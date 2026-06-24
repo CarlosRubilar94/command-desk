@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
-import { ExternalLink, Package, RefreshCw, Trash2, Eye, EyeOff } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ExternalLink,
+  Package,
+  RefreshCw,
+  Trash2,
+  Eye,
+  EyeOff,
+  GitBranch,
+  KeyRound,
+} from "lucide-react";
 import type { Translations } from "@/i18n/types";
 import { Link } from "react-router-dom";
 import { DeckPageShell } from "@/components/DeckPageShell";
@@ -25,6 +34,26 @@ import { usePageHeader } from "@/contexts/usePageHeader";
 
 /** Select value for built-in memory (`config` uses empty string). Never use `""` — UI Select maps empty value to an empty label. */
 const MEMORY_PROVIDER_BUILTIN = "__hermes_memory_builtin__";
+
+/**
+ * Best-effort extraction of required ENV variable names (e.g. `BROWSERBASE_API_KEY`)
+ * from a plugin's auth command / description. Presentation-only: the hub payload
+ * does not expose env keys as a discrete field, so we surface the credential-shaped
+ * UPPER_SNAKE_CASE tokens that already appear in the auth hint text.
+ */
+const ENV_KEY_HINT = /(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API|ACCESS|CLIENT_ID|PROJECT|ENDPOINT|URL)/;
+
+function extractEnvKeys(...sources: Array<string | undefined | null>): string[] {
+  const text = sources.filter(Boolean).join(" ");
+  const matches = text.match(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/g) ?? [];
+  const seen = new Set<string>();
+  for (const m of matches) {
+    if (m.length < 6) continue;
+    if (!ENV_KEY_HINT.test(m)) continue;
+    seen.add(m);
+  }
+  return Array.from(seen);
+}
 
 export default function PluginsPage() {
   const [hub, setHub] = useState<PluginsHubResponse | null>(null);
@@ -149,6 +178,10 @@ export default function PluginsPage() {
 
   const rows = hub?.plugins ?? [];
   const providers = hub?.providers;
+  const memoryDesc =
+    providers?.memory_options.find((o) => o.name === memorySel)?.description ?? "";
+  const contextDesc =
+    providers?.context_options.find((o) => o.name === contextSel)?.description ?? "";
 
   return (
     <DeckPageShell>
@@ -188,6 +221,12 @@ export default function PluginsPage() {
                     </SelectOption>
                   ))}
                 </Select>
+
+                <p className="min-h-[1rem] text-[0.7rem] leading-snug text-text-tertiary">
+                  {memorySel === MEMORY_PROVIDER_BUILTIN
+                    ? `(${t.pluginsPage.providerDefaults})`
+                    : memoryDesc}
+                </p>
               </div>
 
               <div className="grid gap-2 min-w-0">
@@ -209,6 +248,10 @@ export default function PluginsPage() {
                       </SelectOption>
                     ))}
                 </Select>
+
+                <p className="min-h-[1rem] text-[0.7rem] leading-snug text-text-tertiary">
+                  {contextDesc}
+                </p>
               </div>
               </div>
 
@@ -219,7 +262,7 @@ export default function PluginsPage() {
                 onClick={() => void onSaveProviders()}
                 prefix={providerBusy ? <Spinner /> : undefined}
               >
-                {t.common.save}
+                {t.pluginsPage.saveProviders}
               </Button>
             </CardContent>
           </Card>
@@ -227,68 +270,85 @@ export default function PluginsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>{t.pluginsPage.installHeading}</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <GitBranch className="h-4 w-4 text-text-tertiary" />
+              {t.pluginsPage.installHeading}
+            </CardTitle>
             <p className="text-xs tracking-[0.08em] text-text-tertiary">
               {t.pluginsPage.installHint}
             </p>
           </CardHeader>
 
-
           <CardContent className="flex flex-col gap-4">
-
             <div className="flex flex-col gap-2">
-
               <Label htmlFor="install-url">{t.pluginsPage.identifierLabel}</Label>
 
-              <Input
-                className="font-mono-ui lowercase"
-                id="install-url"
-                placeholder="owner/repo, owner/repo/subdir, or https://..."
-                spellCheck={false}
-                value={installId}
-                onChange={(e) => setInstallId(e.target.value)}
-              />
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Input
+                  className="font-mono-ui lowercase sm:flex-1"
+                  id="install-url"
+                  placeholder="owner/repo, owner/repo/subdir, or https://..."
+                  spellCheck={false}
+                  value={installId}
+                  onChange={(e) => setInstallId(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !installBusy && installId.trim()) {
+                      e.preventDefault();
+                      void onInstall();
+                    }
+                  }}
+                />
+
+                <Button
+                  className="w-full shrink-0 uppercase sm:w-auto"
+                  size="sm"
+                  disabled={installBusy || !installId.trim()}
+                  onClick={() => void onInstall()}
+                  prefix={installBusy ? <Spinner /> : undefined}
+                >
+                  {t.pluginsPage.installBtn}
+                </Button>
+              </div>
             </div>
 
-
-            <div className="flex flex-wrap items-center gap-8">
-
+            <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border border-border/60 bg-muted/10 px-3 py-2.5">
               <div className="flex items-center gap-3">
-
-                <Switch checked={installForce} onCheckedChange={setInstallForce} />
-
-                <span className="text-xs tracking-[0.06em] text-text-secondary">
+                <Switch
+                  id="install-force"
+                  checked={installForce}
+                  onCheckedChange={setInstallForce}
+                />
+                <Label
+                  htmlFor="install-force"
+                  className="cursor-pointer text-xs tracking-[0.06em] text-text-secondary"
+                >
                   {t.pluginsPage.forceReinstall}
-                </span>
+                </Label>
               </div>
 
               <div className="flex items-center gap-3">
-
-                <Switch checked={installEnable} onCheckedChange={setInstallEnable} />
-
-                <span className="text-xs tracking-[0.06em] text-text-secondary">
+                <Switch
+                  id="install-enable"
+                  checked={installEnable}
+                  onCheckedChange={setInstallEnable}
+                />
+                <Label
+                  htmlFor="install-enable"
+                  className="cursor-pointer text-xs tracking-[0.06em] text-text-secondary"
+                >
                   {t.pluginsPage.enableAfterInstall}
-                </span>
+                </Label>
               </div>
             </div>
 
-            <Button
-              className="w-fit uppercase"
-              size="sm"
-              disabled={installBusy}
-              onClick={() => void onInstall()}
-              prefix={installBusy ? <Spinner /> : undefined}
-            >
-              {t.pluginsPage.installBtn}
-            </Button>
-
-            <p className="text-xs tracking-[0.06em] text-text-tertiary">
-              {t.pluginsPage.rescanHint}
-            </p>
-
-            <p className="text-xs tracking-[0.06em] text-text-tertiary">
-              {t.pluginsPage.removeHint}
-            </p>
+            <div className="flex flex-col gap-1">
+              <p className="text-xs tracking-[0.06em] text-text-tertiary">
+                {t.pluginsPage.rescanHint}
+              </p>
+              <p className="text-xs tracking-[0.06em] text-text-tertiary">
+                {t.pluginsPage.removeHint}
+              </p>
+            </div>
           </CardContent>
         </Card>
 
@@ -408,6 +468,18 @@ function PluginRowCard(props: PluginRowCardProps) {
         ? "destructive"
         : "outline";
 
+  const envKeys = useMemo(
+    () => extractEnvKeys(row.auth_command, row.description),
+    [row.auth_command, row.description],
+  );
+
+  const statusLabel =
+    row.runtime_status === "enabled"
+      ? t.common.active
+      : row.runtime_status === "disabled"
+        ? t.common.disabled
+        : t.pluginsPage.inactive;
+
   return (
 
     <Card className={cn(busy ? "opacity-70" : undefined)}>
@@ -436,35 +508,38 @@ function PluginRowCard(props: PluginRowCardProps) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {row.runtime_status === "enabled" ? (
-              <Button
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={row.runtime_status === "enabled"}
                 disabled={busy}
-                ghost
-                size="sm"
-                onClick={() => {
+                aria-label={
+                  row.runtime_status === "enabled"
+                    ? t.pluginsPage.disableRuntime
+                    : t.pluginsPage.enableRuntime
+                }
+                onCheckedChange={(next) => {
                   void setRuntimeLoading(row.name, async () => {
-                    await api.disableAgentPlugin(row.name);
-                    showToast(t.pluginsPage.disableRuntime, "success");
+                    if (next) {
+                      await api.enableAgentPlugin(row.name);
+                      showToast(t.pluginsPage.enableRuntime, "success");
+                    } else {
+                      await api.disableAgentPlugin(row.name);
+                      showToast(t.pluginsPage.disableRuntime, "success");
+                    }
                   });
                 }}
+              />
+              <span
+                className={cn(
+                  "text-xs tracking-[0.04em]",
+                  row.runtime_status === "enabled"
+                    ? "text-success"
+                    : "text-text-tertiary",
+                )}
               >
-                {t.pluginsPage.disableRuntime}
-              </Button>
-            ) : (
-              <Button
-                disabled={busy}
-                ghost
-                size="sm"
-                onClick={() => {
-                  void setRuntimeLoading(row.name, async () => {
-                    await api.enableAgentPlugin(row.name);
-                    showToast(t.pluginsPage.enableRuntime, "success");
-                  });
-                }}
-              >
-                {t.pluginsPage.enableRuntime}
-              </Button>
-            )}
+                {statusLabel}
+              </span>
+            </div>
 
             {tabPath ? (
 
@@ -540,6 +615,23 @@ function PluginRowCard(props: PluginRowCardProps) {
           <p className="min-w-0 w-full text-xs tracking-[0.06em] text-text-secondary break-words">
             {row.description}
           </p>
+        ) : null}
+
+        {envKeys.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 text-[0.6rem] uppercase tracking-[0.12em] text-text-tertiary">
+              <KeyRound className="h-3 w-3" />
+              ENV
+            </span>
+            {envKeys.map((k) => (
+              <code
+                key={k}
+                className="rounded-sm border border-current/20 bg-muted/40 px-1.5 py-0.5 font-mono text-[0.65rem] text-text-secondary"
+              >
+                {k}
+              </code>
+            ))}
+          </div>
         ) : null}
 
         {dm?.slots?.length ? (
