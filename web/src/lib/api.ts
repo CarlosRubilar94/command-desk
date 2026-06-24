@@ -1349,6 +1349,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  getMcpControlCenter: () =>
+    fetchJSON<McpControlCenter>("/api/mcp/control-center"),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -1564,6 +1566,8 @@ export interface McpControlCenterServer {
   env: Record<string, string>;
   enabled: boolean;
   status: McpStatusChip;
+  env_keys?: string[];
+  missing_env?: string[];
 }
 
 export interface McpControlCenterCatalogEntry {

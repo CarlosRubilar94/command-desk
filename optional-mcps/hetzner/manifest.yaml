@@ -1,0 +1,56 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: hetzner
+description: Manage Hetzner Cloud servers, SSH keys, and contexts via hcloud CLI.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# The Hetzner MCP server is a thin Node.js shim that wraps the hcloud CLI.
+# It reads HCLOUD_PATH (path to the hcloud binary) from env, defaulting to
+# "hcloud" if on PATH. The hcloud CLI must already be configured with an
+# active context (run: hcloud context create <name> --token <HCLOUD_TOKEN>).
+#
+# Windows default path:
+#   C:\Users\Vinicius\AppData\Local\Microsoft\WinGet\Packages\HetznerCloud.CLI_...\hcloud.exe
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/hetzner-hcloud-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/hetzner-hcloud-mcp.js ."
+
+auth:
+  type: api_key
+  env:
+    - name: HCLOUD_PATH
+      prompt: "Path to hcloud binary (leave blank to use PATH)"
+      required: false
+      secret: false
+      default: "hcloud"
+    - name: HCLOUD_TOKEN
+      prompt: "Hetzner Cloud API token (for hcloud context setup)"
+      required: true
+      secret: true
+
+# Status: READY-WAITING-CREDENTIAL (hcloud context + HCLOUD_TOKEN required)
+# Run: hcloud context create devssd --token $HCLOUD_TOKEN
+
+post_install: |
+  The hetzner MCP wraps the hcloud CLI. You must configure a hcloud context:
+
+    hcloud context create devssd --token YOUR_HCLOUD_TOKEN
+    hcloud context use devssd
+
+  Then set HCLOUD_PATH in ~/.hermes/.env if hcloud is not on your PATH.
+  Windows path example:
+    HCLOUD_PATH=C:\Users\...\WinGet\Packages\HetznerCloud.CLI_...\hcloud.exe
+
+  Available tools: hcloud_context_list, hcloud_server_list,
+  hcloud_location_list, hcloud_ssh_key_list, hcloud_ssh_key_create.

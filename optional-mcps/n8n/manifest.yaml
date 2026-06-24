@@ -27,8 +27,9 @@ transport:
 install:
   type: git
   url: https://github.com/CyberSamuraiX/hermes-n8n-mcp.git
-  # Pin to a commit/tag. Required — manifests do not float HEAD.
-  ref: main
+  # Pinned to latest commit on main as of 2026-06-23 (no release tags in repo).
+  # Update by re-running: gh api repos/CyberSamuraiX/hermes-n8n-mcp/commits/main --jq .sha
+  ref: 7a9ae00795593aa1fdb4e61ecd640e8bfd0c3841
   # Bootstrap commands run inside the cloned directory after clone.
   bootstrap:
     - "python3 -m venv .venv"

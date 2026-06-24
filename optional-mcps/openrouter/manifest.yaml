@@ -1,0 +1,47 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: openrouter
+description: Query OpenRouter models and check usage from Hermes tools.
+source: https://openrouter.ai/docs
+
+# Thin Node.js server that wraps the OpenRouter REST API.
+# Reads OPENROUTER_API_KEY from env, ~/.hermes/.env, or Bitwarden SM.
+# The key is resolved via bitwarden-secret-resolver which falls back
+# through: process env → Windows user env → ~/.hermes/.env → Bitwarden SM.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/openrouter-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/openrouter-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+    - "cp docs/setup/mcp-scripts/bitwarden-secret-resolver.js ."
+
+auth:
+  type: api_key
+  env:
+    - name: OPENROUTER_API_KEY
+      prompt: "OpenRouter API key (create at openrouter.ai/keys)"
+      required: true
+      secret: true
+
+# Status: READY-WAITING-CREDENTIAL (OPENROUTER_API_KEY required)
+
+post_install: |
+  Set OPENROUTER_API_KEY in ~/.hermes/.env. Generate a key at:
+    https://openrouter.ai/keys
+
+  DevSSD Bitwarden integration: the resolver auto-reads OPENROUTER_API_KEY
+  from Bitwarden SM when bw is authenticated. Once bw is unlocked, no
+  manual env var setup is needed.
+
+  Available tools: openrouter_list_models, openrouter_chat_completion,
+  openrouter_get_usage.

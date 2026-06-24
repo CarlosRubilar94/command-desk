@@ -1,0 +1,49 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: computer-control-center
+description: Run DevSSD computer health checks, scheduled tasks, and backup operations.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# DevSSD Windows control plane. Orchestrates health checks (disk, services,
+# network), runs PowerShell scheduled tasks, and manages system backups.
+# Uses PowerShell — WINDOWS ONLY.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/computer-control-center-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  # Pinned to devssd/command-desk HEAD as of 2026-06-23 for reproducible installs.
+  ref: 2f230234e9c224e73c74699a23ec8fdd2f4b131c
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/computer-control-center-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Tool selection: read/inspect tools enabled by default; mutating tools
+# (backup, run_task, install_scheduled_tasks, control_tasks) require opt-in.
+tools:
+  default_enabled:
+    - computer_health
+    - computer_task_list
+    - computer_watchdog
+    - computer_dashboard_start
+
+# Status: READY-WAITING-LOCAL-SERVICE (Windows only — requires Windows + PowerShell)
+
+post_install: |
+  WINDOWS ONLY. Runs PowerShell for all health checks and backup operations.
+
+  Available tools: computer_health, computer_backup, computer_run_task,
+  computer_task_list, computer_watchdog, computer_dashboard_start,
+  computer_install_scheduled_tasks, computer_control_tasks.
+
+  Mutating tools (computer_backup, computer_run_task, computer_install_scheduled_tasks,
+  computer_control_tasks) are opt-in. Enable them in the tool-selection checklist.

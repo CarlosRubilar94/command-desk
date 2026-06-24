@@ -1,0 +1,39 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: dns-domain
+description: Resolve DNS records, check TLS certs, and verify Cloudflare env setup.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server for DNS and TLS operations.
+# NOTE: dns_resolve and dns_trace_common use PowerShell Resolve-DnsName which
+# is Windows-only. dns_nslookup uses nslookup (cross-platform). tls_cert_check
+# uses Node.js TLS stack (cross-platform). cloudflare_env_status checks env var
+# presence only (cross-platform, no API calls).
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/dns-domain-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/dns-domain-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY on Windows; WAITING-LOCAL-SERVICE on non-Windows (Resolve-DnsName unavailable)
+
+post_install: |
+  No credentials required. On Windows, dns_resolve and dns_trace_common use
+  PowerShell Resolve-DnsName for richer results. On Linux/macOS, only
+  dns_nslookup and tls_cert_check are fully functional.
+
+  Available tools: dns_resolve, dns_nslookup, dns_trace_common,
+  tls_cert_check, cloudflare_env_status.

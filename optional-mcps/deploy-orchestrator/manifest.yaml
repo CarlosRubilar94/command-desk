@@ -1,0 +1,49 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: deploy-orchestrator
+description: Check deploy status across Hetzner servers and Vercel projects.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Orchestration layer combining Hetzner Cloud CLI status + Vercel API status.
+# Requires hcloud CLI (configured context) and optionally VERCEL_TOKEN.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/deploy-orchestrator-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/deploy-orchestrator-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: api_key
+  env:
+    - name: HCLOUD_PATH
+      prompt: "Path to hcloud binary (leave blank to use PATH)"
+      required: false
+      secret: false
+      default: "hcloud"
+    - name: VERCEL_TOKEN
+      prompt: "Vercel API token (optional, for Vercel deploy status)"
+      required: false
+      secret: true
+
+# Status: READY-WAITING-CREDENTIAL (hcloud context required; VERCEL_TOKEN optional)
+
+post_install: |
+  Requires hcloud CLI with an active context:
+    hcloud context create devssd --token YOUR_HCLOUD_TOKEN
+    hcloud context use devssd
+
+  VERCEL_TOKEN is optional — set it in ~/.hermes/.env for Vercel project
+  status. Without it, only Hetzner tools are available.
+
+  Available tools: deploy_status_all, deploy_preflight, deploy_git_status,
+  deploy_hetzner_servers, deploy_vercel_projects.

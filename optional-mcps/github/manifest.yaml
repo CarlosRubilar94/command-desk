@@ -1,0 +1,57 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: github
+description: Interact with GitHub repositories, issues, PRs, and code search.
+source: https://github.com/github/github-mcp-server
+
+# Official GitHub MCP server (Go binary, MIT licensed).
+# Distributed via Docker at ghcr.io/github/github-mcp-server.
+# The former npm approach (@modelcontextprotocol/server-github) was deprecated
+# Apr 2025; @github/mcp-server is NOT a verified/official npm package.
+# Pinned to v1.4.0 (released 2026-06-18, latest at catalog authoring).
+# See: https://github.com/github/github-mcp-server/releases/tag/v1.4.0
+transport:
+  type: stdio
+  command: docker
+  args:
+    - "run"
+    - "-i"
+    - "--rm"
+    - "-e"
+    - "GITHUB_PERSONAL_ACCESS_TOKEN"
+    - "ghcr.io/github/github-mcp-server:v1.4.0"
+
+auth:
+  type: api_key
+  env:
+    - name: GITHUB_PERSONAL_ACCESS_TOKEN
+      prompt: "GitHub Personal Access Token (repo, read:org scopes)"
+      required: true
+      secret: true
+
+# Windows user note: the existing wrapper at
+#   C:\Users\Vinicius\Documents\Codex\mcp\github-mcp-server-wrapper.js
+# spawns the local github-mcp-server.exe and resolves GITHUB_PERSONAL_ACCESS_TOKEN
+# from Bitwarden SM or the env. To use that wrapper instead of Docker, set:
+#   command: "C:\Program Files\nodejs\node.exe"
+#   args: ["C:\\Users\\Vinicius\\Documents\\Codex\\mcp\\github-mcp-server-wrapper.js"]
+#
+# Status: READY-WAITING-CREDENTIAL (GITHUB_PERSONAL_ACCESS_TOKEN required)
+# Requires Docker installed and running.
+
+post_install: |
+  Requires Docker installed and running. The catalog pulls ghcr.io/github/github-mcp-server:v1.4.0
+  on first use (no login required — image is public).
+
+  Set GITHUB_PERSONAL_ACCESS_TOKEN in ~/.hermes/.env before starting Hermes.
+  Generate a fine-grained token at https://github.com/settings/tokens with
+  repo, read:org, and pull_request scopes at minimum.
+
+  Windows (DevSSD setup): the bitwarden-secret-resolver reads the token from
+  Bitwarden SM automatically when bw is authenticated. Unlock bw first with:
+    bw login
+  Then confirm: bw status → {"status":"unlocked"}
+
+  After config, restart Hermes to load the GitHub tools.

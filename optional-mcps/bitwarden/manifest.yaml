@@ -1,0 +1,53 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: bitwarden
+description: Read and sync secrets from Bitwarden Secrets Manager for DevSSD.
+source: https://bitwarden.com/products/secrets-manager/
+
+# Node.js MCP server wrapping the Bitwarden Secrets Manager CLI (bws.exe).
+# Requires Bitwarden SM access token and an authenticated bw CLI session.
+# The server reads secrets by key, lists all SM secrets, and syncs them to
+# the local ~/.command-desk/.env file (DevSSD convention).
+# NOTE: Stock implementation uses Windows paths (bws.exe, .command-desk/).
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/bitwarden-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/bitwarden-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: api_key
+  env:
+    - name: BWS_ACCESS_TOKEN
+      prompt: "Bitwarden Secrets Manager machine access token"
+      required: true
+      secret: true
+
+# Status: READY-WAITING-BITWARDEN-UNLOCK
+# bw status currently: unauthenticated — run `bw login` before use.
+# Even after login, BWS_ACCESS_TOKEN must be set for SM access.
+
+post_install: |
+  TWO credentials required:
+  1. Bitwarden CLI session: run `bw login` and authenticate with your account.
+     Confirm with: bw status → {"status":"unlocked"}
+  2. BWS_ACCESS_TOKEN: a Bitwarden Secrets Manager machine account token.
+     Create one at: https://bitwarden.com → SM → Machine Accounts
+
+  Set BWS_ACCESS_TOKEN in ~/.hermes/.env.
+
+  SECURITY: BWS_ACCESS_TOKEN is a long-lived machine credential.
+  Store it in an env file; never commit it to git.
+
+  Available tools: bws_get_secret, bws_list_secrets, bws_sync_env,
+  bws_validate_devssd.

@@ -1,0 +1,46 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: ps-tasks
+description: List and run Windows Task Scheduler tasks and PowerShell scripts.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server for Windows Task Scheduler. Uses PowerShell
+# Get-ScheduledTask and Start-ScheduledTask cmdlets. WINDOWS ONLY.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/powershell-tasks-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  # Pinned to devssd/command-desk HEAD as of 2026-06-23 for reproducible installs.
+  ref: 2f230234e9c224e73c74699a23ec8fdd2f4b131c
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/powershell-tasks-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Tool selection: read/inspect tools enabled by default; mutating tools
+# (task_run, task_backup_mcp) require explicit opt-in.
+tools:
+  default_enabled:
+    - ps_task_list
+    - ps_task_health_check
+
+# Status: READY-WAITING-LOCAL-SERVICE (Windows only — requires Windows Task Scheduler)
+
+post_install: |
+  WINDOWS ONLY. Requires Windows Task Scheduler (svchost.exe, Schedule).
+  Some operations may require elevated privileges.
+
+  Available tools: ps_task_list, ps_task_run, ps_task_health_check,
+  ps_task_backup_mcp.
+
+  Mutating tools (ps_task_run, ps_task_backup_mcp) are opt-in.
+  Enable them in the tool-selection checklist at install time.

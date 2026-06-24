@@ -1,0 +1,39 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: ssh-servers
+description: Monitor remote servers via SSH — disk, memory, uptime, Docker, nginx.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server that wraps ssh(1) for remote ops. Reads host list from
+# ~/.ssh/config. No API credentials needed — authentication uses the user's
+# SSH key agent or key files configured in ~/.ssh/config.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/ssh-servers-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  ref: main
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/ssh-servers-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Status: READY (if ~/.ssh/config has hosts configured and SSH agent is running)
+
+post_install: |
+  No credentials needed — this server uses your existing ~/.ssh/config and
+  SSH key agent. Ensure:
+    1. ~/.ssh/config has Host entries for your servers
+    2. Your SSH agent is running (eval $(ssh-agent) + ssh-add)
+    3. The remote user has permissions for the commands (df, docker ps, etc.)
+
+  Available tools: ssh_host_list, ssh_test, ssh_uptime, ssh_disk,
+  ssh_memory, ssh_docker_ps, ssh_nginx_status, ssh_logs_tail.

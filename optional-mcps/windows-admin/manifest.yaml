@@ -1,0 +1,52 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: windows-admin
+description: Inspect Windows processes, services, firewall rules, and port listeners.
+source: https://github.com/CarlosRubilar94/command-desk/tree/main/docs/setup
+
+# Node.js MCP server for Windows system administration. Uses PowerShell
+# cmdlets (Get-Process, Get-Service, Get-NetFirewallRule, netstat) which are
+# Windows-only. WINDOWS ONLY.
+transport:
+  type: stdio
+  command: node
+  args:
+    - "${INSTALL_DIR}/windows-admin-mcp.js"
+
+install:
+  type: git
+  url: https://github.com/CarlosRubilar94/command-desk.git
+  # Pinned to devssd/command-desk HEAD as of 2026-06-23 for reproducible installs.
+  ref: 2f230234e9c224e73c74699a23ec8fdd2f4b131c
+  bootstrap:
+    - "cp docs/setup/mcp-scripts/windows-admin-mcp.js ."
+    - "cp docs/setup/mcp-scripts/mcp-lib.js ."
+
+auth:
+  type: none
+
+# Tool selection: read/inspect tools enabled by default; mutating tools
+# (process_kill, service_restart, open_app) require explicit opt-in.
+tools:
+  default_enabled:
+    - win_process_list
+    - win_service_list
+    - win_firewall_status
+    - win_firewall_rules
+    - win_port_listening
+    - win_port_test
+
+# Status: READY-WAITING-LOCAL-SERVICE (Windows only — requires Windows + PowerShell)
+
+post_install: |
+  WINDOWS ONLY. Uses PowerShell for all operations.
+  Some tools (firewall rules, service restart) may require elevated privileges.
+
+  Available tools: win_process_list, win_process_kill, win_service_list,
+  win_service_restart, win_firewall_status, win_firewall_rules,
+  win_port_listening, win_port_test, win_open_app.
+
+  Mutating tools (win_process_kill, win_service_restart, win_open_app) are opt-in.
+  Enable them in the tool-selection checklist at install time.
