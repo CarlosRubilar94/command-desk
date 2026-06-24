@@ -7,6 +7,61 @@
 
 ---
 
+## Update (2026-06-24) — Actual CI Root Cause: GitHub Actions Billing
+
+A follow-up triage against the **owner** repo (`CarlosRubilar94/command-desk`,
+remote `origin`) determined that **every** check on this PR is red for one
+infrastructure reason, not a code/test problem:
+
+- All jobs across all workflows fail in 3–8 s with the GitHub annotation
+  *"The job was not started because recent account payments have failed or your
+  spending limit needs to be increased."* Verified on the **Tests** and
+  **Typecheck** runs; `gh api repos/CarlosRubilar94/command-desk/actions/runs/<id>`
+  reports `repository = CarlosRubilar94/command-desk` with the matching head SHA,
+  so the block is on the **private owner repo** — not the public `upstream`
+  `NousResearch/hermes-agent`.
+- The same block hits PR #33 and plain pushes to `devssd/command-desk`: it is
+  account-wide. No runner is provisioned, so no lint/type/test step ever runs.
+  This supersedes the "Remaining Failures" framing below.
+
+### Why the "~81 full-suite failures" are NOT a CI failure mode
+
+CI runs tests via `scripts/run_tests_parallel.py`, which spawns a fresh
+`python -m pytest <file>` subprocess **per test file** (`tests.yml :: Run
+tests`). Cross-file module-level cache pollution (`_model_metadata_cache`, etc.)
+is therefore impossible in CI; it only appears when running `pytest tests/agent`
+as a single process locally. `tests/conftest.py` documents that the historic
+`_reset_module_state` autouse fixture was **deliberately removed** in favour of
+this per-file isolation — so re-adding a cache-reset fixture is not warranted
+and would contradict the design.
+
+### Local verification (CI-pinned tools: ruff 0.15.10, ty 0.0.21, pytest 9.0.2)
+
+- `ruff check` (PLW1514) on the 5 production files → **clean**; the blocking
+  `ruff enforcement` job would pass.
+- `ty check` → 6 diagnostics, **all pre-existing** and on lines this PR did not
+  touch (`utils.py` `_restore_file_mode` str/Path annotation at L234/L300; the
+  POSIX-only `fcntl.flock` block in `shell_hooks.py` at L681/L688). The `ty` job
+  is advisory (`--exit-zero`, base-vs-HEAD diff) and never blocks; this PR adds
+  **zero** new diagnostics.
+- Key portability files pass on Windows: **132 passed, 13 skipped**
+  (`test_image_routing`, `test_shell_hooks`,
+  `test_compression_concurrent_fork`, `test_apply_profile_override`).
+
+### Separate workflow-file issue (route to PR #33)
+
+`OSV-Scanner` shows a genuine `startup_failure` (0–1 s) across branches — a
+workflow-file problem, not billing. It is owned by the workflow-editing PR #33
+and is not fixable from this branch.
+
+### Action required
+
+Restore GitHub Actions billing on the `CarlosRubilar94` account
+(Settings → Billing & plans). No change on this branch can turn the checks green
+until runners are provisioned again.
+
+---
+
 ## Failures Reproduced
 
 The following failure categories were identified on Windows/PowerShell across `tests/agent` and `tests/hermes_cli`:
@@ -126,7 +181,7 @@ Tests in `tests/agent` that pass individually but fail in the full suite (~81 fa
 - `test_usage_pricing.py` — passes individually, fails in suite
 - `test_codex_app_server_session.py` — passes individually, fails in suite
 
-**Assessment:** These are pre-existing test isolation issues. Each test passes when run in isolation (`python -m pytest <file> -vv`). Fixing them requires refactoring module-level caches to use proper fixtures or dependency injection — beyond minimal scope and not a CI regression introduced by this branch.
+**Assessment:** These are pre-existing test isolation issues. Each test passes when run in isolation (`python -m pytest <file> -vv`). **Correction (see Update above):** they only manifest when the whole suite runs in a *single* process; CI's per-file subprocess runner (`scripts/run_tests_parallel.py`) gives each file a fresh interpreter, so this is **not** a CI failure mode and no fixture is warranted here (the maintainers removed `_reset_module_state` on purpose).
 
 ### `test_active_sessions.py::test_cross_process_acquire_claims_only_one_last_slot`
 
@@ -149,5 +204,5 @@ Flaky race condition in cross-process slot locking on Windows. Timing-sensitive;
 ## Recommendation
 
 1. **Merge this PR** on the Linux CI to verify the portability fixes do not regress POSIX behavior.
-2. **Track test isolation** as a separate issue — the ~80 test-isolation failures are pre-existing and require a dedicated refactoring pass on the cache/global-state layer.
+2. **No fix needed for the "test isolation" failures** — they are a single-process *local* artifact; CI's per-file subprocess runner already isolates them (see Update). The actual blocker for this PR is GitHub Actions billing on the owner account, not test code.
 3. **Monitor `atomic_replace` retry counts** in production logs if the back-off is ever observed taking more than 50 ms.
