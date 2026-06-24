@@ -52,6 +52,204 @@ _HISTORY_MAX_CHARS = 24_000
 # Marker inserted when middle history is truncated.
 _TRUNCATION_MARKER = "[...earlier turns truncated...]\n\n"
 
+# ---------------------------------------------------------------------------
+# Automatic fallback to Codex when the Claude Pro session/usage/rate limit is
+# hit (see docs/setup/CLAUDE-CLI-PROVIDER.md → "Automatic fallback").
+#
+# Observed live: when the Pro quota is exhausted, ``claude -p`` exits 1 with
+# stderr like:
+#   "You've hit your session limit · resets 7:50pm (America/Sao_Paulo)"
+# We detect that (and any non-zero exit) and route the SAME turn through the
+# Codex app-server runtime, which uses the user's Codex subscription/CLI and
+# needs no API key.  The fallback ALWAYS prepends a banner — it never swallows
+# the failure silently.
+# ---------------------------------------------------------------------------
+
+# Case-insensitive substrings that mark a usage/session/rate limit.
+_LIMIT_PATTERNS = (
+    "session limit",
+    "usage limit",
+    "rate limit",
+    "rate-limit",
+    "ratelimit",
+    "limit reached",
+    "reached your limit",
+    "resets",
+    "too many requests",
+    "quota",
+    "429",
+)
+
+# Banner prepended to the Codex answer so the user always sees a fallback ran.
+_FALLBACK_BANNER_LIMIT = "[claude-cli no limite Pro — respondendo via Codex]\n\n"
+_FALLBACK_BANNER_ERROR = "[claude-cli falhou — respondendo via Codex]\n\n"
+
+# Config values that disable the fallback.
+_FALLBACK_DISABLED_VALUES = {"", "none", "off", "false", "0", "no", "disabled"}
+# Config values that select the Codex app-server fallback.
+_FALLBACK_CODEX_VALUES = {
+    "openai-codex",
+    "openai_codex",
+    "codex",
+    "codex-cli",
+    "codex_app_server",
+    "codex-app-server",
+}
+
+
+def _is_usage_limit_error(text: str) -> bool:
+    """Return True when ``text`` looks like a Claude usage/session/rate limit."""
+    if not text:
+        return False
+    low = text.lower()
+    return any(pattern in low for pattern in _LIMIT_PATTERNS)
+
+
+def _resolve_codex_fallback(agent) -> str:
+    """Normalize the configured claude-cli fallback target.
+
+    Returns ``"openai-codex"`` when the Codex fallback is enabled, or ``""``
+    when it is disabled / unconfigured / unsupported.
+
+    Default is ON for real agents: when the attribute is absent, ``getattr``
+    yields the ``"openai-codex"`` default string.  Test doubles (MagicMock)
+    yield a non-string sentinel, which is treated as disabled so unit tests
+    never spawn a real Codex subprocess unless they opt in with an explicit
+    string value.
+    """
+    raw = getattr(agent, "claude_cli_fallback", "openai-codex")
+    if not isinstance(raw, str):
+        return ""
+    val = raw.strip().lower()
+    if val in _FALLBACK_DISABLED_VALUES:
+        return ""
+    if val in _FALLBACK_CODEX_VALUES:
+        return "openai-codex"
+    logger.warning(
+        "claude_cli_fallback=%r is not a supported fallback provider "
+        "(only 'openai-codex'); treating claude-cli failure as a hard error.",
+        raw,
+    )
+    return ""
+
+
+def _run_codex_fallback(
+    agent,
+    *,
+    banner: str,
+    claude_error: str,
+    user_message: str,
+    original_user_message: Any,
+    messages: List[Dict[str, Any]],
+    effective_task_id: str,
+    should_review_memory: bool,
+) -> Dict[str, Any]:
+    """Route a failed claude-cli turn through the Codex app-server runtime.
+
+    Reuses the exact path the conversation loop uses for ``codex_app_server``
+    (``agent._run_codex_app_server_turn`` →
+    ``agent.codex_runtime.run_codex_app_server_turn``), which drives the local
+    Codex CLI subprocess and requires **no API key** (the user's Codex
+    subscription/OAuth).  ``banner`` is prepended to the Codex answer so the
+    user always sees that a fallback occurred — the failure is never silent.
+    """
+    logger.warning("claude-cli failed (%s) — falling back to Codex", claude_error)
+    try:
+        result = agent._run_codex_app_server_turn(
+            user_message=user_message,
+            original_user_message=original_user_message,
+            messages=messages,
+            effective_task_id=effective_task_id,
+            should_review_memory=should_review_memory,
+        )
+    except Exception as exc:  # never let the fallback hide the original error
+        logger.exception("claude-cli → Codex fallback raised")
+        combined = (
+            f"claude-cli failed ({claude_error}); "
+            f"Codex fallback also failed: {exc}"
+        )
+        return {
+            "final_response": (
+                f"[claude-cli error] {claude_error}\n"
+                f"[codex fallback error] {exc}"
+            ),
+            "messages": messages,
+            "api_calls": 1,
+            "completed": False,
+            "partial": True,
+            "error": combined,
+            "claude_cli_fallback": "openai-codex",
+        }
+
+    if not isinstance(result, dict):
+        # Defensive: a misconfigured forwarder returned a non-dict.
+        return {
+            "final_response": f"[claude-cli error] {claude_error}",
+            "messages": messages,
+            "api_calls": 1,
+            "completed": False,
+            "partial": True,
+            "error": claude_error,
+        }
+
+    result["claude_cli_fallback"] = "openai-codex"
+    if not result.get("completed"):
+        codex_err = result.get("error") or "unknown Codex error"
+        result["error"] = (
+            f"claude-cli failed ({claude_error}); "
+            f"Codex fallback failed: {codex_err}"
+        )
+        result["final_response"] = (
+            "[claude-cli falhou + Codex também falhou]\n\n"
+            f"claude-cli: {claude_error}\n"
+            f"codex: {codex_err}"
+        )
+        return result
+
+    result["final_response"] = banner + (result.get("final_response") or "")
+    return result
+
+
+def _claude_failure_result(
+    agent,
+    *,
+    err: str,
+    is_limit: bool,
+    api_calls: int,
+    user_message: str,
+    original_user_message: Any,
+    messages: List[Dict[str, Any]],
+    effective_task_id: str,
+    should_review_memory: bool,
+) -> Dict[str, Any]:
+    """Result builder for a claude-cli failure.
+
+    When the Codex fallback is enabled, route the same turn to Codex (with a
+    clear banner).  Otherwise return the original claude-cli error unchanged —
+    the error is always surfaced, never swallowed.
+    """
+    fallback = _resolve_codex_fallback(agent)
+    if fallback == "openai-codex":
+        banner = _FALLBACK_BANNER_LIMIT if is_limit else _FALLBACK_BANNER_ERROR
+        return _run_codex_fallback(
+            agent,
+            banner=banner,
+            claude_error=err,
+            user_message=user_message,
+            original_user_message=original_user_message,
+            messages=messages,
+            effective_task_id=effective_task_id,
+            should_review_memory=should_review_memory,
+        )
+    return {
+        "final_response": f"[claude-cli error] {err}",
+        "messages": messages,
+        "api_calls": api_calls,
+        "completed": False,
+        "partial": True,
+        "error": err,
+    }
+
 
 def _find_claude_bin(agent) -> Optional[str]:
     """Return the resolved path to the claude CLI binary, or None."""
@@ -175,14 +373,17 @@ def run_claude_cli_turn(
             "or set `model.claude_bin` in config.yaml to the full path."
         )
         logger.error(err)
-        return {
-            "final_response": f"[claude-cli error] {err}",
-            "messages": messages,
-            "api_calls": 0,
-            "completed": False,
-            "partial": True,
-            "error": err,
-        }
+        return _claude_failure_result(
+            agent,
+            err=err,
+            is_limit=False,
+            api_calls=0,
+            user_message=user_message,
+            original_user_message=original_user_message,
+            messages=messages,
+            effective_task_id=effective_task_id,
+            should_review_memory=should_review_memory,
+        )
 
     prompt = _build_context_prompt(messages, user_message)
     timeout = int(getattr(agent, "claude_cli_timeout", None) or DEFAULT_TIMEOUT)
@@ -219,38 +420,53 @@ def run_claude_cli_turn(
     except subprocess.TimeoutExpired:
         err = f"Claude CLI timed out after {timeout}s"
         logger.error(err)
-        return {
-            "final_response": f"[claude-cli error] {err}",
-            "messages": messages,
-            "api_calls": 1,
-            "completed": False,
-            "partial": True,
-            "error": err,
-        }
+        return _claude_failure_result(
+            agent,
+            err=err,
+            is_limit=False,
+            api_calls=1,
+            user_message=user_message,
+            original_user_message=original_user_message,
+            messages=messages,
+            effective_task_id=effective_task_id,
+            should_review_memory=should_review_memory,
+        )
     except OSError as exc:
         err = f"Failed to launch Claude CLI: {exc}"
         logger.error(err)
-        return {
-            "final_response": f"[claude-cli error] {err}",
-            "messages": messages,
-            "api_calls": 0,
-            "completed": False,
-            "partial": True,
-            "error": str(exc),
-        }
+        return _claude_failure_result(
+            agent,
+            err=err,
+            is_limit=False,
+            api_calls=0,
+            user_message=user_message,
+            original_user_message=original_user_message,
+            messages=messages,
+            effective_task_id=effective_task_id,
+            should_review_memory=should_review_memory,
+        )
 
     if proc.returncode != 0:
-        stderr_tail = (proc.stderr or "").strip()[-400:]
+        stderr_full = (proc.stderr or "").strip()
+        stderr_tail = stderr_full[-400:]
         err = f"Claude CLI exited {proc.returncode}: {stderr_tail}"
         logger.error(err)
-        return {
-            "final_response": f"[claude-cli error] {err}",
-            "messages": messages,
-            "api_calls": 1,
-            "completed": False,
-            "partial": True,
-            "error": err,
-        }
+        # Detect the Pro session/usage/rate limit from stderr (and stdout, in
+        # case the CLI prints the notice there) so we pick the right banner.
+        is_limit = _is_usage_limit_error(
+            f"{stderr_full}\n{(proc.stdout or '')}"
+        )
+        return _claude_failure_result(
+            agent,
+            err=err,
+            is_limit=is_limit,
+            api_calls=1,
+            user_message=user_message,
+            original_user_message=original_user_message,
+            messages=messages,
+            effective_task_id=effective_task_id,
+            should_review_memory=should_review_memory,
+        )
 
     final_text = (proc.stdout or "").strip()
     if not final_text:

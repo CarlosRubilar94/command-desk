@@ -67,6 +67,9 @@ model:
   # Optional: override which Claude model the CLI uses (requires --model support)
   # claude_bin: C:\Users\Me\AppData\Roaming\npm\claude.cmd
   # claude_cli_model: claude-opus-4-8
+  # Automatic fallback when the Pro session/usage/rate limit is hit.
+  # Default: openai-codex (ON). Set to "" or "none" to disable.
+  # claude_cli_fallback: openai-codex
 ```
 
 To revert to direct API:
@@ -77,14 +80,67 @@ model:
   default: anthropic/claude-sonnet-4.6
 ```
 
+## Automatic fallback to Codex (Pro limit)
+
+When the local Claude **Pro** session runs out of quota, `claude -p` exits
+non-zero with a stderr notice such as:
+
+```
+You've hit your session limit · resets 7:50pm (America/Sao_Paulo)
+```
+
+Rather than surfacing a dead end, `run_claude_cli_turn()` automatically routes
+the **same turn** through the Codex runtime and returns the Codex answer,
+prefixed with a short banner so the fallback is never silent:
+
+```
+[claude-cli no limite Pro — respondendo via Codex]
+
+<codex answer…>
+```
+
+### How it works
+
+- **Detection** — `_is_usage_limit_error()` matches (case-insensitive)
+  `session limit`, `usage limit`, `rate limit`, `limit reached`, `resets`,
+  `too many requests`, `quota`, `429`, … in the CLI's stderr/stdout. The limit
+  banner is used when a limit is detected; **any other non-zero exit** (auth
+  error, timeout, launch failure, binary missing) also falls back, but with the
+  generic banner `[claude-cli falhou — respondendo via Codex]`.
+- **Routing** — the failed turn is handed to `agent._run_codex_app_server_turn`
+  (→ `agent/codex_runtime.py::run_codex_app_server_turn`), the **same path the
+  conversation loop uses for `codex_app_server`**. It drives the local Codex
+  CLI subprocess via the user's Codex subscription/OAuth and **requires no API
+  key**.
+- **Never silent** — if Codex *also* fails, the result combines both errors
+  (`claude-cli failed (...); Codex fallback failed: ...`) instead of hiding the
+  original limit message.
+
+### Config
+
+`model.claude_cli_fallback` (read in `agent/agent_init.py`, consumed by
+`agent/claude_cli_runtime.py`):
+
+| Value | Effect |
+|-------|--------|
+| `openai-codex` (default) | Fallback **ON** via Codex app-server |
+| `codex`, `codex_app_server` | Same as above (aliases) |
+| `""`, `none`, `off` | Fallback **OFF** — the original claude-cli error is shown |
+
+> Native `fallback_providers` does **not** cover this case: the `claude_cli`
+> path returns early in `conversation_loop.run_conversation()` (before the HTTP
+> retry loop where `fallback_providers` advancement happens), so the fallback is
+> implemented locally in the claude-cli runtime.
+
 ## Files changed
 
 | File | Change |
 |------|--------|
-| `agent/claude_cli_runtime.py` | **New** — `run_claude_cli_turn()` + prompt builder |
+| `agent/claude_cli_runtime.py` | **New** — `run_claude_cli_turn()` + prompt builder; **+** Codex limit fallback (`_is_usage_limit_error`, `_resolve_codex_fallback`, `_run_codex_fallback`) |
+| `agent/agent_init.py` | **+** wire `model.claude_cli_fallback` onto the agent (default `openai-codex`) |
 | `agent/conversation_loop.py` | +15 lines — early dispatch when `api_mode == "claude_cli"` |
 | `hermes_cli/runtime_provider.py` | +12 lines — `_VALID_API_MODES` entry + short-circuit in `resolve_runtime_provider()` + `claude-cli` branch in `_resolve_runtime_from_pool_entry()` |
-| `tests/agent/test_claude_cli_runtime.py` | **New** — 17 offline unit tests |
+| `tests/agent/test_claude_cli_runtime.py` | **New** — offline unit tests (incl. fallback suite) |
 | `docs/setup/CLAUDE-CLI-PROVIDER.md` | **New** — this document |
 
 ## Invariants / safety
@@ -125,3 +181,9 @@ python -m pytest tests/agent/test_claude_cli_runtime.py -v
 - [ ] Token usage extraction from stream-json events
 - [ ] `/model` switching support via `claude_cli_model` config key
 - [ ] Session-resume across turns via `--resume <session_id>` (optional UX)
+- [ ] Short in-memory memo of "claude rate-limited until `<reset>`" to skip the
+      doomed claude retry on the next turns in the same session (parse the
+      `resets <time>` from stderr). Skipped for now to keep the fallback
+      localized and side-effect free.
+- [ ] Wire `claude_bin` / `claude_cli_model` / `claude_cli_timeout` from
+      `model.*` config the same way (currently read via `getattr` defaults only).
