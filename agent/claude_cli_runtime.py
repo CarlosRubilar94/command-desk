@@ -164,6 +164,33 @@ def _run_codex_fallback(
         )
     except Exception as exc:  # never let the fallback hide the original error
         logger.exception("claude-cli → Codex fallback raised")
+        # Surface a clear, actionable message when Codex CLI is simply not
+        # installed (FileNotFoundError / WinError 2 on Windows).
+        exc_str = str(exc)
+        if isinstance(exc, (FileNotFoundError, OSError)) and (
+            "não encontrado" in exc_str
+            or "não está no PATH" in exc_str
+            or getattr(exc, "errno", None) == 2  # ENOENT / WinError 2
+        ):
+            actionable = (
+                "Codex CLI não encontrado/instalado — "
+                "instale com: npm install -g @openai/codex  "
+                "e depois rode `codex login` para autenticar com sua assinatura."
+            )
+            logger.error("Codex CLI ausente no PATH: %s", exc)
+            combined = f"claude-cli failed ({claude_error}); {actionable}"
+            return {
+                "final_response": (
+                    f"[claude-cli error] {claude_error}\n"
+                    f"[codex fallback error] {actionable}"
+                ),
+                "messages": messages,
+                "api_calls": 1,
+                "completed": False,
+                "partial": True,
+                "error": combined,
+                "claude_cli_fallback": "openai-codex",
+            }
         combined = (
             f"claude-cli failed ({claude_error}); "
             f"Codex fallback also failed: {exc}"

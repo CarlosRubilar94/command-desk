@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -110,7 +111,23 @@ class CodexAppServerClient:
                 ]
             )
 
-        cmd = [codex_bin, "app-server"] + app_server_args
+        # Resolve the binary via shutil.which so that on Windows the npm .cmd
+        # shim (codex.cmd) is found even when subprocess.Popen would fail with
+        # WinError 2 for a bare "codex" name.  On POSIX shutil.which honours
+        # the same PATH lookup the shell would use, so behaviour is unchanged.
+        # Absolute paths that already exist bypass which() resolution.
+        if os.path.isabs(codex_bin) and os.path.isfile(codex_bin):
+            resolved_bin = codex_bin
+        else:
+            resolved_bin = shutil.which(codex_bin)
+            if resolved_bin is None:
+                raise FileNotFoundError(
+                    f"Codex CLI não encontrado: {codex_bin!r} não está no PATH. "
+                    "Instale com: npm install -g @openai/codex  "
+                    "e depois rode `codex login` para autenticar."
+                )
+
+        cmd = [resolved_bin, "app-server"] + app_server_args
         # Codex emits tracing to stderr; default WARN keeps it quiet for users.
         spawn_env.setdefault("RUST_LOG", "warn")
 
@@ -372,6 +389,16 @@ def check_codex_binary(
     """Verify codex CLI is installed and meets minimum version.
 
     Returns (ok, message). Used by setup wizard and runtime startup."""
+    # Use shutil.which for resolution so Windows npm .cmd shims are found.
+    if not (os.path.isabs(codex_bin) and os.path.isfile(codex_bin)):
+        resolved = shutil.which(codex_bin)
+        if resolved is None:
+            return False, (
+                f"Codex CLI não encontrado: {codex_bin!r} não está no PATH. "
+                "Instale com: npm install -g @openai/codex  "
+                "e depois rode `codex login` para autenticar."
+            )
+        codex_bin = resolved
     try:
         proc = subprocess.run(
             [codex_bin, "--version"],

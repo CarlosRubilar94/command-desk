@@ -132,7 +132,59 @@ class TestCodexAppServerModule:
 
         ok, msg = check_codex_binary(codex_bin="/nonexistent/codex/binary/path")
         assert ok is False
-        assert "not found" in msg.lower() or "no such" in msg.lower()
+        # Message may be English ("not found") or Portuguese ("não encontrado").
+        assert (
+            "not found" in msg.lower()
+            or "no such" in msg.lower()
+            or "não encontrado" in msg.lower()
+            or "encontrado" in msg.lower()
+        )
+
+    def test_check_binary_shutil_which_windows_cmd_shim(self, monkeypatch) -> None:
+        """check_codex_binary resolves via shutil.which so Windows .cmd shims
+        are found; when which returns a path the version check proceeds."""
+        import subprocess
+        from unittest.mock import patch, MagicMock
+        from agent.transports.codex_app_server import check_codex_binary
+
+        fake_version_proc = MagicMock()
+        fake_version_proc.returncode = 0
+        fake_version_proc.stdout = "codex-cli 0.142.0\n"
+        fake_version_proc.stderr = ""
+
+        with (
+            patch("agent.transports.codex_app_server.shutil.which",
+                  return_value=r"C:\Users\Alice\AppData\Roaming\npm\codex.cmd"),
+            patch("subprocess.run", return_value=fake_version_proc),
+        ):
+            ok, msg = check_codex_binary(codex_bin="codex")
+
+        assert ok is True
+        assert "0.142.0" in msg
+
+    def test_check_binary_shutil_which_not_found(self, monkeypatch) -> None:
+        """check_codex_binary returns (False, actionable) when shutil.which
+        can't find the binary — mirrors the WinError 2 / missing-install case."""
+        from unittest.mock import patch
+        from agent.transports.codex_app_server import check_codex_binary
+
+        with patch("agent.transports.codex_app_server.shutil.which", return_value=None):
+            ok, msg = check_codex_binary(codex_bin="codex")
+
+        assert ok is False
+        assert "npm install" in msg or "npm i" in msg
+        assert "codex login" in msg.lower()
+
+    def test_client_init_raises_on_missing_binary(self, monkeypatch) -> None:
+        """CodexAppServerClient.__init__ raises FileNotFoundError with an
+        actionable message when the Codex binary cannot be resolved."""
+        import subprocess
+        from unittest.mock import patch
+        from agent.transports import codex_app_server as cas
+
+        with patch("agent.transports.codex_app_server.shutil.which", return_value=None):
+            with pytest.raises(FileNotFoundError, match="codex login"):
+                cas.CodexAppServerClient(codex_bin="codex")
 
     def test_codex_error_class_is_runtimeerror(self) -> None:
         from agent.transports.codex_app_server import CodexAppServerError
@@ -275,6 +327,10 @@ class TestSpawnEnvIsolation:
                 pass
 
         monkeypatch.setattr(subprocess, "Popen", FakePopen)
+        # Patch shutil.which to pass the bin name through unchanged so the
+        # command assertion below checks the logical name, not a resolved path.
+        import shutil as _shutil
+        monkeypatch.setattr(_shutil, "which", lambda x: x)
         monkeypatch.setenv("HOME", "/users/alice")
         monkeypatch.setenv("HERMES_HOME", "/users/alice/.hermes/profiles/backend-worker")
         monkeypatch.setenv("HERMES_KANBAN_TASK", "t_smoke")

@@ -606,3 +606,86 @@ class TestClaudeCliCodexFallback:
         agent._run_codex_app_server_turn.assert_not_called()
         assert result["completed"] is False
         assert "[claude-cli error]" in result["final_response"]
+
+
+# ---------------------------------------------------------------------------
+# Windows binary resolution: codex.cmd shim + actionable missing-CLI message
+# ---------------------------------------------------------------------------
+
+
+class TestCodexFallbackWindowsResolution:
+    """Ensure the Codex fallback surfaces clear errors when the CLI is absent."""
+
+    def test_codex_not_found_surfaces_actionable_message(self):
+        """When Codex CLI is missing (FileNotFoundError / WinError 2), the
+        fallback result must contain an actionable install message instead of
+        a raw WinError dump."""
+        agent = _make_agent(claude_cli_fallback="openai-codex")
+        # Simulate WinError 2 as the OS would raise it.
+        win_err = FileNotFoundError(2, "O sistema não pode encontrar o arquivo especificado")
+        win_err.errno = 2
+        agent._run_codex_app_server_turn = MagicMock(side_effect=win_err)
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_err_proc(rc=1, stderr=_LIMIT_STDERR)),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hello",
+                original_user_message="Hello",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        assert result["completed"] is False
+        response = result["final_response"]
+        # Must NOT expose raw WinError number to the user.
+        assert "WinError" not in response
+        # Must include actionable guidance.
+        assert "codex login" in response.lower() or "codex login" in result["error"].lower()
+        assert "npm install" in response or "npm install" in result["error"]
+
+    def test_codex_not_found_via_oserror_errno2(self):
+        """OSError with errno=2 (WinError 2) must also trigger actionable message."""
+        agent = _make_agent(claude_cli_fallback="openai-codex")
+        os_err = OSError(2, "The system cannot find the file specified")
+        agent._run_codex_app_server_turn = MagicMock(side_effect=os_err)
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_err_proc(rc=1, stderr=_LIMIT_STDERR)),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hello",
+                original_user_message="Hello",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        assert result["completed"] is False
+        combined = result["final_response"] + " " + (result["error"] or "")
+        assert "codex login" in combined.lower()
+
+    def test_codex_fallback_cmd_shim_resolved_correctly(self):
+        """When shutil.which returns a .cmd path (Windows npm shim), the
+        fallback succeeds — the codex turn result is returned with the banner."""
+        agent = _make_agent(claude_cli_fallback="openai-codex")
+        agent._run_codex_app_server_turn = MagicMock(return_value=_codex_ok("Shim answer"))
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_err_proc(rc=1, stderr=_LIMIT_STDERR)),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hello",
+                original_user_message="Hello",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        agent._run_codex_app_server_turn.assert_called_once()
+        assert result["completed"] is True
+        assert "Shim answer" in result["final_response"]
