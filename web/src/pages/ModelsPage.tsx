@@ -33,6 +33,7 @@ import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
 import { ModelReloadConfirm } from "@/components/ModelReloadConfirm";
+import { DeckPageShell } from "@/components/DeckPageShell";
 
 const PERIODS = [
   { label: "7d", days: 7 },
@@ -707,6 +708,7 @@ function ModelSettingsPanel({
 
   const mainProv = aux?.main.provider ?? "";
   const mainModel = aux?.main.model ?? "";
+  const hasMainModel = Boolean(mainProv && mainModel);
 
   const applyAssignment = async ({
     scope,
@@ -768,9 +770,9 @@ function ModelSettingsPanel({
           <Button
             size="sm"
             onClick={() => setPicker({ kind: "main" })}
-            className="shrink-0 self-start text-xs uppercase sm:self-center"
+            className="shrink-0 self-start text-xs sm:self-center"
           >
-            Change
+            {hasMainModel ? "Change model" : "+ Add model"}
           </Button>
         </div>
 
@@ -793,7 +795,7 @@ function ModelSettingsPanel({
             size="sm"
             outlined
             onClick={() => setAuxModalOpen(true)}
-            className="shrink-0 self-start text-xs uppercase sm:self-center"
+            className="shrink-0 self-start text-xs sm:self-center"
           >
             Configure
           </Button>
@@ -913,7 +915,6 @@ export default function ModelsPage() {
             size="sm"
             outlined={days !== p.days}
             onClick={() => setDays(p.days)}
-            className="uppercase"
           >
             {p.label}
           </Button>
@@ -961,7 +962,14 @@ export default function ModelsPage() {
   }, [refreshAux]);
 
   return (
-    <div className="deck-page-shell flex min-w-0 max-w-full flex-col gap-6">
+    <DeckPageShell
+      intro={(
+        <p className="text-xs text-text-secondary">
+          Review usage analytics and choose the main and auxiliary models used by new sessions.
+        </p>
+      )}
+      className="flex min-w-0 max-w-full flex-col gap-6"
+    >
       <PluginSlot name="models:top" />
 
       <div className="grid min-w-0 gap-6 lg:grid-cols-2 deck-animate">
@@ -1083,6 +1091,6 @@ export default function ModelsPage() {
       )}
 
       <PluginSlot name="models:bottom" />
-    </div>
+    </DeckPageShell>
   );
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { Package, Power, Server, Trash2, X, Zap } from "lucide-react";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -23,6 +24,7 @@ import { Input } from "@nous-research/ui/ui/components/input";
 import { Label } from "@nous-research/ui/ui/components/label";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn, themedBody } from "@/lib/utils";
+import { DeckPageShell } from "@/components/DeckPageShell";
 
 type Transport = "http" | "stdio";
 
@@ -288,11 +290,10 @@ export default function McpPage() {
   useLayoutEffect(() => {
     setEnd(
       <Button
-        className="uppercase"
         size="sm"
         onClick={() => setCreateModalOpen(true)}
       >
-        Add Server
+        + Add server
       </Button>,
     );
     return () => {
@@ -314,7 +315,17 @@ export default function McpPage() {
   });
 
   return (
-    <div className="flex flex-col gap-6">
+    <DeckPageShell
+      intro={(
+        <p className="text-xs text-text-secondary">
+          Configure MCP servers and catalog installs. For secret health and Bitwarden integration, use{" "}
+          <Link to="/env" className="underline underline-offset-2">Secrets Center</Link>{" "}
+          and{" "}
+          <Link to="/bitwarden" className="underline underline-offset-2">Bitwarden status</Link>.
+        </p>
+      )}
+      className="flex flex-col gap-6"
+    >
       <Toast toast={toast} />
 
       <DeleteConfirmDialog
@@ -437,7 +448,6 @@ export default function McpPage() {
 
               <div className="flex justify-end">
                 <Button
-                  className="uppercase"
                   size="sm"
                   onClick={handleCreate}
                   disabled={creating}
@@ -515,7 +525,6 @@ export default function McpPage() {
 
               <div className="flex justify-end">
                 <Button
-                  className="uppercase"
                   size="sm"
                   onClick={handleInstallSubmit}
                   disabled={installingName === installEntry.name}
@@ -814,7 +823,6 @@ export default function McpPage() {
                     <Badge tone="success">Installed</Badge>
                   ) : (
                     <Button
-                      className="uppercase"
                       size="sm"
                       onClick={() => handleInstallClick(entry)}
                       disabled={isInstalling}
@@ -829,6 +837,6 @@ export default function McpPage() {
           );
         })}
       </div>
-    </div>
+    </DeckPageShell>
   );
 }

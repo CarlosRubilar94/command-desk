@@ -15,8 +15,10 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { EnvVarInfo } from "@/lib/api";
+import type { EnvVarInfo, SecretsStatus } from "@/lib/api";
 import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
+import { DeckPageShell } from "@/components/DeckPageShell";
+import { DeckSecretProviderCard } from "@/components/DeckSecretProviderCard";
 import { Toast } from "@nous-research/ui/ui/components/toast";
 import { useConfirmDelete } from "@nous-research/ui/hooks/use-confirm-delete";
 import { useToast } from "@nous-research/ui/hooks/use-toast";
@@ -492,6 +494,7 @@ export default function EnvPage() {
   const [revealed, setRevealed] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(true); // Show all providers by default
+  const [secrets, setSecrets] = useState<SecretsStatus | null>(null);
   const { toast, showToast } = useToast();
   const { t } = useI18n();
   const { setAfterTitle } = usePageHeader();
@@ -500,6 +503,10 @@ export default function EnvPage() {
     api
       .getEnvVars()
       .then(setVars)
+      .catch(() => {});
+    api
+      .getSecretsStatus()
+      .then(setSecrets)
       .catch(() => {});
   }, []);
 
@@ -735,9 +742,10 @@ export default function EnvPage() {
     pendingClearKey && vars ? vars[pendingClearKey]?.description : undefined;
 
   return (
-    <div className="flex flex-col gap-6">
+    <DeckPageShell className="flex flex-col gap-6">
       <PluginSlot name="env:top" />
       <Toast toast={toast} />
+      <DeckSecretProviderCard status={secrets} />
 
       <DeleteConfirmDialog
         open={keyClear.isOpen}
@@ -755,7 +763,8 @@ export default function EnvPage() {
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-1">
           <p className="text-sm text-muted-foreground">
-            {t.env.description} <code>~/.hermes/.env</code>
+            Bitwarden-first secrets. Values stay redacted; the local{" "}
+            <code>~/.hermes/.env</code> file is the fallback store.
           </p>
           <p className="text-xs text-text-tertiary">
             {t.env.changesNote}
@@ -829,7 +838,7 @@ export default function EnvPage() {
         );
       })}
       <PluginSlot name="env:bottom" />
-    </div>
+    </DeckPageShell>
   );
 }
 

@@ -4746,6 +4746,83 @@ def _catalog_provider_env_metadata() -> dict:
     return meta
 
 
+def _bitwarden_cli_status() -> dict:
+    """Probe the local Bitwarden CLI without ever exposing secret values.
+
+    Returns a small status dict the Secrets Center renders. Never runs an
+    unlock/login and never returns vault item values — only the high-level
+    auth/lock state from ``bw status`` plus the CLI version. Fails soft (short
+    timeouts, never raises) so the Secrets page stays responsive even when
+    ``bw`` is missing or hangs talking to the Bitwarden server.
+    """
+    bw_path = shutil.which("bw")
+    if not bw_path:
+        return {"installed": False, "state": "not-installed", "version": None}
+    version = None
+    try:
+        ver = subprocess.run(
+            [bw_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if ver.returncode == 0:
+            version = ver.stdout.strip()
+    except Exception:
+        version = None
+    state = "unknown"
+    try:
+        proc = subprocess.run(
+            [bw_path, "status"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            import json as _json
+
+            payload = _json.loads(proc.stdout)
+            # bw status -> {"status": "unauthenticated" | "locked" | "unlocked", ...}
+            # We deliberately keep ONLY the status field; every other key
+            # (serverUrl, userEmail, lastSync, …) is dropped so no account
+            # identity or metadata leaks into the dashboard response.
+            raw = str(payload.get("status") or "").strip().lower()
+            if raw in {"unauthenticated", "locked", "unlocked"}:
+                state = raw
+    except Exception:
+        state = "unknown"
+    return {"installed": True, "state": state, "version": version}
+
+
+@app.get("/api/secrets/status")
+async def get_secrets_status(profile: Optional[str] = None):
+    """Secrets Center provider status — Bitwarden-first with a safe .env fallback.
+
+    Returns only counts and provider availability — never a secret value, key
+    material, or account identity. Secret writes/reveals continue to flow
+    through the audited ``/api/env`` endpoints.
+    """
+    with _profile_scope(profile):
+        env_on_disk = load_env()
+    # Count configured vs known-optional secrets from the same catalog the Keys
+    # page uses, without reading any value.
+    known = set(OPTIONAL_ENV_VARS.keys()) | set(_catalog_provider_env_metadata().keys())
+    set_count = sum(1 for k in known if env_on_disk.get(k))
+    return {
+        "provider": "bitwarden",
+        "fallback_provider": "env",
+        "bitwarden": _bitwarden_cli_status(),
+        "env": {
+            "fallback_enabled": True,
+            "known": len(known),
+            "set": set_count,
+            "missing": max(0, len(known) - set_count),
+        },
+    }
+
+
 @app.get("/api/env")
 async def get_env_vars(profile: Optional[str] = None):
     with _profile_scope(profile):
