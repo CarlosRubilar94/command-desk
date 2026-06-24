@@ -517,17 +517,16 @@ export const api = {
       body: JSON.stringify({ key }),
     });
   },
-  revealSecret: async (name: string) => {
-    const token = await getSessionToken();
-    return fetchJSON<{ value: string }>("/api/secrets/reveal", {
+  revealSecret: (name: string) =>
+    // Auth is delegated to fetchJSON, which attaches X-Hermes-Session-Token
+    // only when window.__HERMES_SESSION_TOKEN__ is injected (loopback mode) and
+    // always sends credentials: 'include' (gated/OAuth cookie mode). Calling
+    // getSessionToken() here would throw in gated mode and break reveal there.
+    fetchJSON<{ value: string }>("/api/secrets/reveal", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        [SESSION_HEADER]: token,
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
-    });
-  },
+    }),
 
   // Cron jobs
   getCronJobs: (profile = "all") =>

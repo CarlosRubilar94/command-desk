@@ -255,11 +255,27 @@ _SESSION_HEADER_NAME = "X-Hermes-Session-Token"
 # injection share a single, testable seam.
 _DASHBOARD_EMBEDDED_CHAT_ENABLED = True
 
-# Simple rate limiter for the reveal endpoint
+# Simple rate limiter shared by ALL reveal endpoints (/api/env/reveal and
+# /api/secrets/reveal). A single budget across both prevents an authenticated
+# caller from alternating endpoints to get 2x the intended 5-per-30s reveals.
 _reveal_timestamps: List[float] = []
 _REVEAL_MAX_PER_WINDOW = 5
 _REVEAL_WINDOW_SECONDS = 30
-_secrets_reveal_timestamps: List[float] = []
+
+
+def _enforce_reveal_rate_limit() -> None:
+    """Enforce the shared 5-per-30s reveal budget across reveal endpoints.
+
+    Raises HTTP 429 once the shared window is exhausted. Both
+    ``/api/env/reveal`` and ``/api/secrets/reveal`` call this so they draw from
+    one ``_reveal_timestamps`` bucket rather than independent budgets.
+    """
+    now = time.time()
+    cutoff = now - _REVEAL_WINDOW_SECONDS
+    _reveal_timestamps[:] = [t for t in _reveal_timestamps if t > cutoff]
+    if len(_reveal_timestamps) >= _REVEAL_MAX_PER_WINDOW:
+        raise HTTPException(status_code=429, detail="Too many reveal requests. Try again shortly.")
+    _reveal_timestamps.append(now)
 
 # CORS: restrict to localhost origins only.  The web UI is intended to run
 # locally; binding to 0.0.0.0 with allow_origins=["*"] would let any website
@@ -5180,13 +5196,8 @@ async def reveal_env_var(
     # --- Token check ---
     _require_token(request)
 
-    # --- Rate limit ---
-    now = time.time()
-    cutoff = now - _REVEAL_WINDOW_SECONDS
-    _reveal_timestamps[:] = [t for t in _reveal_timestamps if t > cutoff]
-    if len(_reveal_timestamps) >= _REVEAL_MAX_PER_WINDOW:
-        raise HTTPException(status_code=429, detail="Too many reveal requests. Try again shortly.")
-    _reveal_timestamps.append(now)
+    # --- Rate limit (shared budget with /api/secrets/reveal) ---
+    _enforce_reveal_rate_limit()
 
     # --- Reveal ---
     with _profile_scope(body.profile or profile):
@@ -5225,12 +5236,9 @@ async def reveal_secret(
     """Reveal a single secret value to an authenticated dashboard user."""
     _require_token(request)
 
-    now = time.time()
-    cutoff = now - _REVEAL_WINDOW_SECONDS
-    _secrets_reveal_timestamps[:] = [t for t in _secrets_reveal_timestamps if t > cutoff]
-    if len(_secrets_reveal_timestamps) >= _REVEAL_MAX_PER_WINDOW:
-        raise HTTPException(status_code=429, detail="Too many reveal requests. Try again shortly.")
-    _secrets_reveal_timestamps.append(now)
+    # Shared budget with /api/env/reveal so alternating endpoints can't exceed
+    # the intended 5-per-30s reveal limit.
+    _enforce_reveal_rate_limit()
 
     bitwarden_refs, bitwarden_state = _list_bitwarden_secret_refs(body.profile or profile)
     source = "bitwarden" if body.name in bitwarden_refs else "env"
