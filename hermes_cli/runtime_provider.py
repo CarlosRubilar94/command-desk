@@ -263,6 +263,10 @@ _VALID_API_MODES = {
     # `model.openai_runtime == "codex_app_server"` AND provider in
     # {"openai", "openai-codex"}. Default is unchanged.
     "codex_app_server",
+    # Claude Code CLI subprocess: drives one turn via `claude -p` using the
+    # local Pro/OAuth session (no API key / billing). Enabled via
+    # `model.provider: claude-cli` in config.yaml.
+    "claude_cli",
 }
 
 
@@ -338,6 +342,13 @@ def _resolve_runtime_from_pool_entry(
         api_mode = "anthropic_messages"
         pconfig = PROVIDER_REGISTRY.get(provider)
         base_url = base_url or (pconfig.inference_base_url if pconfig else "")
+    elif provider == "claude-cli":
+        # Claude Code CLI subprocess: drives one turn via `claude -p` using
+        # the local Pro/OAuth session.  No HTTP client needed; api_key and
+        # base_url are intentionally left empty — the subprocess handles auth.
+        api_mode = "claude_cli"
+        base_url = ""
+        api_key = ""
     elif provider == "anthropic":
         api_mode = "anthropic_messages"
         cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
@@ -1399,6 +1410,19 @@ def resolve_runtime_provider(
     behavior (api_mode derived from config).
     """
     requested_provider = resolve_requested_provider(requested)
+
+    # Claude Code CLI short-circuit: no HTTP client, no API key, no base_url.
+    # Auth is handled entirely by the `claude` subprocess via its local
+    # Pro/OAuth session.  Skip all credential-pool logic.
+    if requested_provider == "claude-cli":
+        return {
+            "provider": "claude-cli",
+            "api_mode": "claude_cli",
+            "base_url": "",
+            "api_key": "",
+            "source": "claude-cli-subprocess",
+            "requested_provider": requested_provider,
+        }
 
     # Azure Anthropic short-circuit: when explicitly targeting an Azure endpoint
     # with provider="anthropic", bypass _resolve_named_custom_runtime (which would

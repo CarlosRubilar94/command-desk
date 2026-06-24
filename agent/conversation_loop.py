@@ -572,6 +572,22 @@ def run_conversation(
     compression_attempts = 0
     _turn_exit_reason = "unknown"  # Diagnostic: why the loop ended
 
+    # Claude Code CLI subprocess path: single-shot text generation using the
+    # local Pro/OAuth session (no API key or billing).  All Claude Code tools
+    # are disabled — Hermes retains full control of tools, skills, and MCP.
+    # See agent/claude_cli_runtime.py and docs/setup/CLAUDE-CLI-PROVIDER.md.
+    if agent.api_mode == "claude_cli":
+        from agent.claude_cli_runtime import run_claude_cli_turn
+
+        return run_claude_cli_turn(
+            agent,
+            user_message=user_message,
+            original_user_message=original_user_message,
+            messages=messages,
+            effective_task_id=effective_task_id,
+            should_review_memory=_should_review_memory,
+        )
+
     # Optional opt-in runtime: if api_mode == codex_app_server, hand the
     # turn to the codex app-server subprocess (terminal/file ops/patching
     # all run inside Codex). Default Hermes path is bypassed entirely.
