@@ -34,8 +34,9 @@ def _git_bash_works() -> bool:
         return False
     # WSL bash cannot access C:\ paths directly; Git Bash can.
     try:
+        temp_dir = _os.environ.get("TEMP", "C:\\Temp")
         r = subprocess.run(
-            [bash, "-c", f"test -d '{_os.environ.get('TEMP', 'C:\\Temp')}'"],
+            [bash, "-c", f"test -d '{temp_dir}'"],
             timeout=5, capture_output=True,
         )
         return r.returncode == 0
