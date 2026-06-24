@@ -75,12 +75,12 @@ def _import_helpers():
 class TestRedactMcpEnv:
     def test_redacts_values(self):
         _redact_mcp_env = _import_helpers()[2]
-        # Use a long secret that mask_secret will definitely abbreviate.
         raw = {"API_KEY": "sk-" + "x" * 40, "DEBUG": "1"}
         redacted = _redact_mcp_env(raw)
         assert "API_KEY" in redacted
-        # The value is masked (partial display), not the literal full secret.
-        assert redacted["API_KEY"] != "sk-" + "x" * 40
+        # API responses must fully mask — no partial reveal (head/tail) allowed.
+        assert redacted["API_KEY"] == "***"
+        assert redacted["DEBUG"] == "***"
 
     def test_keys_preserved(self):
         _redact_mcp_env = _import_helpers()[2]
@@ -92,11 +92,18 @@ class TestRedactMcpEnv:
         _redact_mcp_env = _import_helpers()[2]
         assert _redact_mcp_env({}) == {}
 
+    def test_empty_value_preserved_as_empty(self):
+        _redact_mcp_env = _import_helpers()[2]
+        raw = {"UNSET": ""}
+        redacted = _redact_mcp_env(raw)
+        assert redacted["UNSET"] == ""
+
     def test_no_secret_in_values(self):
         _redact_mcp_env = _import_helpers()[2]
         raw = {"SECRET": "top-secret-value-abc123"}
         redacted = _redact_mcp_env(raw)
         assert "top-secret-value-abc123" not in json.dumps(redacted)
+        assert redacted["SECRET"] == "***"
 
 
 # ---------------------------------------------------------------------------
