@@ -238,7 +238,17 @@ class TestMatcher:
 
 # ── End-to-end subprocess behaviour ───────────────────────────────────────
 
+import sys
 
+# These tests execute real .sh scripts via bash/env — they require a POSIX
+# shell, which is unavailable on a bare Windows runner without WSL/Git-Bash.
+_REQUIRES_BASH = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Requires POSIX shell (bash); skip on bare Windows runners",
+)
+
+
+@_REQUIRES_BASH
 class TestCallbackSubprocess:
     def test_timeout_returns_none(self, tmp_path):
         # Script that sleeps forever; we set a 1s timeout.
@@ -661,6 +671,10 @@ class TestAllowlistConcurrency:
         assert "No space" in msg
         assert "re-prompt" in msg
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="os.access(X_OK) on Windows always returns True; execute-bit semantics are POSIX-only",
+    )
     def test_script_is_executable_handles_interpreter_prefix(self, tmp_path):
         """For ``python3 hook.py`` and similar the interpreter reads
         the script, so X_OK on the script itself is not required —

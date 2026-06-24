@@ -279,7 +279,7 @@ def test_review_fork_disables_compression_to_prevent_stale_parent_fork() -> None
 
     parent_sid = "REVIEW_FORK_FLAG_TEST"
 
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         db = SessionDB(db_path=Path(td) / "state.db")
         db.create_session(parent_sid, source="discord")
         parent = _build_agent_with_db(db, parent_sid)
@@ -294,6 +294,10 @@ def test_review_fork_disables_compression_to_prevent_stale_parent_fork() -> None
                 [{"role": "user", "content": "hi"}],
                 "review this conversation",
             )
+
+        # Close the db before the TemporaryDirectory cleanup so SQLite does
+        # not hold a file lock on Windows (PermissionError WinError 32).
+        db.close()
 
     assert captured, (
         "_run_review_in_thread never reached run_conversation — the spawn path "

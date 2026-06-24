@@ -6,14 +6,46 @@ having LSP output prepended to the lint string.
 """
 from __future__ import annotations
 
+import shutil
+import sys
 from unittest.mock import patch
 
+import pytest
 
 from tools.environments.local import LocalEnvironment
 from tools.file_operations import (
     PatchResult,
     ShellFileOperations,
     WriteResult,
+)
+
+# Tests that exercise write_file / patch_file go through the bash-backed shell
+# pipeline.  On Windows, even when bash.EXE exists (WSL or Git Bash), the
+# ShellFileOperations atomic-write pipeline passes native Windows paths to
+# bash which WSL bash cannot resolve.  Skip on Windows unless a working Git
+# Bash that understands native paths is confirmed.
+def _git_bash_works() -> bool:
+    """Return True iff a bash that handles native Windows paths is available."""
+    if sys.platform != "win32":
+        return shutil.which("bash") is not None
+    import subprocess, tempfile, os as _os
+    bash = shutil.which("bash")
+    if not bash:
+        return False
+    # WSL bash cannot access C:\ paths directly; Git Bash can.
+    try:
+        r = subprocess.run(
+            [bash, "-c", f"test -d '{_os.environ.get('TEMP', 'C:\\Temp')}'"],
+            timeout=5, capture_output=True,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+_bash_available = _git_bash_works()
+_requires_bash = pytest.mark.skipif(
+    not _bash_available,
+    reason="requires bash capable of Windows native paths (Git Bash); WSL bash cannot handle C:\\ paths",
 )
 
 
@@ -80,6 +112,7 @@ def test_lint_and_lsp_diagnostics_are_separate_channels():
 # ---------------------------------------------------------------------------
 
 
+@_requires_bash
 def test_write_file_populates_lsp_diagnostics_when_layer_returns_block(tmp_path):
     """When the LSP layer returns a non-empty block, write_file puts it
     into the ``lsp_diagnostics`` field — NOT into ``lint.output``."""
@@ -97,6 +130,7 @@ def test_write_file_populates_lsp_diagnostics_when_layer_returns_block(tmp_path)
     assert res.lint == {"status": "ok", "output": ""}
 
 
+@_requires_bash
 def test_write_file_lsp_diagnostics_none_when_layer_returns_empty(tmp_path):
     fops = ShellFileOperations(LocalEnvironment(cwd=str(tmp_path)))
     target = tmp_path / "x.py"
@@ -107,6 +141,7 @@ def test_write_file_lsp_diagnostics_none_when_layer_returns_empty(tmp_path):
     assert res.lsp_diagnostics is None
 
 
+@_requires_bash
 def test_write_file_skips_lsp_when_syntax_failed(tmp_path):
     """If the syntax check finds errors, the LSP layer should not be
     consulted (a file that won't parse won't yield meaningful semantic
@@ -126,6 +161,7 @@ def test_write_file_skips_lsp_when_syntax_failed(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@_requires_bash
 def test_patch_replace_propagates_lsp_diagnostics(tmp_path):
     """patch_replace's internal write_file populates lsp_diagnostics —
     the outer PatchResult must carry it forward."""

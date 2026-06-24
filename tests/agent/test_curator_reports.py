@@ -265,7 +265,7 @@ def test_state_transitions_captured_in_report(curator_env):
     assert payload["state_transitions"] == [
         {"name": "getting-old", "from": "active", "to": "stale"}
     ]
-    md = (run_dir / "REPORT.md").read_text()
+    md = (run_dir / "REPORT.md").read_text(encoding="utf-8")
     assert "State transitions" in md
     assert "getting-old" in md
     assert "active → stale" in md
