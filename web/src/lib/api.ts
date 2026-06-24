@@ -1189,6 +1189,146 @@ export const api = {
     fetchJSON<SkillHubScan>(
       `/api/skills/hub/scan?identifier=${encodeURIComponent(identifier)}`,
     ),
+
+  // ── Cost Intelligence (/api/costs/*) ───────────────────────────────────
+  getCostsSummary: (profile = getManagementProfile()) =>
+    fetchJSON<CostsSummaryResponse>(
+      appendProfileParam("/api/costs/summary", profile),
+    ),
+  getCostsByModel: (days: number, profile = getManagementProfile()) =>
+    fetchJSON<CostsByModelResponse>(
+      appendProfileParam(`/api/costs/by-model?days=${days}`, profile),
+    ),
+  getCostsByDay: (days: number, profile = getManagementProfile()) =>
+    fetchJSON<CostsByDayResponse>(
+      appendProfileParam(`/api/costs/by-day?days=${days}`, profile),
+    ),
+  getCostsSavings: (days: number, profile = getManagementProfile()) =>
+    fetchJSON<CostsSavingsResponse>(
+      appendProfileParam(`/api/costs/savings?days=${days}`, profile),
+    ),
+  getCostsGuardrails: (profile = getManagementProfile()) =>
+    fetchJSON<CostsGuardrailsResponse>(
+      appendProfileParam("/api/costs/guardrails", profile),
+    ),
+  updateCostsGuardrails: (
+    body: CostsGuardrailsUpdateRequest,
+    profile = getManagementProfile(),
+  ) =>
+    fetchJSON<CostsGuardrailsResponse>(
+      appendProfileParam("/api/costs/guardrails", profile),
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
+  // ── Traces ──────────────────────────────────────────────────────────────
+  getTraces: (params?: TracesParams) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    if (params?.model) qs.set("model", params.model);
+    if (params?.agent) qs.set("agent", params.agent);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.since) qs.set("since", params.since);
+    if (params?.until) qs.set("until", params.until);
+    const q = qs.toString();
+    return fetchJSON<TracesResponse>(`/api/traces${q ? `?${q}` : ""}`);
+  },
+  getTrace: (traceId: string) =>
+    fetchJSON<TraceDetailResponse>(`/api/traces/${encodeURIComponent(traceId)}`),
+
+  // ── Fleet Metrics ─────────────────────────────────────────────────────
+  getFleetMetrics: () =>
+    fetchJSON<FleetMetricsResponse>("/api/ops/fleet-metrics"),
+  getAutopilotIncidents: (profile = getManagementProfile()) =>
+    fetchJSON<AutopilotIncidentsResponse>(
+      appendProfileParam("/api/ops/autopilot/incidents", profile),
+    ),
+  createAutopilotDiagnostic: (
+    body: {
+      incident_id?: string;
+      incident?: AutopilotIncident;
+      assignee_profile?: string;
+    },
+    profile = getManagementProfile(),
+  ) =>
+    fetchJSON<AutopilotDiagnoseResponse>(
+      appendProfileParam("/api/ops/autopilot/diagnose", profile),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+
+  // ── Costs by Mission ──────────────────────────────────────────────────
+  getCostsByMission: (days: number, profile = getManagementProfile()) =>
+    fetchJSON<CostsByMissionResponse>(
+      appendProfileParam(`/api/costs/by-mission?days=${days}`, profile),
+    ),
+
+  // ── Mission Control ────────────────────────────────────────────────────
+  getMissions: (params?: MissionsParams) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    if (params?.status) qs.set("status", params.status);
+    const q = qs.toString();
+    return fetchJSON<MissionsResponse>(`/api/missions${q ? `?${q}` : ""}`);
+  },
+  getMission: (missionId: string) =>
+    fetchJSON<MissionDetailResponse>(`/api/missions/${encodeURIComponent(missionId)}`),
+
+  // ── Command Desk Overview ──────────────────────────────────────────────────
+  getCommandDeckOverview: () =>
+    fetchJSON<CommandDeckOverviewResponse>("/api/command-deck/overview"),
+
+  // ── Analytics Overview (Wave 6) ────────────────────────────────────────────
+  getAnalyticsOverview: (days: number) =>
+    fetchJSON<AnalyticsOverviewResponse>(`/api/analytics/overview?days=${days}`),
+
+  // ── Observability Alerts ───────────────────────────────────────────────────
+  getAlerts: () =>
+    fetchJSON<AlertsResponse>("/api/observability/alerts"),
+
+  // ── Mission Templates ──────────────────────────────────────────────────────
+  getTemplates: () =>
+    fetchJSON<TemplatesResponse>("/api/templates"),
+
+  instantiateTemplate: (id: string, body?: { title?: string; owner?: string }) =>
+    fetchJSON<InstantiateTemplateResponse>(
+      `/api/templates/${encodeURIComponent(id)}/instantiate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+      },
+    ),
+
+  // ── Traces by session ─────────────────────────────────────────────────────
+  getTracesBySession: (sessionId: string) =>
+    fetchJSON<TracesResponse>(`/api/traces?session_id=${encodeURIComponent(sessionId)}`),
+
+  // ── Mission Builder (Wave 9) ───────────────────────────────────────────────
+  getTemplateDetail: (id: string) =>
+    fetchJSON<FullTemplateResponse>(`/api/templates/${encodeURIComponent(id)}`),
+
+  saveCustomTemplate: (body: CustomTemplateSaveRequest) =>
+    fetchJSON<{ id: string; name: string }>("/api/templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  instantiateDraft: (body: DraftInstantiateRequest) =>
+    fetchJSON<InstantiateTemplateResponse>("/api/templates/instantiate-draft", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 };
 
 /** Identity payload returned by ``GET /api/auth/me`` (Phase 7).
@@ -2406,4 +2546,492 @@ export interface AgentPluginUpdateResponse {
 export interface PluginProvidersPutRequest {
   memory_provider?: string;
   context_engine?: string;
+}
+
+// ── Cost Intelligence types ─────────────────────────────────────────────────
+
+export interface CostsSummaryResponse {
+  spend_today: number;
+  runs_today: number;
+  tokens_today: number;
+  spend_total: number;
+  actual_total: number;
+  tokens_total: number;
+  runs_total: number;
+}
+
+export interface CostsModelEntry {
+  model: string;
+  estimated_cost: number;
+  actual_cost: number;
+  input_tokens: number;
+  output_tokens: number;
+  runs: number;
+  api_calls: number;
+}
+
+export interface CostsByModelResponse {
+  by_model: CostsModelEntry[];
+  period_days: number;
+}
+
+export interface CostsDayEntry {
+  day: string;
+  estimated_cost: number;
+  input_tokens: number;
+  output_tokens: number;
+  runs: number;
+}
+
+export interface CostsByDayResponse {
+  by_day: CostsDayEntry[];
+  period_days: number;
+}
+
+export interface CostsSavingsResponse {
+  estimated_savings_usd: number;
+  premium_spend_usd: number;
+  premium_runs: number;
+  mid_cost_factor: number;
+  is_estimate: boolean;
+  note: string;
+  period_days: number;
+}
+
+export interface CostGuardrailDecision {
+  allow: boolean;
+  action: "none" | "warn" | "block" | "fallback";
+  fallback_model: string | null;
+  reason: string | null;
+}
+
+export interface CostGuardrailsConfig {
+  enabled: boolean;
+  daily_budget_usd: number | null;
+  mission_budgets_usd: Record<string, number>;
+  premium_alert: boolean;
+  block_expensive: boolean;
+  auto_fallback: boolean;
+  fallback_model: string;
+  fallback_provider: string;
+  premium_model_prefixes: string[];
+}
+
+export interface CostGuardrailsMissionBudgetStatus {
+  mission_id: string;
+  title: string;
+  budget_usd: number;
+  spend_usd: number;
+  remaining_usd: number;
+  pct_used: number;
+  over_budget: boolean;
+}
+
+export interface CostGuardrailsStatusResponse {
+  spend_today_usd: number;
+  daily_budget_usd: number | null;
+  daily_budget_remaining_usd: number | null;
+  projected_spend_today_usd: number;
+  mission_budgets: CostGuardrailsMissionBudgetStatus[];
+  premium_usage_today: {
+    runs: number;
+    spend_usd: number;
+    models: Array<{ model: string; runs: number; spend_usd: number }>;
+  };
+  current_model: string;
+  current_decision: CostGuardrailDecision;
+}
+
+export interface CostsGuardrailsResponse {
+  cost_guardrails: CostGuardrailsConfig;
+  status: CostGuardrailsStatusResponse;
+}
+
+export interface CostsGuardrailsUpdateRequest {
+  enabled?: boolean;
+  daily_budget_usd?: number | null;
+  mission_budgets_usd?: Record<string, number | null>;
+  premium_alert?: boolean;
+  block_expensive?: boolean;
+  auto_fallback?: boolean;
+  fallback_model?: string;
+  fallback_provider?: string;
+  premium_model_prefixes?: string[];
+}
+
+// ── Traces types ─────────────────────────────────────────────────────────────
+
+export interface TracesParams {
+  limit?: number;
+  offset?: number;
+  model?: string;
+  agent?: string;
+  status?: string;
+  since?: string;
+  until?: string;
+}
+
+export interface TraceRow {
+  trace_id: string;
+  root_kind: string;
+  agent: string;
+  model: string;
+  started_at: number;
+  ended_at: number | null;
+  duration_ms: number;
+  span_count: number;
+  total_tokens: number;
+  cost_usd: number;
+  status: string;
+}
+
+export interface TracesResponse {
+  traces: TraceRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SpanRow {
+  span_id: string;
+  parent_id: string | null;
+  session_id: string | null;
+  kind: string;
+  name: string;
+  agent: string | null;
+  model: string | null;
+  provider: string | null;
+  status: string;
+  started_at: number;
+  ended_at: number | null;
+  duration_ms: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  cost_usd: number | null;
+  error: string | null;
+}
+
+export interface TraceDetailResponse {
+  trace_id: string;
+  spans: SpanRow[];
+  totals: {
+    duration_ms: number;
+    total_tokens: number;
+    cost_usd: number;
+    span_count: number;
+    error_count: number;
+  };
+}
+
+// ── Fleet Metrics types ───────────────────────────────────────────────────────
+
+export interface FleetMetricsResponse {
+  queue: {
+    ready: number;
+    in_progress: number;
+    blocked: number;
+  };
+  throughput: {
+    spans_per_min: number;
+    traces_today: number;
+  };
+  bottlenecks: Array<{
+    name: string;
+    kind: string;
+    avg_duration_ms: number;
+    count: number;
+  }>;
+  recurring_errors: Array<{
+    error: string;
+    count: number;
+    last_seen: string;
+  }>;
+  cost_today_usd: number;
+  tracer: {
+    dropped_spans: number;
+    queue_size: number;
+    healthy: boolean;
+  };
+}
+
+export interface AutopilotIncident {
+  id: string;
+  kind: string;
+  severity: "critical" | "warning" | "info" | string;
+  title: string;
+  detail: string;
+  evidence: Record<string, unknown>;
+  suggested_action: string;
+}
+
+export interface AutopilotIncidentsResponse {
+  incidents: AutopilotIncident[];
+}
+
+export interface AutopilotDiagnoseReport {
+  summary: string;
+  suspected_cause: string;
+  suggested_fix: string;
+  next_steps: string[];
+}
+
+export interface AutopilotDiagnoseResponse {
+  mission_id: string;
+  kanban_task_id: string | null;
+  report: AutopilotDiagnoseReport;
+  kanban_warning?: string;
+}
+
+// ── Costs by Mission types ────────────────────────────────────────────────────
+
+export interface MissionCostRow {
+  mission_id: string;
+  title: string;
+  status: string;
+  cost_usd: number;
+  total_tokens: number;
+  run_count: number;
+  is_estimate: boolean;
+  top_runs: Array<{
+    session_id: string;
+    cost_usd: number;
+  }>;
+}
+
+export interface CostsByMissionResponse {
+  missions: MissionCostRow[];
+  is_estimate: boolean;
+}
+
+// ── Mission Control types ──────────────────────────────────────────────────────
+
+export interface MissionProgress {
+  done: number;
+  total: number;
+  pct: number;
+}
+
+export interface MissionRow {
+  mission_id: string;
+  board_slug: string;
+  title: string;
+  status: string;
+  owner: string | null;
+  progress: MissionProgress;
+  models: string[];
+  cost_usd: number;
+  total_tokens: number;
+  run_count: number;
+  updated_at: string | null;
+}
+
+export interface MissionsParams {
+  limit?: number;
+  offset?: number;
+  status?: string;
+}
+
+export interface MissionsResponse {
+  missions: MissionRow[];
+  total: number;
+}
+
+export interface MissionTask {
+  id: string;
+  title: string;
+  status: string;
+  assignee: string | null;
+  session_id: string | null;
+}
+
+export interface MissionDelegationNode {
+  session_id: string;
+  parent_session_id: string | null;
+  agent: string | null;
+  model: string | null;
+  cost_usd: number | null;
+  status: string;
+}
+
+export interface MissionTimelineEvent {
+  ts: string;
+  kind: string;
+  label: string;
+}
+
+export interface MissionTopRun {
+  session_id: string;
+  cost_usd: number;
+  status: string;
+  duration_ms: number | null;
+}
+
+export interface MissionDetailResponse {
+  mission: MissionRow;
+  tasks: MissionTask[];
+  delegation_tree: MissionDelegationNode[];
+  timeline: MissionTimelineEvent[];
+  top_runs: MissionTopRun[];
+}
+
+// ── Command Deck Overview ────────────────────────────────────────────────────
+
+export interface CommandDeckTracerSummary {
+  dropped_spans: number;
+  healthy: boolean;
+}
+
+export interface CommandDeckFleetSummary {
+  queue: number;
+  throughput: number;
+  bottlenecks: string[];
+  recurring_errors: string[];
+  cost_today_usd: number;
+  tracer: CommandDeckTracerSummary;
+}
+
+export interface CommandDeckOverviewResponse {
+  deck: { available: boolean; status: string };
+  fleet: CommandDeckFleetSummary;
+  costs: Record<string, unknown>;
+  missions: { count: number };
+  tracer: CommandDeckTracerSummary;
+}
+
+// ── Analytics Overview (Wave 6) ──────────────────────────────────────────────
+
+export interface AnalyticsOverviewThroughputDay {
+  day: string;
+  count: number;
+}
+
+export interface AnalyticsOverviewThroughput {
+  traces_per_day: AnalyticsOverviewThroughputDay[];
+  spans_total: number;
+  traces_total: number;
+}
+
+export interface AnalyticsOverviewSuccessRate {
+  ok: number;
+  error: number;
+  rate: number;
+}
+
+export interface AnalyticsOverviewLatency {
+  avg_ms: number;
+  p50_ms: number;
+  p95_ms: number;
+}
+
+export interface AnalyticsOverviewTokenDay {
+  day: string;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface AnalyticsModelEfficiency {
+  model: string;
+  runs: number;
+  total_cost_usd: number;
+  avg_cost_per_run: number;
+  success_rate: number;
+  avg_latency_ms: number;
+}
+
+export interface AnalyticsOverviewResponse {
+  throughput: AnalyticsOverviewThroughput;
+  success_rate: AnalyticsOverviewSuccessRate;
+  latency: AnalyticsOverviewLatency;
+  token_usage: AnalyticsOverviewTokenDay[];
+  model_efficiency: AnalyticsModelEfficiency[];
+}
+
+// ── Observability Alerts ─────────────────────────────────────────────────────
+
+export type AlertSeverity = "critical" | "warning" | "info";
+
+export interface AlertRow {
+  id: string;
+  severity: AlertSeverity;
+  kind: string;
+  title: string;
+  detail: string;
+  value: number;
+  threshold: number;
+  ts: string;
+}
+
+export interface AlertsResponse {
+  alerts: AlertRow[];
+}
+
+// ── Mission Templates ────────────────────────────────────────────────────────
+
+export interface TemplateCreates {
+  board: string;
+  tasks_count: number;
+  cron?: string;
+}
+
+export interface TemplateRow {
+  id: string;
+  name: string;
+  description: string;
+  creates: TemplateCreates;
+}
+
+export interface TemplatesResponse {
+  templates: TemplateRow[];
+}
+
+export interface InstantiateTemplateResponse {
+  mission_id: string;
+  board_slug: string;
+}
+
+// ── Mission Builder types (Wave 9) ────────────────────────────────────────────
+
+export interface FullTemplateTask {
+  title: string;
+  status?: string;
+  assignee?: string;
+  body?: string;
+}
+
+export interface FullTemplateResponse {
+  id: string;
+  name: string;
+  description: string;
+  defaults: Record<string, string>;
+  creates: {
+    board: string;
+    tasks: FullTemplateTask[];
+    cron: boolean;
+  };
+}
+
+export interface DraftTask {
+  title: string;
+  description?: string;
+  assignee?: string;
+  status?: string;
+}
+
+export interface DraftInstantiateRequest {
+  name: string;
+  description?: string;
+  board?: string;
+  owner?: string;
+  tasks: DraftTask[];
+  defaults?: Record<string, string>;
+}
+
+export interface CustomTemplateSaveRequest {
+  name: string;
+  description?: string;
+  board?: string;
+  owner?: string;
+  tasks: DraftTask[];
+  defaults?: Record<string, string>;
 }

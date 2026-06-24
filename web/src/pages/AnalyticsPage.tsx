@@ -8,6 +8,10 @@ import {
   Cpu,
   RefreshCw,
   TrendingUp,
+  Activity,
+  CheckCircle2,
+  Timer,
+  Zap,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
@@ -15,6 +19,8 @@ import type {
   AnalyticsDailyEntry,
   AnalyticsModelEntry,
   AnalyticsSkillEntry,
+  AnalyticsOverviewResponse,
+  AnalyticsModelEfficiency,
 } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -24,6 +30,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@nous-research/ui/ui/c
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
+import { SkeletonCard, SkeletonTable, EmptyState, ErrorState, DataTable, Sparkline, MiniBar } from "@/components/ds";
+import type { ColDef } from "@/components/ds";
 
 const PERIODS = [
   { label: "7d", days: 7 },
@@ -106,8 +114,12 @@ function SortHeader({
   const active = col === sortKey;
   return (
     <th
+      scope="col"
       onClick={() => toggle(col)}
-      className={`cursor-pointer select-none ${className ?? ""}`}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") toggle(col); }}
+      tabIndex={0}
+      aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+      className={`cursor-pointer select-none focus-visible:outline-2 focus-visible:outline-[var(--dsd-border-focus,currentColor)] ${className ?? ""}`}
     >
       <span className="inline-flex items-center gap-1.5 rounded px-1 -mx-1 py-0.5 hover:bg-muted/40 transition-colors">
         {label}
@@ -403,6 +415,298 @@ function SkillTable({ skills }: { skills: AnalyticsSkillEntry[] }) {
   );
 }
 
+// ── Overview section (Wave 6 — always shown, no flag gate) ──────────────────
+
+function fmtPct(rate: number): string {
+  return `${(rate * 100).toFixed(1)}%`;
+}
+
+function fmtMs(ms: number): string {
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
+const MODEL_EFF_COLS: ColDef<AnalyticsModelEfficiency>[] = [
+  {
+    key: "model",
+    header: "Model",
+    sortKey: "model",
+    width: "200px",
+    cell: (r) => (
+      <span className="font-mono text-xs text-[var(--dsd-text-primary)] truncate block">
+        {r.model}
+      </span>
+    ),
+  },
+  {
+    key: "runs",
+    header: "Runs",
+    sortKey: "runs",
+    cell: (r) => <span className="tabular-nums">{r.runs}</span>,
+  },
+  {
+    key: "avg_cost_per_run",
+    header: "Avg Cost/Run",
+    sortKey: "avg_cost_per_run",
+    cell: (r) =>
+      r.avg_cost_per_run != null ? (
+        <span className="tabular-nums text-[var(--dsd-cat-cost)]">
+          ${r.avg_cost_per_run.toFixed(4)}
+        </span>
+      ) : (
+        <span className="text-[var(--dsd-text-faint)]">—</span>
+      ),
+  },
+  {
+    key: "success_rate",
+    header: "Success",
+    sortKey: "success_rate",
+    cell: (r) => (
+      <span
+        className="tabular-nums"
+        style={{
+          color:
+            r.success_rate >= 0.95
+              ? "var(--dsd-status-success)"
+              : r.success_rate >= 0.8
+                ? "var(--dsd-status-warning)"
+                : "var(--dsd-status-error)",
+        }}
+      >
+        {fmtPct(r.success_rate)}
+      </span>
+    ),
+  },
+  {
+    key: "avg_latency_ms",
+    header: "Avg Latency",
+    sortKey: "avg_latency_ms",
+    cell: (r) => (
+      <span className="tabular-nums text-[var(--dsd-text-secondary)]">
+        {fmtMs(r.avg_latency_ms)}
+      </span>
+    ),
+  },
+];
+
+function AnalyticsOverviewSection({ days }: { days: number }) {
+  const [data, setData] = useState<AnalyticsOverviewResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    api
+      .getAnalyticsOverview(days)
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, [days]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading && !data) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => <SkeletonCard key={i} />)}
+        </div>
+        <SkeletonTable rows={5} cols={5} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return <ErrorState error={new Error(error)} onRetry={load} />;
+  }
+
+  if (!data) return null;
+
+  const { throughput, success_rate, latency, token_usage, model_efficiency } = data;
+
+  const noData =
+    throughput.traces_total === 0 &&
+    model_efficiency.length === 0 &&
+    token_usage.length === 0;
+
+  const throughputCounts = useMemo(
+    () => throughput.traces_per_day.map((d) => d.count),
+    [throughput.traces_per_day],
+  );
+  const tokenInputSeries = useMemo(
+    () => token_usage.map((d) => d.input_tokens),
+    [token_usage],
+  );
+  const tokenOutputSeries = useMemo(
+    () => token_usage.map((d) => d.output_tokens),
+    [token_usage],
+  );
+
+  if (noData) {
+    return (
+      <EmptyState
+        icon="📊"
+        title="No observability data yet"
+        description="Run traces to see throughput, latency, and model efficiency analytics."
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      {/* Metric tiles */}
+      <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <CardContent className="py-4 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: "var(--dsd-status-success)" }} />
+              Success Rate
+            </div>
+            <p
+              className="text-2xl font-bold tabular-nums"
+              style={{
+                color:
+                  success_rate.rate >= 0.95
+                    ? "var(--dsd-status-success)"
+                    : success_rate.rate >= 0.8
+                      ? "var(--dsd-status-warning)"
+                      : "var(--dsd-status-error)",
+              }}
+            >
+              {fmtPct(success_rate.rate)}
+            </p>
+            <p className="text-xs text-muted-foreground tabular-nums">
+              {success_rate.ok} ok · {success_rate.error} err
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="py-4 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Timer className="h-3.5 w-3.5 shrink-0" />
+              p50 Latency
+            </div>
+            <p className="text-2xl font-bold tabular-nums">{fmtMs(latency.p50_ms)}</p>
+            <p className="text-xs text-muted-foreground">avg {fmtMs(latency.avg_ms)}</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="py-4 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Activity className="h-3.5 w-3.5 shrink-0" />
+              p95 Latency
+            </div>
+            <p className="text-2xl font-bold tabular-nums">{fmtMs(latency.p95_ms)}</p>
+            <p className="text-xs text-muted-foreground">{throughput.spans_total.toLocaleString()} spans</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="py-4 flex flex-col gap-1">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Zap className="h-3.5 w-3.5 shrink-0" />
+              Traces Total
+            </div>
+            <p className="text-2xl font-bold tabular-nums">
+              {throughput.traces_total.toLocaleString()}
+            </p>
+            {throughputCounts.length > 0 && (
+              <MiniBar
+                data={throughputCounts}
+                color="var(--dsd-cat-trace)"
+                height={20}
+                className="mt-1"
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Throughput + Token charts row */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {throughputCounts.length > 0 && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm">Throughput (traces/day)</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <MiniBar
+                data={throughputCounts}
+                color="var(--dsd-cat-trace)"
+                height={60}
+              />
+              <div className="flex justify-between mt-1 text-[10px] text-muted-foreground">
+                <span>{throughput.traces_per_day[0]?.day ?? ""}</span>
+                <span>{throughput.traces_per_day[throughput.traces_per_day.length - 1]?.day ?? ""}</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {tokenInputSeries.length > 0 && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                <CardTitle className="text-sm">Token Usage</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span style={{ color: "var(--series-input-token)" }}>Input</span>
+                <Sparkline
+                  data={tokenInputSeries}
+                  width={120}
+                  height={28}
+                  color="var(--series-input-token)"
+                />
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span style={{ color: "var(--series-output-token)" }}>Output</span>
+                <Sparkline
+                  data={tokenOutputSeries}
+                  width={120}
+                  height={28}
+                  color="var(--series-output-token)"
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+
+      {/* Model efficiency DataTable */}
+      {model_efficiency.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Cpu className="h-4 w-4 text-muted-foreground" />
+              <CardTitle className="text-sm">Model Efficiency</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <DataTable<AnalyticsModelEfficiency>
+              cols={MODEL_EFF_COLS}
+              rows={model_efficiency}
+              rowKey={(r) => r.model}
+              dense
+              stickyHeader
+              maxRows={10}
+              aria-label="Model efficiency table"
+            />
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<AnalyticsResponse | null>(null);
@@ -483,7 +787,11 @@ export default function AnalyticsPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <h1 className="sr-only">Analytics</h1>
       <PluginSlot name="analytics:top" />
+
+      {/* Wave 6: always-visible overview section */}
+      <AnalyticsOverviewSection days={days} />
 
       {showTokens === false && (
         <Card>

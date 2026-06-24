@@ -195,6 +195,10 @@ VALID_HOOKS: Set[str] = {
 }
 
 ENTRY_POINTS_GROUP = "hermes_agent.plugins"
+_DEFAULT_ENABLED_BUNDLED_PLUGINS: Set[str] = {
+    # Fleet metrics and traces APIs rely on sqlite_traces being active by default.
+    "observability/sqlite_traces",
+}
 
 _NS_PARENT = "hermes_plugins"
 
@@ -1330,6 +1334,13 @@ class PluginManager:
             # entry-point plugins) is opt-in via plugins.enabled.
             # Accept both the path-derived key and the legacy bare name
             # so existing configs keep working.
+            if (
+                manifest.source == "bundled"
+                and lookup_key in _DEFAULT_ENABLED_BUNDLED_PLUGINS
+            ):
+                self._load_plugin(manifest)
+                continue
+
             is_enabled = (
                 enabled is not None
                 and (lookup_key in enabled or manifest.name in enabled)

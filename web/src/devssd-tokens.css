@@ -1,8 +1,12 @@
 /*
  * DevSSD design tokens — Command Desk ops console.
  * Inspired by dark glassmorphism + developer control panels (PulseOps, LaunchKit).
+ *
+ * EXTENSION POLICY: all original --dsd-* names are preserved for
+ * backward-compat. New semantic tokens are appended below.
  */
 :root {
+  /* ── ORIGINAL TOKENS (do not rename) ─────────────────────────── */
   --dsd-bg: #060a10;
   --dsd-bg-elevated: #0a1018;
   --dsd-surface-1: rgba(12, 17, 28, 0.72);
@@ -44,4 +48,148 @@
   --dsd-shadow-soft: 0 12px 40px rgba(0, 0, 0, 0.22);
   --dsd-shadow-glow: 0 0 0 1px rgba(125, 211, 252, 0.06), 0 8px 32px rgba(0, 0, 0, 0.28);
   --dsd-shadow-card-hover: 0 0 0 1px rgba(125, 211, 252, 0.14), 0 16px 48px rgba(0, 0, 0, 0.32);
+
+  /* ── SEMANTIC BACKGROUND LAYERS ──────────────────────────────── */
+  --dsd-layer-app:     var(--dsd-bg);
+  --dsd-layer-surface: var(--dsd-surface-1-solid);
+  --dsd-layer-raised:  var(--dsd-surface-2-solid);
+  --dsd-layer-overlay: var(--dsd-surface-3-solid);
+
+  /* ── SEMANTIC BORDERS ─────────────────────────────────────────── */
+  --dsd-border-default: var(--dsd-border-subtle);
+  --dsd-border-emphasis: var(--dsd-border-strong);
+  --dsd-border-focus: rgba(125, 211, 252, 0.55);
+
+  /* ── SEMANTIC TEXT ────────────────────────────────────────────── */
+  /* aliases map onto the originals; pages use these semantic names */
+  --dsd-text-base:      var(--dsd-text-primary);
+  --dsd-text-dim:       var(--dsd-text-secondary);
+  --dsd-text-faint:     var(--dsd-text-muted);
+  --dsd-text-accent:    var(--dsd-accent-cyan);
+  --dsd-text-on-accent: #060a10;
+
+  /* ── SEMANTIC ACCENT ──────────────────────────────────────────── */
+  --dsd-accent-primary:   var(--dsd-accent-cyan);
+  --dsd-accent-secondary: var(--dsd-accent-violet);
+  --dsd-accent-tertiary:  var(--dsd-accent-emerald);
+  --dsd-accent-primary-bg: rgba(125, 211, 252, 0.10);
+
+  /* ── STATUS SEMANTIC COLORS ───────────────────────────────────── */
+  --dsd-status-success:      var(--dsd-sem-ok);
+  --dsd-status-success-bg:   rgba(74, 222, 128, 0.10);
+  --dsd-status-warning:      var(--dsd-sem-warning);
+  --dsd-status-warning-bg:   rgba(251, 191, 36, 0.10);
+  --dsd-status-error:        var(--dsd-sem-critical);
+  --dsd-status-error-bg:     rgba(248, 113, 113, 0.10);
+  --dsd-status-info:         var(--dsd-sem-info);
+  --dsd-status-info-bg:      rgba(125, 211, 252, 0.10);
+  --dsd-status-neutral:      var(--dsd-sem-unknown);
+  --dsd-status-neutral-bg:   rgba(148, 163, 184, 0.10);
+  --dsd-status-degraded:     var(--dsd-sem-degraded);
+  --dsd-status-degraded-bg:  rgba(251, 146, 60, 0.10);
+
+  /* ── AGENT / MODEL CATEGORY PALETTE ──────────────────────────── */
+  --dsd-cat-agent:    #7dd3fc; /* sky-300 */
+  --dsd-cat-mission:  #a78bfa; /* violet-400 */
+  --dsd-cat-tool:     #34d399; /* emerald-400 */
+  --dsd-cat-model:    #f9a8d4; /* pink-300 */
+  --dsd-cat-cost:     #fbbf24; /* amber-400 */
+  --dsd-cat-fleet:    #fb923c; /* orange-400 */
+  --dsd-cat-trace:    #93c5fd; /* blue-300 */
+
+  /* ── SPACING SCALE ────────────────────────────────────────────── */
+  --dsd-space-1:  4px;
+  --dsd-space-2:  8px;
+  --dsd-space-3:  12px;
+  --dsd-space-4:  16px;
+  --dsd-space-5:  20px;
+  --dsd-space-6:  24px;
+  --dsd-space-8:  32px;
+  --dsd-space-10: 40px;
+  --dsd-space-12: 48px;
+  --dsd-space-16: 64px;
+
+  /* ── RADIUS SCALE (xs added; existing lg/md/sm kept) ─────────── */
+  --dsd-radius-xs:  3px;
+  --dsd-radius-xl:  24px;
+  --dsd-radius-full: 9999px;
+
+  /* ── TYPOGRAPHY SCALE ─────────────────────────────────────────── */
+  --dsd-text-xs:   11px;
+  --dsd-text-sm:   var(--dsd-text-caption);   /* 12px */
+  --dsd-text-md:   var(--dsd-text-body);      /* 14px */
+  --dsd-text-lg:   15px;
+  --dsd-text-xl:   var(--dsd-text-h2);        /* 16px */
+  --dsd-text-2xl:  var(--dsd-text-h1);        /* 22px */
+  --dsd-text-3xl:  var(--dsd-text-metric);    /* 28px */
+
+  --dsd-lh-tight:  1.25;
+  --dsd-lh-normal: 1.5;
+  --dsd-lh-relaxed:1.65;
+
+  --dsd-fw-regular: 400;
+  --dsd-fw-medium:  500;
+  --dsd-fw-semibold:600;
+  --dsd-fw-bold:    700;
+
+  /* ── ELEVATION / SHADOWS ──────────────────────────────────────── */
+  --dsd-elev-0: none;
+  --dsd-elev-1: var(--dsd-shadow-soft);
+  --dsd-elev-2: var(--dsd-shadow-glow);
+  --dsd-elev-3: var(--dsd-shadow-card-hover);
+  --dsd-elev-4: 0 0 0 1px rgba(125,211,252,0.18), 0 24px 64px rgba(0,0,0,0.40);
+
+  /* ── MOTION ───────────────────────────────────────────────────── */
+  --dsd-dur-instant: 80ms;
+  --dsd-dur-fast:    150ms;
+  --dsd-dur-normal:  250ms;
+  --dsd-dur-slow:    400ms;
+  --dsd-dur-crawl:   700ms;
+
+  --dsd-ease-out:    cubic-bezier(0.0, 0.0, 0.2, 1);
+  --dsd-ease-in:     cubic-bezier(0.4, 0.0, 1.0, 1);
+  --dsd-ease-inout:  cubic-bezier(0.4, 0.0, 0.2, 1);
+  --dsd-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dsd-ease-linear: linear;
+
+  /* ── DATA TABLE ───────────────────────────────────────────────── */
+  --dsd-table-row-h: 36px;
+  --dsd-table-header-h: 32px;
+  --dsd-table-row-hover: rgba(125, 211, 252, 0.05);
+  --dsd-table-row-selected: rgba(125, 211, 252, 0.08);
+  --dsd-table-border: var(--dsd-border-subtle);
+}
+
+/* ── REDUCED-MOTION OVERRIDE ──────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dsd-dur-instant: 0ms;
+    --dsd-dur-fast:    0ms;
+    --dsd-dur-normal:  0ms;
+    --dsd-dur-slow:    0ms;
+    --dsd-dur-crawl:   0ms;
+  }
+}
+
+/* ── DENSITY MODES ────────────────────────────────────────────────── */
+/* Default (comfortable) values are already set in :root above.
+   The DensityProvider sets data-density on <html> via localStorage. */
+
+html[data-density="compact"] {
+  /* Table row height reduced by ~30% */
+  --dsd-table-row-h: 24px;
+  --dsd-table-header-h: 24px;
+
+  /* Tighter spacing scale */
+  --dsd-block-gap: 16px;
+  --dsd-space-4:   12px;
+  --dsd-space-5:   16px;
+  --dsd-space-6:   20px;
+  --dsd-space-8:   24px;
+  --dsd-space-10:  32px;
+  --dsd-space-12:  40px;
+
+  /* Slightly smaller body text */
+  --dsd-text-body: 13px;
+  --dsd-text-md:   13px;
 }

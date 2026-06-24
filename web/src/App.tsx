@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -26,10 +28,12 @@ import {
   Code,
   Cpu,
   Database,
+  DollarSign,
   Download,
   Eye,
   FolderOpen,
   FileText,
+  GitBranch,
   Globe,
   Heart,
   KeyRound,
@@ -47,6 +51,7 @@ import {
   ShieldCheck,
   Sparkles,
   Star,
+  Target,
   Terminal,
   Users,
   Webhook,
@@ -73,37 +78,62 @@ import { ProfileSwitcher } from "@/components/ProfileSwitcher";
 import { ProfileScopeBanner } from "@/components/ProfileScopeBanner";
 import { useSystemActions } from "@/contexts/useSystemActions";
 import type { SystemAction } from "@/contexts/system-actions-context";
-import ConfigPage from "@/pages/ConfigPage";
-import DocsPage from "@/pages/DocsPage";
-import EnvPage from "@/pages/EnvPage";
-import FilesPage from "@/pages/FilesPage";
-import SessionsPage from "@/pages/SessionsPage";
-import LogsPage from "@/pages/LogsPage";
-import AnalyticsPage from "@/pages/AnalyticsPage";
-import ModelsPage from "@/pages/ModelsPage";
-import CronPage from "@/pages/CronPage";
-import ProfilesPage from "@/pages/ProfilesPage";
-import ProfileBuilderPage from "@/pages/ProfileBuilderPage";
-import SkillsPage from "@/pages/SkillsPage";
-import PluginsPage from "@/pages/PluginsPage";
-import McpPage from "@/pages/McpPage";
-import PairingPage from "@/pages/PairingPage";
-import ChannelsPage from "@/pages/ChannelsPage";
-import WebhooksPage from "@/pages/WebhooksPage";
-import SystemPage from "@/pages/SystemPage";
-import ChatPage from "@/pages/ChatPage";
-import {
-  AgentHomePage,
-  BitwardenStatusPage,
-  CommandDeckOpsPage,
-  DevssdDoctorPage,
-  GatewayStatusPage,
-} from "@/pages/DevssdPages";
-import OpsFleetPage from "@/pages/OpsFleetPage";
-import MultiAgentHubPage from "@/pages/MultiAgentHubPage";
-import RoutingPage from "@/pages/RoutingPage";
+// AgentHomePage stays eager — it is the landing page; making it lazy
+// would cause a skeleton flash on every fresh load.
+import { AgentHomePage } from "@/pages/AgentHomePage";
+import { SkeletonTable } from "@/components/ds/Skeleton";
+
+// ── Lazy page imports ──────────────────────────────────────────────────────────
+// Each is cast `as unknown as ComponentType` so the record type annotation
+// below stays narrow; the Suspense boundary wrapping <Routes> handles the
+// loading state for every lazy route uniformly.
+const ConfigPage = lazy(() => import("@/pages/ConfigPage")) as unknown as ComponentType;
+const DocsPage = lazy(() => import("@/pages/DocsPage")) as unknown as ComponentType;
+const EnvPage = lazy(() => import("@/pages/EnvPage")) as unknown as ComponentType;
+const FilesPage = lazy(() => import("@/pages/FilesPage")) as unknown as ComponentType;
+const ChatPage = lazy(() => import("@/pages/ChatPage")) as unknown as ComponentType<{
+  isActive?: boolean;
+}>;
+const SessionsPage = lazy(() => import("@/pages/SessionsPage")) as unknown as ComponentType;
+const LogsPage = lazy(() => import("@/pages/LogsPage")) as unknown as ComponentType;
+const AnalyticsPage = lazy(() => import("@/pages/AnalyticsPage")) as unknown as ComponentType;
+const ModelsPage = lazy(() => import("@/pages/ModelsPage")) as unknown as ComponentType;
+const CronPage = lazy(() => import("@/pages/CronPage")) as unknown as ComponentType;
+const ProfilesPage = lazy(() => import("@/pages/ProfilesPage")) as unknown as ComponentType;
+const ProfileBuilderPage = lazy(() => import("@/pages/ProfileBuilderPage")) as unknown as ComponentType;
+const SkillsPage = lazy(() => import("@/pages/SkillsPage")) as unknown as ComponentType;
+const PluginsPage = lazy(() => import("@/pages/PluginsPage")) as unknown as ComponentType;
+const McpPage = lazy(() => import("@/pages/McpPage")) as unknown as ComponentType;
+const PairingPage = lazy(() => import("@/pages/PairingPage")) as unknown as ComponentType;
+const ChannelsPage = lazy(() => import("@/pages/ChannelsPage")) as unknown as ComponentType;
+const WebhooksPage = lazy(() => import("@/pages/WebhooksPage")) as unknown as ComponentType;
+const SystemPage = lazy(() => import("@/pages/SystemPage")) as unknown as ComponentType;
+const OpsFleetPage = lazy(() => import("@/pages/OpsFleetPage")) as unknown as ComponentType;
+const MultiAgentHubPage = lazy(() => import("@/pages/MultiAgentHubPage")) as unknown as ComponentType;
+const CostsPage = lazy(() => import("@/pages/CostsPage")) as unknown as ComponentType;
+const TracesPage = lazy(() => import("@/pages/TracesPage")) as unknown as ComponentType;
+const RoutingPage = lazy(() => import("@/pages/RoutingPage")) as unknown as ComponentType;
+const MissionsPage = lazy(() => import("@/pages/MissionsPage")) as unknown as ComponentType;
+const MissionBuilderPage = lazy(() => import("@/pages/MissionBuilderPage")) as unknown as ComponentType;
+const ReplayPage = lazy(() => import("@/pages/ReplayPage")) as unknown as ComponentType;
+// Named exports from DevssdDeckPages — shim to default export for React.lazy
+const BitwardenStatusPage = lazy(() =>
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.BitwardenStatusPage })),
+) as unknown as ComponentType;
+const CommandDeckOpsPage = lazy(() =>
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.CommandDeckOpsPage })),
+) as unknown as ComponentType;
+const DevssdDoctorPage = lazy(() =>
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.DevssdDoctorPage })),
+) as unknown as ComponentType;
+const GatewayStatusPage = lazy(() =>
+  import("@/pages/DevssdDeckPages").then((m) => ({ default: m.GatewayStatusPage })),
+) as unknown as ComponentType;
+import { CommandDeckUX } from "@/components/CommandPalette";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import { ErrorBoundary } from "@/components/ds/ErrorBoundary";
+import { DensityProvider, useDensity } from "@/contexts/DensityContext";
 import { useI18n } from "@/i18n";
 import type { Translations } from "@/i18n/types";
 import { PluginPage, PluginSlot, usePlugins } from "@/plugins";
@@ -115,6 +145,56 @@ import type { StatusResponse } from "@/lib/api";
 
 function RootRedirect() {
   return <Navigate to="/agent" replace />;
+}
+
+/** Compact/comfortable density toggle rendered in the sidebar footer. */
+function DensityToggle({ collapsed }: { collapsed: boolean }) {
+  const { density, toggleDensity } = useDensity();
+  const isCompact = density === "compact";
+  return (
+    <button
+      type="button"
+      onClick={toggleDensity}
+      aria-label={isCompact ? "Switch to comfortable density" : "Switch to compact density"}
+      aria-pressed={isCompact}
+      title={isCompact ? "Comfortable" : "Compact"}
+      className={cn(
+        "flex items-center gap-1.5 rounded px-2 py-1 text-[11px] font-medium transition-colors",
+        "text-text-secondary hover:text-midground",
+        isCompact && "text-[var(--dsd-accent-primary)]",
+      )}
+    >
+      <span aria-hidden className="text-[13px] leading-none">{isCompact ? "⊟" : "⊞"}</span>
+      {!collapsed && (
+        <span className="hidden lg:inline">{isCompact ? "Compact" : "Cozy"}</span>
+      )}
+    </button>
+  );
+}
+
+/** Shown while a lazy-loaded page chunk is being fetched. */
+function PageLoadFallback() {
+  return (
+    <div className="deck-dashboard px-5 pt-6" aria-busy="true" aria-live="polite">
+      <SkeletonTable rows={6} cols={5} />
+    </div>
+  );
+}
+
+function EmbeddedChatLoadFallback({ isChatRoute }: { isChatRoute: boolean }) {
+  if (!isChatRoute) return null;
+  return (
+    <div
+      className="flex min-h-0 min-w-0 flex-1 items-center justify-center"
+      aria-busy="true"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Spinner />
+        <span>Loading chat…</span>
+      </div>
+    </div>
+  );
 }
 
 function UnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
@@ -146,6 +226,10 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/agent": AgentHomePage,
   "/multi-agent": MultiAgentHubPage,
   "/ops": OpsFleetPage,
+  "/costs": CostsPage,
+  "/traces": TracesPage,
+  "/missions": MissionsPage,
+  "/missions/builder": MissionBuilderPage,
   "/routing": RoutingPage,
   "/doctor": DevssdDoctorPage,
   "/bitwarden": BitwardenStatusPage,
@@ -169,6 +253,7 @@ const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/config": ConfigPage,
   "/env": EnvPage,
   "/docs": DocsPage,
+  "/replay": ReplayPage,
 };
 
 // Route placeholder for /chat.  The persistent ChatPage host (rendered
@@ -181,8 +266,11 @@ function ChatRouteSink() {
 
 const COMMAND_DESK_NAV: NavItem[] = [
   { path: "/agent", label: "Home", icon: Sparkles },
+  { path: "/missions", label: "Missions", icon: Target },
   { path: "/multi-agent", label: "Multi-agent", icon: Users },
   { path: "/ops", label: "Fleet", icon: Activity },
+  { path: "/costs", label: "Spend", icon: DollarSign },
+  { path: "/traces", label: "Runs", icon: GitBranch },
   { path: "/routing", label: "Routing", icon: Zap },
   { path: "/doctor", label: "Doctor", icon: ShieldCheck },
   { path: "/gateway", label: "Gateway", icon: Radio },
@@ -234,8 +322,12 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   BarChart3,
   Clock,
   Cpu,
+  Database,
+  DollarSign,
+  Eye,
   FileText,
   FolderOpen,
+  GitBranch,
   KeyRound,
   MessageSquare,
   Package,
@@ -244,7 +336,6 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   Sparkles,
   Terminal,
   Globe,
-  Database,
   Shield,
   Users,
   Wrench,
@@ -252,7 +343,7 @@ const ICON_MAP: Record<string, ComponentType<{ className?: string }>> = {
   Heart,
   Star,
   Code,
-  Eye,
+  Target,
 };
 
 function resolveIcon(name: string): ComponentType<{ className?: string }> {
@@ -378,8 +469,12 @@ const SIDEBAR_COLLAPSED_KEY = "hermes-sidebar-collapsed";
 /** DevSSD deck pages use full-width layout without outer page padding. */
 const DECK_LAYOUT_ROUTES = new Set([
   "/agent",
+  "/missions",
+  "/missions/builder",
   "/multi-agent",
   "/ops",
+  "/costs",
+  "/traces",
   "/routing",
   "/doctor",
   "/bitwarden",
@@ -522,6 +617,7 @@ export default function App() {
   }, []);
 
   return (
+    <DensityProvider>
     <ProfileProvider>
     <div
       data-deck-theme="ops"
@@ -758,6 +854,14 @@ export default function App() {
                 >
                   <LanguageSwitcher collapsed={isDesktopCollapsed} dropUp />
                 </SidebarIconWithTooltip>
+
+                <SidebarIconWithTooltip
+                  collapsed={isDesktopCollapsed}
+                  label="Toggle density"
+                  tooltipWarmRef={tooltipWarmRef}
+                >
+                  <DensityToggle collapsed={isDesktopCollapsed} />
+                </SidebarIconWithTooltip>
               </div>
             </div>
 
@@ -799,17 +903,21 @@ export default function App() {
                 )}
               >
                 <ProfileKeyedRoutes>
-                  <Routes>
-                    {routes.map(({ key, path, element }) => (
-                      <Route key={key} path={path} element={element} />
-                    ))}
-                    <Route
-                      path="*"
-                      element={
-                        <UnknownRouteFallback pluginsLoading={pluginsLoading} />
-                      }
-                    />
-                  </Routes>
+                  <ErrorBoundary>
+                  <Suspense fallback={<PageLoadFallback />}>
+                    <Routes>
+                      {routes.map(({ key, path, element }) => (
+                        <Route key={key} path={path} element={element} />
+                      ))}
+                      <Route
+                        path="*"
+                        element={
+                          <UnknownRouteFallback pluginsLoading={pluginsLoading} />
+                        }
+                      />
+                    </Routes>
+                  </Suspense>
+                  </ErrorBoundary>
                 </ProfileKeyedRoutes>
 
                 {embeddedChat &&
@@ -836,7 +944,9 @@ export default function App() {
                       )}
                       aria-hidden={!isChatRoute}
                     >
-                      <ChatPage isActive={isChatRoute} />
+                      <Suspense fallback={<EmbeddedChatLoadFallback isChatRoute={isChatRoute} />}>
+                        <ChatPage isActive={isChatRoute} />
+                      </Suspense>
                     </div>
                   ))}
               </div>
@@ -847,8 +957,10 @@ export default function App() {
       </div>
 
       <PluginSlot name="overlay" />
+      <CommandDeckUX />
     </div>
     </ProfileProvider>
+    </DensityProvider>
   );
 }
 

@@ -13,6 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  Eye,
+  GitBranch,
   MessageSquare,
   Search,
   Trash2,
@@ -23,6 +25,7 @@ import {
   Hash,
   X,
   Play,
+  Film,
   Eraser,
   Download,
   Pencil,
@@ -67,6 +70,9 @@ import { useI18n } from "@/i18n";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { PluginSlot } from "@/plugins";
 import { isDashboardEmbeddedChatEnabled } from "@/lib/dashboard-flags";
+import { TraceDrawer } from "@/components/TraceDrawer";
+import { Timeline } from "@/components/ds/Timeline";
+import type { TimelineEvent } from "@/components/ds/Timeline";
 
 const SOURCE_CONFIG: Record<string, { icon: typeof Terminal; color: string }> =
   {
@@ -385,7 +391,9 @@ function SessionRow({
   onDelete,
   onRename,
   onExport,
+  onViewTrace,
   resumeInChatEnabled,
+  childSessions = [],
 }: SessionRowProps) {
   const [messages, setMessages] = useState<SessionMessage[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -459,6 +467,34 @@ function SessionRow({
           <Play />
         </Button>
       )}
+
+      <Button
+        ghost
+        size="icon"
+        className="text-muted-foreground hover:text-foreground"
+        aria-label="View trace"
+        title="View trace"
+        onClick={(e) => {
+          e.stopPropagation();
+          onViewTrace(session.id);
+        }}
+      >
+        <Eye />
+      </Button>
+
+      <Button
+        ghost
+        size="icon"
+        className="text-muted-foreground hover:text-success"
+        aria-label="Open in Replay"
+        title="Open in Replay"
+        onClick={(e) => {
+          e.stopPropagation();
+          navigate(`/replay?session=${encodeURIComponent(session.id)}`);
+        }}
+      >
+        <Film />
+      </Button>
 
       <Button
         ghost
@@ -649,7 +685,111 @@ function SessionRow({
       </div>
 
       {isExpanded && (
-        <div className="min-w-0 border-t border-border bg-background/50 p-4">
+        <div className="min-w-0 border-t border-border bg-background/50 p-4 flex flex-col gap-4">
+          {/* Delegation Tree */}
+          {(session.parent_session_id || childSessions.length > 0) && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                <GitBranch className="h-3 w-3" />
+                Delegation
+              </div>
+              {session.parent_session_id && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span className="text-border">↑</span>
+                  <span>Parent:</span>
+                  <button
+                    type="button"
+                    className="font-mono text-xs text-primary/80 hover:text-primary underline truncate max-w-[14rem]"
+                    title={session.parent_session_id}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(
+                        `/sessions?focus=${encodeURIComponent(session.parent_session_id!)}`,
+                      );
+                    }}
+                  >
+                    {session.parent_session_id.slice(0, 18)}…
+                  </button>
+                </div>
+              )}
+              {childSessions.length > 0 && (
+                <div className="flex flex-col gap-0.5 pl-3 border-l border-border">
+                  {childSessions.map((child) => (
+                    <div key={child.id} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="text-border shrink-0">↳</span>
+                      <button
+                        type="button"
+                        className="font-mono text-xs text-primary/80 hover:text-primary underline truncate max-w-[14rem]"
+                        title={child.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(
+                            `/sessions?focus=${encodeURIComponent(child.id)}`,
+                          );
+                        }}
+                      >
+                        {child.title ?? child.id.slice(0, 18) + "…"}
+                      </button>
+                      <span className="shrink-0 text-[10px] text-muted-foreground/60">
+                        {child.message_count} msgs
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Message Timeline (compact) */}
+          {messages && messages.length > 0 && (
+            <details open={false} className="group">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide select-none">
+                <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+                Timeline ({messages.length} events)
+              </summary>
+              <div className="mt-2 pl-1">
+                <Timeline
+                  compact
+                  events={messages.slice(0, 40).map<TimelineEvent>((msg, i) => {
+                    const roleLabel =
+                      msg.role === "user"
+                        ? "User"
+                        : msg.role === "assistant"
+                          ? "Agent"
+                          : msg.role === "tool"
+                            ? "Tool"
+                            : msg.role;
+                    const toolNames =
+                      msg.tool_calls && msg.tool_calls.length > 0
+                        ? msg.tool_calls.map((tc) => tc.function.name).join(", ")
+                        : undefined;
+                    return {
+                      id: i,
+                      title: toolNames ? `${roleLabel} — ${toolNames}` : roleLabel,
+                      description:
+                        msg.content
+                          ? msg.content.slice(0, 80) +
+                            (msg.content.length > 80 ? "…" : "")
+                          : undefined,
+                      timestamp: msg.timestamp
+                        ? new Date(msg.timestamp * 1000).toLocaleTimeString()
+                        : undefined,
+                      status:
+                        msg.role === "user"
+                          ? "info"
+                          : msg.role === "assistant"
+                            ? "success"
+                            : msg.role === "tool"
+                              ? "warning"
+                              : "neutral",
+                    };
+                  })}
+                />
+              </div>
+            </details>
+          )}
+
+          {/* Message list */}
           {loading && (
             <div className="flex items-center justify-center py-8">
               <Spinner className="text-xl text-primary" />
@@ -772,6 +912,7 @@ export default function SessionsPage() {
   const [pruneOpen, setPruneOpen] = useState(false);
   const [pruneDays, setPruneDays] = useState("90");
   const [pruning, setPruning] = useState(false);
+  const [traceDrawerId, setTraceDrawerId] = useState<string | null>(null);
   const { toast, showToast } = useToast();
   const { t } = useI18n();
   const { setAfterTitle, setEnd } = usePageHeader();
@@ -1285,6 +1426,7 @@ export default function SessionsPage() {
 
   return (
     <div className="flex min-w-0 w-full max-w-full flex-col gap-4">
+      <h1 className="sr-only">Sessions</h1>
       <PluginSlot name="sessions:top" />
       <Toast toast={toast} />
 
@@ -1531,6 +1673,7 @@ export default function SessionsPage() {
                 )}
                 <Input
                   placeholder={t.sessions.searchPlaceholder}
+                  aria-label={t.sessions.searchPlaceholder}
                   value={search}
                   onChange={(e) => updateSearch(e.target.value)}
                   className="h-8 py-0 pr-7 pl-8 text-xs leading-none"
@@ -1690,7 +1833,19 @@ export default function SessionsPage() {
                   onDelete={() => sessionDelete.requestDelete(s.id)}
                   onRename={handleRename}
                   onExport={handleExport}
+                  onViewTrace={async (sessionId) => {
+                    try {
+                      const r = await api.getTracesBySession(sessionId);
+                      const resolvedId = r.traces.length > 0 ? r.traces[0].trace_id : sessionId;
+                      setTraceDrawerId(resolvedId);
+                    } catch {
+                      setTraceDrawerId(sessionId);
+                    }
+                  }}
                   resumeInChatEnabled={resumeInChatEnabled}
+                  childSessions={sessions.filter(
+                    (c) => c.parent_session_id === s.id,
+                  )}
                 />
               ))}
             </div>
@@ -1763,6 +1918,11 @@ export default function SessionsPage() {
       )}
 
       <PluginSlot name="sessions:bottom" />
+
+      <TraceDrawer
+        traceId={traceDrawerId}
+        onClose={() => setTraceDrawerId(null)}
+      />
     </div>
   );
 }
@@ -1775,10 +1935,13 @@ interface SessionRowProps {
   onRename: (id: string, title: string) => Promise<void>;
   onSelectClick: (event: React.MouseEvent) => void;
   onToggle: () => void;
+  onViewTrace: (traceId: string) => void;
   resumeInChatEnabled: boolean;
   searchQuery?: string;
   session: SessionInfo;
   snippet?: string;
+  /** Direct child sessions of this session (for delegation tree). */
+  childSessions?: SessionInfo[];
 }
 
 interface SessionsPaginationProps {

@@ -18,7 +18,7 @@ def routing_config(tmp_path, monkeypatch):
 
 
 def test_economy_task_routes_to_cheaper_model(routing_config):
-    from agent.smart_model_routing import resolve_aux_routing
+    from agent.smart_model_routing import consume_routing_annotation, resolve_aux_routing
 
     provider, model = resolve_aux_routing(
         "compression",
@@ -27,6 +27,9 @@ def test_economy_task_routes_to_cheaper_model(routing_config):
     )
     assert provider == "openrouter"
     assert model == "google/gemini-3-flash-preview"
+    annotation = consume_routing_annotation("compression", model)
+    assert annotation["baseline_model"] == "anthropic/claude-opus-4"
+    assert annotation["selected_model"] == "google/gemini-3-flash-preview"
 
 
 def test_performance_task_keeps_main_model(routing_config):
@@ -127,3 +130,46 @@ def test_routing_cli_enable_disable(tmp_path, monkeypatch):
     _RAW_CONFIG_CACHE.clear()
     handle_routing(Namespace(enable=False, disable=True, delegation_tier=None))
     assert load_config()["smart_model_routing"]["enabled"] is False
+
+
+def test_guardrails_fallback_downgrades_model(routing_config):
+    from agent.smart_model_routing import resolve_aux_routing
+    from hermes_cli.cost_guardrails import GuardrailDecision
+
+    with patch(
+        "agent.smart_model_routing._guardrail_decision_for_model",
+        return_value=GuardrailDecision(
+            allow=True,
+            action="fallback",
+            fallback_model="google/gemini-2.5-flash",
+            reason="daily_budget_exceeded",
+        ),
+    ):
+        provider, model = resolve_aux_routing(
+            "compression",
+            "openrouter",
+            "anthropic/claude-opus-4",
+        )
+    assert provider == "openrouter"
+    assert model == "google/gemini-2.5-flash"
+
+
+def test_guardrails_block_raises_runtime_error(routing_config):
+    from agent.smart_model_routing import resolve_aux_routing
+    from hermes_cli.cost_guardrails import GuardrailDecision
+
+    with patch(
+        "agent.smart_model_routing._guardrail_decision_for_model",
+        return_value=GuardrailDecision(
+            allow=False,
+            action="block",
+            fallback_model=None,
+            reason="expensive_model_blocked",
+        ),
+    ):
+        with pytest.raises(RuntimeError):
+            resolve_aux_routing(
+                "compression",
+                "openrouter",
+                "anthropic/claude-opus-4",
+            )

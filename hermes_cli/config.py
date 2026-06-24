@@ -2346,6 +2346,20 @@ DEFAULT_CONFIG = {
             },
         },
     },
+    # Cost guardrails are intentionally opt-in and default-off so existing
+    # runtime behavior is preserved unless a user explicitly enables them.
+    "cost_guardrails": {
+        "enabled": False,
+        "daily_budget_usd": None,
+        # mission_id -> budget_usd
+        "mission_budgets_usd": {},
+        "premium_alert": False,
+        "block_expensive": False,
+        "auto_fallback": False,
+        "fallback_model": "",
+        "fallback_provider": "",
+        "premium_model_prefixes": [],
+    },
 
     # Kanban multi-agent coordination — controls the dispatcher loop that
     # spawns workers for ready tasks. The dispatcher ticks every N seconds

@@ -59,6 +59,49 @@ export default defineConfig({
   build: {
     outDir: "../hermes_cli/web_dist",
     emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: "vendor-react",
+              test: /node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/,
+              priority: 100,
+            },
+            {
+              name: "vendor-ui",
+              test: /node_modules[\\/]@nous-research[\\/]ui[\\/]/,
+              priority: 95,
+            },
+            {
+              name: "vendor-icons",
+              test: /node_modules[\\/]lucide-react[\\/]/,
+              priority: 90,
+            },
+            {
+              name: "vendor-markdown",
+              test: /node_modules[\\/](remark-|rehype-|unified|mdast-|hast-|micromark|prismjs)/,
+              priority: 80,
+            },
+            {
+              name: "vendor-charts",
+              test: /node_modules[\\/](chart\.js|recharts|d3-|@observablehq[\\/]plot)/,
+              priority: 70,
+            },
+            {
+              name: "vendor-3d",
+              test: /node_modules[\\/](three|@react-three|troika-)/,
+              priority: 60,
+            },
+            {
+              name: "vendor-terminal",
+              test: /node_modules[\\/](?:@xterm[\\/]|xterm[\\/])/,
+              priority: 50,
+            },
+          ],
+        },
+      },
+    },
   },
   server: {
     proxy: {

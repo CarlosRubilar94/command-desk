@@ -15,7 +15,7 @@ import asyncio
 import base64
 import binascii
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hmac
 import importlib.util
 import json
@@ -712,6 +712,19 @@ class ConfigUpdate(BaseModel):
 class RoutingUpdate(BaseModel):
     enabled: Optional[bool] = None
     delegation_tier: Optional[str] = None
+
+
+class CostGuardrailsUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    daily_budget_usd: Optional[float] = None
+    mission_budgets_usd: Optional[Dict[str, Optional[float]]] = None
+    premium_alert: Optional[bool] = None
+    block_expensive: Optional[bool] = None
+    auto_fallback: Optional[bool] = None
+    fallback_model: Optional[str] = None
+    fallback_provider: Optional[str] = None
+    premium_model_prefixes: Optional[List[str]] = None
+    profile: Optional[str] = None
 
 
 class EnvVarUpdate(BaseModel):
@@ -1967,6 +1980,21 @@ async def get_status(profile: Optional[str] = None):
 
 _COMMAND_DECK_DEFAULT_BASE = "http://127.0.0.1:8765"
 _COMMAND_DECK_PROBE_TIMEOUT = 3.0
+_COMMAND_DECK_ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
+_COMMAND_DECK_ALLOWED_PORT = 8765
+
+
+@dataclass(frozen=True)
+class _CommandDeckProbeTarget:
+    app_url: str
+    probe_url: str
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Fail closed: Command Deck probes never follow redirects."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
 
 
 def _command_deck_base_url() -> str:
@@ -1975,19 +2003,48 @@ def _command_deck_base_url() -> str:
     return raw.rstrip("/")
 
 
+def _resolve_command_deck_target() -> tuple[_CommandDeckProbeTarget | None, str | None]:
+    """Validate COMMAND_DECK_URL against strict local SSRF guardrails."""
+    raw = _command_deck_base_url()
+    try:
+        parsed = urllib.parse.urlparse(raw)
+    except Exception:
+        return None, "unavailable"
+    if parsed.scheme not in {"http", "https"}:
+        return None, "unavailable"
+    if parsed.username or parsed.password:
+        return None, "unavailable"
+    if parsed.query or parsed.fragment:
+        return None, "unavailable"
+    host = (parsed.hostname or "").strip().lower()
+    if host not in _COMMAND_DECK_ALLOWED_HOSTS:
+        return None, "unavailable"
+    try:
+        parsed_port = parsed.port
+    except ValueError:
+        return None, "unavailable"
+    if parsed_port != _COMMAND_DECK_ALLOWED_PORT:
+        return None, "unavailable"
+    if parsed.path not in {"", "/"} or parsed.params:
+        return None, "unavailable"
+    app_url = f"{parsed.scheme}://{host}:{_COMMAND_DECK_ALLOWED_PORT}"
+    return _CommandDeckProbeTarget(app_url=app_url, probe_url=f"{app_url}/api/status"), None
+
+
 def _probe_http_get(url: str, *, timeout: float) -> tuple[bool, int, str | None]:
     """Blocking GET probe. Returns ``(ok, latency_ms, error)``."""
     started = time.perf_counter()
     try:
         req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(req, timeout=timeout) as resp:
             latency_ms = int((time.perf_counter() - started) * 1000)
             if 200 <= resp.status < 300:
                 return True, latency_ms, None
-            return False, latency_ms, f"HTTP {resp.status}"
-    except Exception as exc:  # noqa: BLE001 — probe must not raise
+            return False, latency_ms, "unavailable"
+    except Exception:  # noqa: BLE001 — probe must not raise
         latency_ms = int((time.perf_counter() - started) * 1000)
-        return False, latency_ms, str(exc)
+        return False, latency_ms, "unavailable"
 
 
 def _resolve_gateway_liveness() -> tuple[bool, str | None]:
@@ -2092,17 +2149,24 @@ def _build_bitwarden_status_payload(cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def _probe_command_deck_status() -> dict[str, Any]:
-    base = _command_deck_base_url()
-    probe_url = f"{base}/api/status"
+    target, target_error = _resolve_command_deck_target()
+    if target is None:
+        return {
+            "available": False,
+            "latency_ms": 0,
+            "url": None,
+            "app_url": None,
+            "error": target_error or "unavailable",
+        }
     available, latency_ms, error = _probe_http_get(
-        probe_url,
+        target.probe_url,
         timeout=_COMMAND_DECK_PROBE_TIMEOUT,
     )
     return {
         "available": available,
         "latency_ms": latency_ms,
-        "url": probe_url,
-        "app_url": base,
+        "url": target.probe_url,
+        "app_url": target.app_url,
         "error": error,
     }
 
@@ -2150,6 +2214,59 @@ async def get_devssd_status():
         },
         "command_deck": command_deck,
     }
+
+
+@app.get("/api/command-deck/overview")
+async def get_command_deck_overview(profile: Optional[str] = None):
+    """Authenticated profile-scoped overview for in-dashboard Command Deck."""
+    with _config_profile_scope(profile):
+        loop = asyncio.get_running_loop()
+        deck_probe = await loop.run_in_executor(None, _probe_command_deck_status)
+        deck_available = bool(deck_probe.get("available"))
+        deck_payload: Dict[str, Any] = {
+            "available": deck_available,
+            "status": "ok" if deck_available else "unavailable",
+        }
+
+        fleet_payload: Dict[str, Any] = {}
+        costs_payload: Dict[str, Any] = {}
+        missions_count = 0
+        tracer_payload: Dict[str, Any] = {"dropped_spans": 0, "healthy": False}
+
+        try:
+            maybe_fleet = await get_fleet_metrics(profile=profile)
+            if isinstance(maybe_fleet, dict):
+                fleet_payload = maybe_fleet
+                maybe_tracer = maybe_fleet.get("tracer")
+                if isinstance(maybe_tracer, dict):
+                    tracer_payload = {
+                        "dropped_spans": _safe_int(maybe_tracer.get("dropped_spans")),
+                        "healthy": bool(maybe_tracer.get("healthy")),
+                    }
+        except Exception:
+            fleet_payload = {}
+
+        try:
+            maybe_costs = await get_costs_summary(profile=profile)
+            if isinstance(maybe_costs, dict):
+                costs_payload = maybe_costs
+        except Exception:
+            costs_payload = {}
+
+        try:
+            maybe_missions = await get_missions(profile=profile)
+            if isinstance(maybe_missions, dict):
+                missions_count = _safe_int(maybe_missions.get("total"))
+        except Exception:
+            missions_count = 0
+
+        return {
+            "deck": deck_payload,
+            "fleet": fleet_payload,
+            "costs": costs_payload,
+            "missions": {"count": missions_count},
+            "tracer": tracer_payload,
+        }
 
 
 def _build_fleet_status_payload() -> dict:
@@ -11407,6 +11524,2629 @@ async def get_models_analytics(days: int = 30, profile: Optional[str] = None):
         }
     finally:
         db.close()
+
+
+def _coerce_days_window(days: int, *, default: int = 30, max_days: int = 365) -> int:
+    try:
+        value = int(days)
+    except Exception:
+        value = default
+    return max(1, min(value, max_days))
+
+
+def _coerce_limit(limit: int, *, default: int = 50, max_limit: int = 200) -> int:
+    try:
+        value = int(limit)
+    except Exception:
+        value = default
+    return max(1, min(value, max_limit))
+
+
+def _percentile_from_sorted(values: List[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    if percentile <= 0:
+        return float(values[0])
+    if percentile >= 1:
+        return float(values[-1])
+    idx = int((len(values) - 1) * percentile)
+    return float(values[max(0, min(idx, len(values) - 1))])
+
+
+def _is_session_error_reason(reason: Any) -> bool:
+    normalized = str(reason or "").strip().lower()
+    if not normalized:
+        return False
+    return any(
+        token in normalized
+        for token in ("error", "fail", "crash", "abort", "timeout", "orphaned")
+    )
+
+
+@app.get("/api/analytics/overview")
+async def get_analytics_overview(days: int = 30, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+        import sqlite3
+
+        day_window = _coerce_days_window(days)
+        now_ts = time.time()
+        cutoff = now_ts - (day_window * 86400)
+        today = datetime.now().astimezone().date()
+        day_keys = [
+            (today - timedelta(days=offset)).isoformat()
+            for offset in range(day_window - 1, -1, -1)
+        ]
+
+        trace_rollups: Dict[str, Dict[str, Any]] = {}
+        span_durations: List[float] = []
+        token_by_day: Dict[str, Dict[str, int]] = {
+            day: {"input_tokens": 0, "output_tokens": 0}
+            for day in day_keys
+        }
+        traces_by_day: Dict[str, set[str]] = {day: set() for day in day_keys}
+        spans_total = 0
+
+        db_path = traces_store.traces_db_path()
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT trace_id, session_id, status, model, started_at,
+                           duration_ms, input_tokens, output_tokens, cost_usd, error
+                    FROM spans
+                    WHERE started_at >= ?
+                    ORDER BY started_at ASC
+                    """,
+                    (cutoff,),
+                ).fetchall()
+            finally:
+                conn.close()
+        else:
+            rows = []
+
+        for row in rows:
+            spans_total += 1
+            trace_id = str(row["trace_id"] or "").strip()
+            if not trace_id:
+                continue
+            started_at = _safe_float(row["started_at"])
+            started_day = datetime.fromtimestamp(started_at).astimezone().date().isoformat()
+            if started_day in token_by_day:
+                token_by_day[started_day]["input_tokens"] += _safe_int(row["input_tokens"])
+                token_by_day[started_day]["output_tokens"] += _safe_int(row["output_tokens"])
+            duration_ms_raw = row["duration_ms"]
+            duration_ms = _safe_float(duration_ms_raw)
+            if duration_ms_raw is not None and duration_ms >= 0:
+                span_durations.append(duration_ms)
+            rollup = trace_rollups.setdefault(
+                trace_id,
+                {
+                    "trace_id": trace_id,
+                    "day": started_day,
+                    "first_started_at": started_at,
+                    "model": "",
+                    "session_id": "",
+                    "has_error": False,
+                    "cost_usd": 0.0,
+                    "total_latency_ms": 0.0,
+                },
+            )
+            if started_at < _safe_float(rollup.get("first_started_at")):
+                rollup["first_started_at"] = started_at
+                rollup["day"] = started_day
+            model = str(row["model"] or "").strip()
+            if model and not rollup.get("model"):
+                rollup["model"] = model
+            session_id = str(row["session_id"] or "").strip()
+            if session_id and not rollup.get("session_id"):
+                rollup["session_id"] = session_id
+            rollup["cost_usd"] = _safe_float(rollup.get("cost_usd")) + _safe_float(row["cost_usd"])
+            if duration_ms_raw is not None and duration_ms >= 0:
+                rollup["total_latency_ms"] = _safe_float(rollup.get("total_latency_ms")) + duration_ms
+            status = str(row["status"] or "").strip().lower()
+            if status == "error" or bool(row["error"]):
+                rollup["has_error"] = True
+
+        session_error_ids: set[str] = set()
+        db = _open_session_db_for_profile(profile)
+        try:
+            try:
+                session_rows = db._conn.execute(
+                    """
+                    SELECT id, end_reason
+                    FROM sessions
+                    WHERE started_at >= ?
+                    """,
+                    (cutoff,),
+                ).fetchall()
+            except Exception:
+                session_rows = []
+            for row in session_rows:
+                sid = str(row["id"] or "").strip()
+                if sid and _is_session_error_reason(row["end_reason"]):
+                    session_error_ids.add(sid)
+        finally:
+            db.close()
+
+        traces_total = len(trace_rollups)
+        ok_count = 0
+        error_count = 0
+        by_model: Dict[str, Dict[str, Any]] = {}
+        for trace_id, rollup in trace_rollups.items():
+            trace_day = str(rollup.get("day") or "")
+            if trace_day in traces_by_day:
+                traces_by_day[trace_day].add(trace_id)
+            has_error = bool(rollup.get("has_error"))
+            session_id = str(rollup.get("session_id") or "")
+            if session_id and session_id in session_error_ids:
+                has_error = True
+            if has_error:
+                error_count += 1
+            else:
+                ok_count += 1
+            model_name = str(rollup.get("model") or "").strip()
+            if not model_name:
+                continue
+            model_entry = by_model.setdefault(
+                model_name,
+                {
+                    "model": model_name,
+                    "runs": 0,
+                    "total_cost_usd": 0.0,
+                    "ok": 0,
+                    "error": 0,
+                    "latency_total_ms": 0.0,
+                },
+            )
+            model_entry["runs"] += 1
+            model_entry["total_cost_usd"] = (
+                _safe_float(model_entry["total_cost_usd"]) + _safe_float(rollup.get("cost_usd"))
+            )
+            model_entry["latency_total_ms"] = (
+                _safe_float(model_entry["latency_total_ms"]) + _safe_float(rollup.get("total_latency_ms"))
+            )
+            if has_error:
+                model_entry["error"] += 1
+            else:
+                model_entry["ok"] += 1
+
+        rate = (ok_count / traces_total) if traces_total > 0 else 0.0
+        span_durations.sort()
+        avg_latency_ms = (sum(span_durations) / len(span_durations)) if span_durations else 0.0
+        p50_ms = _percentile_from_sorted(span_durations, 0.50)
+        p95_ms = _percentile_from_sorted(span_durations, 0.95)
+
+        traces_per_day = (
+            [
+                {"day": day, "count": len(traces_by_day.get(day, set()))}
+                for day in day_keys
+            ]
+            if traces_total > 0
+            else []
+        )
+        token_usage = (
+            [
+                {
+                    "day": day,
+                    "input_tokens": _safe_int(token_by_day.get(day, {}).get("input_tokens")),
+                    "output_tokens": _safe_int(token_by_day.get(day, {}).get("output_tokens")),
+                }
+                for day in day_keys
+            ]
+            if spans_total > 0
+            else []
+        )
+        model_efficiency = []
+        for item in by_model.values():
+            runs = _safe_int(item.get("runs"))
+            if runs <= 0:
+                continue
+            model_efficiency.append(
+                {
+                    "model": item.get("model"),
+                    "runs": runs,
+                    "total_cost_usd": round(_safe_float(item.get("total_cost_usd")), 6),
+                    "avg_cost_per_run": round(_safe_float(item.get("total_cost_usd")) / runs, 6),
+                    "success_rate": round(_safe_int(item.get("ok")) / runs, 6),
+                    "avg_latency_ms": round(_safe_float(item.get("latency_total_ms")) / runs, 3),
+                }
+            )
+        model_efficiency.sort(key=lambda row: row.get("total_cost_usd", 0.0), reverse=True)
+
+        return {
+            "throughput": {
+                "traces_per_day": traces_per_day,
+                "spans_total": spans_total,
+                "traces_total": traces_total,
+            },
+            "success_rate": {
+                "ok": ok_count,
+                "error": error_count,
+                "rate": round(rate, 6),
+            },
+            "latency": {
+                "avg_ms": round(avg_latency_ms, 3),
+                "p50_ms": round(p50_ms, 3),
+                "p95_ms": round(p95_ms, 3),
+            },
+            "token_usage": token_usage,
+            "model_efficiency": model_efficiency,
+        }
+
+
+@app.get("/api/observability/alerts")
+async def get_observability_alerts(profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+        import sqlite3
+
+        now_ts = time.time()
+        today_start = _today_start_epoch_local()
+        daily_cost_threshold = _safe_float(
+            cfg_get("analytics.observability.daily_cost_threshold_usd", 5.0),
+            5.0,
+        )
+        error_rate_threshold = _safe_float(
+            cfg_get("analytics.observability.error_rate_threshold", 0.20),
+            0.20,
+        )
+        latency_threshold_ms = _safe_float(
+            cfg_get("analytics.observability.latency_threshold_ms", 5000.0),
+            5000.0,
+        )
+
+        cost_today_usd = 0.0
+        traces_total = 0
+        trace_errors = 0
+        db_path = traces_store.traces_db_path()
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(SUM(cost_usd), 0.0) AS total_cost
+                    FROM spans
+                    WHERE started_at >= ?
+                    """,
+                    (today_start,),
+                ).fetchone()
+                if row is not None:
+                    cost_today_usd = _safe_float(row["total_cost"])
+                trace_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS traces_total,
+                           SUM(CASE WHEN has_error = 1 THEN 1 ELSE 0 END) AS trace_errors
+                    FROM (
+                        SELECT trace_id,
+                               MAX(CASE WHEN status = 'error' OR COALESCE(error, '') != '' THEN 1 ELSE 0 END) AS has_error
+                        FROM spans
+                        WHERE started_at >= ?
+                        GROUP BY trace_id
+                    )
+                    """,
+                    (today_start,),
+                ).fetchone()
+                if trace_row is not None:
+                    traces_total = _safe_int(trace_row["traces_total"])
+                    trace_errors = _safe_int(trace_row["trace_errors"])
+            finally:
+                conn.close()
+
+        alerts: List[Dict[str, Any]] = []
+
+        def _append_alert(
+            *,
+            severity: str,
+            kind: str,
+            title: str,
+            detail: str,
+            value: float,
+            threshold: float,
+            ts: float,
+        ) -> None:
+            alerts.append(
+                {
+                    "id": f"{kind}-{int(ts)}-{len(alerts) + 1}",
+                    "severity": severity,
+                    "kind": kind,
+                    "title": title,
+                    "detail": detail,
+                    "value": value,
+                    "threshold": threshold,
+                    "ts": ts,
+                }
+            )
+
+        if cost_today_usd > daily_cost_threshold:
+            severity = "critical" if cost_today_usd >= (daily_cost_threshold * 2.0) else "warning"
+            _append_alert(
+                severity=severity,
+                kind="cost",
+                title="Daily spend threshold exceeded",
+                detail=(
+                    f"Today's span cost is ${cost_today_usd:.3f}, above "
+                    f"configured threshold ${daily_cost_threshold:.3f}."
+                ),
+                value=round(cost_today_usd, 6),
+                threshold=round(daily_cost_threshold, 6),
+                ts=now_ts,
+            )
+
+        if traces_total > 0:
+            error_rate = trace_errors / float(traces_total)
+            if error_rate > error_rate_threshold:
+                severity = "critical" if error_rate >= (error_rate_threshold * 2.0) else "warning"
+                _append_alert(
+                    severity=severity,
+                    kind="errors",
+                    title="Trace error rate elevated",
+                    detail=(
+                        f"{trace_errors}/{traces_total} traces errored today "
+                        f"({error_rate:.1%}), threshold {error_rate_threshold:.1%}."
+                    ),
+                    value=round(error_rate, 6),
+                    threshold=round(error_rate_threshold, 6),
+                    ts=now_ts,
+                )
+
+        tracer = _tracer_health_payload()
+        dropped_spans = _safe_int(tracer.get("dropped_spans"))
+        tracer_healthy = bool(tracer.get("healthy"))
+        if dropped_spans > 0:
+            _append_alert(
+                severity="warning",
+                kind="tracer",
+                title="Tracer dropped spans",
+                detail=f"Recorder dropped {dropped_spans} spans due to queue/backpressure.",
+                value=float(dropped_spans),
+                threshold=0.0,
+                ts=now_ts,
+            )
+        if not tracer_healthy:
+            _append_alert(
+                severity="critical",
+                kind="tracer",
+                title="Tracer unhealthy",
+                detail="Recorder worker/watchdog is not healthy.",
+                value=0.0,
+                threshold=1.0,
+                ts=now_ts,
+            )
+
+        top_bottleneck = traces_store.fleet_bottlenecks(limit=1, window_minutes=60)
+        if top_bottleneck:
+            max_latency_ms = _safe_float(top_bottleneck[0].get("avg_duration_ms"))
+            if max_latency_ms > latency_threshold_ms:
+                severity = "critical" if max_latency_ms >= (latency_threshold_ms * 2.0) else "warning"
+                _append_alert(
+                    severity=severity,
+                    kind="latency",
+                    title="Latency bottleneck detected",
+                    detail=(
+                        f"Top 60m bottleneck averages {max_latency_ms:.1f} ms, "
+                        f"threshold {latency_threshold_ms:.1f} ms."
+                    ),
+                    value=round(max_latency_ms, 3),
+                    threshold=round(latency_threshold_ms, 3),
+                    ts=now_ts,
+                )
+
+        alerts.sort(key=lambda row: _safe_float(row.get("ts")), reverse=True)
+        return {"alerts": alerts}
+
+
+def _task_event_severity(kind: Any) -> str:
+    normalized = str(kind or "").strip().lower()
+    if any(token in normalized for token in ("error", "failed", "fail", "crash")):
+        return "critical"
+    if any(token in normalized for token in ("blocked", "retry", "timeout")):
+        return "warning"
+    return "info"
+
+
+@app.get("/api/observability/events")
+async def get_observability_events(limit: int = 50, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import kanban_db, traces_store
+        import sqlite3
+
+        max_events = _coerce_limit(limit, default=50, max_limit=200)
+        events: List[Dict[str, Any]] = []
+        span_scan_limit = max_events * 3
+
+        db_path = traces_store.traces_db_path()
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    """
+                    SELECT trace_id, session_id, kind, status, error, started_at
+                    FROM spans
+                    WHERE status = 'error' OR kind = 'delegation'
+                    ORDER BY started_at DESC
+                    LIMIT ?
+                    """,
+                    (span_scan_limit,),
+                ).fetchall()
+            finally:
+                conn.close()
+        else:
+            rows = []
+
+        for row in rows:
+            is_error = str(row["status"] or "").strip().lower() == "error" or bool(row["error"])
+            trace_id = str(row["trace_id"] or "").strip()
+            session_id = str(row["session_id"] or "").strip()
+            kind = "error" if is_error else str(row["kind"] or "delegation")
+            label = (
+                f"Trace {trace_id}: {row['error'] or 'error span'}"
+                if is_error
+                else f"Delegation span in trace {trace_id}"
+            )
+            event_payload: Dict[str, Any] = {
+                "ts": _safe_float(row["started_at"]),
+                "kind": kind,
+                "label": label,
+                "severity": "critical" if is_error else "info",
+            }
+            if session_id:
+                event_payload["session_id"] = session_id
+            if trace_id:
+                event_payload["trace_id"] = trace_id
+            events.append(event_payload)
+
+        # Pull recent task events across all boards and interleave with span events.
+        try:
+            boards = kanban_db.list_boards(include_archived=True)
+        except Exception:
+            boards = []
+        board_slugs = [
+            str(board.get("slug") or "").strip()
+            for board in boards
+            if str(board.get("slug") or "").strip()
+        ]
+        per_board_limit = max(1, min(25, max_events))
+        for slug in board_slugs:
+            conn = None
+            try:
+                conn = kanban_db.connect(board=slug)
+                rows = conn.execute(
+                    """
+                    SELECT e.created_at, e.kind, e.task_id, t.title, t.session_id
+                    FROM task_events e
+                    LEFT JOIN tasks t ON t.id = e.task_id
+                    ORDER BY e.created_at DESC, e.id DESC
+                    LIMIT ?
+                    """,
+                    (per_board_limit,),
+                ).fetchall()
+                for row in rows:
+                    task_label = str(row["title"] or row["task_id"] or "task").strip()
+                    events.append(
+                        {
+                            "ts": _safe_float(row["created_at"]),
+                            "kind": "task_event",
+                            "label": f"{slug}: {task_label} ({row['kind']})",
+                            "session_id": (str(row["session_id"]).strip() if row["session_id"] else None),
+                            "severity": _task_event_severity(row["kind"]),
+                        }
+                    )
+            except Exception:
+                continue
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+        events.sort(key=lambda row: _safe_float(row.get("ts")), reverse=True)
+        return {"events": events[:max_events]}
+
+
+# ---------------------------------------------------------------------------
+# Cost Intelligence endpoints (/api/costs/*)
+#
+# Source: SessionDB aggregates (estimated_cost_usd / actual_cost_usd /
+# input_tokens / output_tokens / model / started_at). Auth inherited from
+# the existing middleware — these routes are NOT in public_paths.py.
+# No dependency on traces.db or spans (Wave 1B scope).
+# ---------------------------------------------------------------------------
+
+def _cost_guardrails_defaults() -> Dict[str, Any]:
+    raw = DEFAULT_CONFIG.get("cost_guardrails", {})
+    if not isinstance(raw, dict):
+        return {
+            "enabled": False,
+            "daily_budget_usd": None,
+            "mission_budgets_usd": {},
+            "premium_alert": False,
+            "block_expensive": False,
+            "auto_fallback": False,
+            "fallback_model": "",
+            "fallback_provider": "",
+            "premium_model_prefixes": [],
+        }
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "daily_budget_usd": raw.get("daily_budget_usd"),
+        "mission_budgets_usd": dict(raw.get("mission_budgets_usd") or {}),
+        "premium_alert": bool(raw.get("premium_alert", False)),
+        "block_expensive": bool(raw.get("block_expensive", False)),
+        "auto_fallback": bool(raw.get("auto_fallback", False)),
+        "fallback_model": str(raw.get("fallback_model") or "").strip(),
+        "fallback_provider": str(raw.get("fallback_provider") or "").strip(),
+        "premium_model_prefixes": list(raw.get("premium_model_prefixes") or []),
+    }
+
+
+def _normalize_cost_guardrails_config(raw: Any) -> Dict[str, Any]:
+    defaults = _cost_guardrails_defaults()
+    section = raw if isinstance(raw, dict) else {}
+    mission_budgets = section.get("mission_budgets_usd", defaults["mission_budgets_usd"])
+    if not isinstance(mission_budgets, dict):
+        mission_budgets = {}
+    normalized_mission_budgets: Dict[str, float] = {}
+    for mission_id, budget in mission_budgets.items():
+        mission_key = str(mission_id or "").strip()
+        if not mission_key:
+            continue
+        parsed = _budget_value(budget)
+        if parsed is None:
+            continue
+        normalized_mission_budgets[mission_key] = parsed
+    prefixes_raw = section.get("premium_model_prefixes", defaults["premium_model_prefixes"])
+    prefixes: List[str] = []
+    if isinstance(prefixes_raw, list):
+        for item in prefixes_raw:
+            value = str(item or "").strip().lower()
+            if value:
+                prefixes.append(value)
+    return {
+        "enabled": bool(section.get("enabled", defaults["enabled"])),
+        "daily_budget_usd": _budget_value(section.get("daily_budget_usd", defaults["daily_budget_usd"])),
+        "mission_budgets_usd": normalized_mission_budgets,
+        "premium_alert": bool(section.get("premium_alert", defaults["premium_alert"])),
+        "block_expensive": bool(section.get("block_expensive", defaults["block_expensive"])),
+        "auto_fallback": bool(section.get("auto_fallback", defaults["auto_fallback"])),
+        "fallback_model": str(section.get("fallback_model", defaults["fallback_model"]) or "").strip(),
+        "fallback_provider": str(section.get("fallback_provider", defaults["fallback_provider"]) or "").strip(),
+        "premium_model_prefixes": prefixes,
+    }
+
+
+def _cost_guardrails_payload(profile: Optional[str]) -> Dict[str, Any]:
+    from hermes_cli.cost_guardrails import decision_to_dict, evaluate_guardrails, is_premium_model
+
+    with _config_profile_scope(profile):
+        config = load_config()
+        guardrails = _normalize_cost_guardrails_config(config.get("cost_guardrails"))
+        db = _open_session_db_for_profile(profile)
+        try:
+            today_start = _today_start_epoch_local()
+            now_ts = time.time()
+            spend_row = db._conn.execute(
+                """
+                SELECT COALESCE(SUM(estimated_cost_usd), 0.0) AS spend_today
+                FROM sessions
+                WHERE started_at >= ?
+                """,
+                (today_start,),
+            ).fetchone()
+            spend_today = _safe_float(spend_row["spend_today"] if spend_row is not None else 0.0)
+
+            premium_rows = db._conn.execute(
+                """
+                SELECT model,
+                       COALESCE(SUM(estimated_cost_usd), 0.0) AS spend,
+                       COUNT(*) AS runs
+                FROM sessions
+                WHERE started_at >= ? AND model IS NOT NULL AND model != ''
+                GROUP BY model
+                """,
+                (today_start,),
+            ).fetchall()
+            premium_models: List[Dict[str, Any]] = []
+            premium_runs = 0
+            premium_spend = 0.0
+            for row in premium_rows:
+                model_name = str(row["model"] or "").strip()
+                if not model_name:
+                    continue
+                if not is_premium_model(model_name, guardrails):
+                    continue
+                runs = _safe_int(row["runs"])
+                spend = _safe_float(row["spend"])
+                premium_runs += runs
+                premium_spend += spend
+                premium_models.append(
+                    {
+                        "model": model_name,
+                        "runs": runs,
+                        "spend_usd": round(spend, 6),
+                    }
+                )
+            premium_models.sort(key=lambda item: item.get("spend_usd", 0.0), reverse=True)
+
+            mission_status: List[Dict[str, Any]] = []
+            for mission_id, budget in guardrails.get("mission_budgets_usd", {}).items():
+                mission_title = mission_id
+                spend = 0.0
+                try:
+                    from hermes_cli import traces_store
+
+                    mission = traces_store.get_mission(mission_id) or {}
+                    mission_title = str(mission.get("title") or mission_id)
+                    board_slug = str(mission.get("board_slug") or "").strip()
+                    session_ids = _mission_session_ids(board_slug)
+                    if session_ids:
+                        placeholders = ",".join("?" for _ in session_ids)
+                        row = db._conn.execute(
+                            f"""
+                            SELECT COALESCE(SUM(estimated_cost_usd), 0.0) AS spend
+                            FROM sessions
+                            WHERE id IN ({placeholders}) AND started_at >= ?
+                            """,
+                            [*session_ids, today_start],
+                        ).fetchone()
+                        spend = _safe_float(row["spend"] if row is not None else 0.0)
+                except Exception:
+                    spend = 0.0
+                pct = (spend / budget * 100.0) if budget > 0 else 0.0
+                mission_status.append(
+                    {
+                        "mission_id": mission_id,
+                        "title": mission_title,
+                        "budget_usd": budget,
+                        "spend_usd": round(spend, 6),
+                        "remaining_usd": round(max(0.0, budget - spend), 6),
+                        "pct_used": round(pct, 2),
+                        "over_budget": spend > budget,
+                    }
+                )
+            mission_status.sort(key=lambda item: item.get("spend_usd", 0.0), reverse=True)
+
+            current_model = str(config.get("model") or "").strip()
+            over_budget_mission = next((m for m in mission_status if m.get("over_budget")), None)
+            mission_for_decision = over_budget_mission or (mission_status[0] if mission_status else None)
+            mission_spend = _safe_float((mission_for_decision or {}).get("spend_usd"))
+            mission_budget = _budget_value((mission_for_decision or {}).get("budget_usd"))
+            decision = evaluate_guardrails(
+                spend_today=spend_today,
+                daily_budget=guardrails.get("daily_budget_usd"),
+                mission_spend=mission_spend,
+                mission_budget=mission_budget,
+                model=current_model,
+                is_premium=is_premium_model(current_model, guardrails),
+                config=guardrails,
+            )
+
+            elapsed = max(1.0, now_ts - today_start)
+            projected_spend = spend_today * (86400.0 / elapsed)
+            daily_budget = guardrails.get("daily_budget_usd")
+            remaining = (
+                round(max(0.0, daily_budget - spend_today), 6)
+                if daily_budget is not None
+                else None
+            )
+
+            return {
+                "cost_guardrails": guardrails,
+                "status": {
+                    "spend_today_usd": round(spend_today, 6),
+                    "daily_budget_usd": daily_budget,
+                    "daily_budget_remaining_usd": remaining,
+                    "projected_spend_today_usd": round(projected_spend, 6),
+                    "mission_budgets": mission_status,
+                    "premium_usage_today": {
+                        "runs": premium_runs,
+                        "spend_usd": round(premium_spend, 6),
+                        "models": premium_models,
+                    },
+                    "current_model": current_model,
+                    "current_decision": decision_to_dict(decision),
+                },
+            }
+        finally:
+            db.close()
+
+
+def _payload_to_dict(payload: Any) -> Dict[str, Any]:
+    if hasattr(payload, "model_dump"):
+        return payload.model_dump(exclude_unset=True)
+    return payload.dict(exclude_unset=True)
+
+
+@app.get("/api/costs/guardrails")
+async def get_costs_guardrails(profile: Optional[str] = None):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: _cost_guardrails_payload(profile))
+
+
+@app.put("/api/costs/guardrails")
+async def put_costs_guardrails(body: CostGuardrailsUpdate, profile: Optional[str] = None):
+    payload = _payload_to_dict(body)
+    scoped_profile = str(payload.pop("profile", "") or "").strip() or profile
+    loop = asyncio.get_running_loop()
+
+    def _write() -> Dict[str, Any]:
+        with _config_profile_scope(scoped_profile):
+            config = load_config()
+            current = _normalize_cost_guardrails_config(config.get("cost_guardrails"))
+
+            for key in (
+                "enabled",
+                "premium_alert",
+                "block_expensive",
+                "auto_fallback",
+            ):
+                if key in payload:
+                    current[key] = bool(payload[key])
+
+            if "daily_budget_usd" in payload:
+                raw = payload.get("daily_budget_usd")
+                if raw is None:
+                    current["daily_budget_usd"] = None
+                else:
+                    parsed = _budget_value(raw)
+                    if parsed is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="daily_budget_usd must be null or a positive number",
+                        )
+                    current["daily_budget_usd"] = parsed
+
+            if "mission_budgets_usd" in payload:
+                raw_missions = payload.get("mission_budgets_usd")
+                if not isinstance(raw_missions, dict):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="mission_budgets_usd must be an object map",
+                    )
+                mission_budgets: Dict[str, float] = {}
+                for mission_id, raw_budget in raw_missions.items():
+                    mission_key = str(mission_id or "").strip()
+                    if not mission_key:
+                        continue
+                    if raw_budget is None:
+                        continue
+                    parsed = _budget_value(raw_budget)
+                    if parsed is None:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"mission budget for '{mission_key}' must be null or a positive number",
+                        )
+                    mission_budgets[mission_key] = parsed
+                current["mission_budgets_usd"] = mission_budgets
+
+            if "fallback_model" in payload:
+                current["fallback_model"] = str(payload.get("fallback_model") or "").strip()
+            if "fallback_provider" in payload:
+                current["fallback_provider"] = str(payload.get("fallback_provider") or "").strip()
+            if "premium_model_prefixes" in payload:
+                raw_prefixes = payload.get("premium_model_prefixes")
+                if not isinstance(raw_prefixes, list):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="premium_model_prefixes must be an array",
+                    )
+                cleaned = []
+                for item in raw_prefixes:
+                    value = str(item or "").strip().lower()
+                    if value:
+                        cleaned.append(value)
+                current["premium_model_prefixes"] = cleaned
+
+            config["cost_guardrails"] = current
+            save_config(config)
+        return _cost_guardrails_payload(scoped_profile)
+
+    return await loop.run_in_executor(None, _write)
+
+
+def _session_rows_for_costs(
+    db: Any,
+    *,
+    cutoff: Optional[float] = None,
+) -> List[Dict[str, Any]]:
+    where_sql = "WHERE started_at > ?" if cutoff is not None else ""
+    params: List[Any] = [float(cutoff)] if cutoff is not None else []
+    rows = db._conn.execute(
+        f"""
+        SELECT id,
+               model,
+               started_at,
+               COALESCE(estimated_cost_usd, 0.0) AS estimated_cost_usd,
+               COALESCE(actual_cost_usd, 0.0) AS actual_cost_usd,
+               COALESCE(input_tokens, 0) AS input_tokens,
+               COALESCE(output_tokens, 0) AS output_tokens,
+               COALESCE(api_call_count, 0) AS api_call_count
+        FROM sessions
+        {where_sql}
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _span_cost_views_for_sessions(
+    *,
+    session_ids: List[str],
+    cutoff: Optional[float],
+) -> Dict[str, Any]:
+    from hermes_cli import traces_store
+    import sqlite3
+
+    traces_store.ensure_initialized()
+    db_path = traces_store.traces_db_path()
+    empty = {
+        "has_data": False,
+        "sessions_with_spans": set(),
+        "by_session": {},
+        "by_model": {},
+        "by_day": {},
+        "savings": {
+            "total_savings_usd": 0.0,
+            "premium_spend_usd": 0.0,
+            "premium_runs": 0,
+            "savings_spans": 0,
+        },
+    }
+    if not db_path.exists():
+        return empty
+    clean_ids = [str(sid).strip() for sid in session_ids if str(sid).strip()]
+    if not clean_ids:
+        return empty
+
+    placeholders = ",".join("?" for _ in clean_ids)
+    cutoff_sql = "AND started_at > ?" if cutoff is not None else ""
+    params = list(clean_ids)
+    if cutoff is not None:
+        params.append(float(cutoff))
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        by_session_rows = conn.execute(
+            f"""
+            SELECT session_id,
+                   COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            GROUP BY session_id
+            """,
+            params,
+        ).fetchall()
+        by_model_rows = conn.execute(
+            f"""
+            SELECT COALESCE(NULLIF(model, ''), 'unknown') AS model,
+                   COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                   COUNT(DISTINCT session_id) AS runs
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            GROUP BY COALESCE(NULLIF(model, ''), 'unknown')
+            """,
+            params,
+        ).fetchall()
+        by_day_rows = conn.execute(
+            f"""
+            SELECT date(started_at, 'unixepoch') AS day,
+                   COALESCE(SUM(cost_usd), 0.0) AS cost_usd,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                   COUNT(DISTINCT session_id) AS runs
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            GROUP BY day
+            ORDER BY day
+            """,
+            params,
+        ).fetchall()
+        savings_rows = conn.execute(
+            f"""
+            SELECT COALESCE(SUM(savings_usd), 0.0) AS total_savings_usd,
+                   COALESCE(SUM(COALESCE(cost_usd, 0.0) + COALESCE(savings_usd, 0.0)), 0.0) AS premium_spend_usd,
+                   COUNT(*) AS savings_spans
+            FROM spans
+            WHERE kind = 'llm_call'
+              AND savings_usd IS NOT NULL
+              AND session_id IN ({placeholders})
+              {cutoff_sql}
+            """,
+            params,
+        ).fetchone()
+    finally:
+        conn.close()
+
+    by_session: Dict[str, Dict[str, Any]] = {}
+    sessions_with_spans: set[str] = set()
+    for row in by_session_rows:
+        sid = str(row["session_id"] or "").strip()
+        if not sid:
+            continue
+        sessions_with_spans.add(sid)
+        by_session[sid] = {
+            "cost_usd": _safe_float(row["cost_usd"]),
+            "input_tokens": _safe_int(row["input_tokens"]),
+            "output_tokens": _safe_int(row["output_tokens"]),
+        }
+
+    by_model = {
+        str(row["model"]): {
+            "cost_usd": _safe_float(row["cost_usd"]),
+            "input_tokens": _safe_int(row["input_tokens"]),
+            "output_tokens": _safe_int(row["output_tokens"]),
+            "runs": _safe_int(row["runs"]),
+        }
+        for row in by_model_rows
+    }
+    by_day = {
+        str(row["day"]): {
+            "cost_usd": _safe_float(row["cost_usd"]),
+            "input_tokens": _safe_int(row["input_tokens"]),
+            "output_tokens": _safe_int(row["output_tokens"]),
+            "runs": _safe_int(row["runs"]),
+        }
+        for row in by_day_rows
+        if row["day"] is not None
+    }
+    savings_payload = {
+        "total_savings_usd": _safe_float(savings_rows["total_savings_usd"] if savings_rows is not None else 0.0),
+        "premium_spend_usd": _safe_float(savings_rows["premium_spend_usd"] if savings_rows is not None else 0.0),
+        "premium_runs": _safe_int(savings_rows["savings_spans"] if savings_rows is not None else 0),
+        "savings_spans": _safe_int(savings_rows["savings_spans"] if savings_rows is not None else 0),
+    }
+    return {
+        "has_data": bool(sessions_with_spans),
+        "sessions_with_spans": sessions_with_spans,
+        "by_session": by_session,
+        "by_model": by_model,
+        "by_day": by_day,
+        "savings": savings_payload,
+    }
+
+
+@app.get("/api/costs/summary")
+async def get_costs_summary(profile: Optional[str] = None):
+    """Spend summary: today + all-time totals, token counts, run count."""
+    db = _open_session_db_for_profile(profile)
+    try:
+        today_start = _today_start_epoch_local()
+        total_rows = _session_rows_for_costs(db)
+        today_rows = [row for row in total_rows if _safe_float(row.get("started_at")) >= today_start]
+
+        total_span = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in total_rows],
+            cutoff=None,
+        )
+        today_span = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in today_rows],
+            cutoff=today_start,
+        )
+
+        def _preferred_totals(rows: List[Dict[str, Any]], span_view: Dict[str, Any]) -> tuple[float, int]:
+            by_session = span_view.get("by_session", {}) if isinstance(span_view, dict) else {}
+            cost_total = 0.0
+            token_total = 0
+            for row in rows:
+                sid = str(row.get("id") or "").strip()
+                if sid and sid in by_session:
+                    span_row = by_session[sid]
+                    cost_total += _safe_float(span_row.get("cost_usd"))
+                    token_total += _safe_int(span_row.get("input_tokens")) + _safe_int(span_row.get("output_tokens"))
+                    continue
+                cost_total += _safe_float(row.get("estimated_cost_usd"))
+                token_total += _safe_int(row.get("input_tokens")) + _safe_int(row.get("output_tokens"))
+            return cost_total, token_total
+
+        spend_today, tokens_today = _preferred_totals(today_rows, today_span)
+        spend_total, tokens_total = _preferred_totals(total_rows, total_span)
+
+        return {
+            "spend_today": round(spend_today, 6),
+            "runs_today": len(today_rows),
+            "tokens_today": tokens_today,
+            "spend_total": round(spend_total, 6),
+            "actual_total": round(spend_total, 6),
+            "tokens_total": tokens_total,
+            "runs_total": len(total_rows),
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/costs/by-model")
+async def get_costs_by_model(days: int = 30, profile: Optional[str] = None):
+    """Per-model cost breakdown for the given lookback window."""
+    db = _open_session_db_for_profile(profile)
+    try:
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        session_rows = _session_rows_for_costs(db, cutoff=cutoff)
+        span_view = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in session_rows],
+            cutoff=cutoff,
+        )
+        by_model: Dict[str, Dict[str, Any]] = {}
+        for model, row in (span_view.get("by_model") or {}).items():
+            by_model[model] = {
+                "model": model,
+                "estimated_cost": _safe_float(row.get("cost_usd")),
+                "actual_cost": _safe_float(row.get("cost_usd")),
+                "input_tokens": _safe_int(row.get("input_tokens")),
+                "output_tokens": _safe_int(row.get("output_tokens")),
+                "runs": _safe_int(row.get("runs")),
+                "api_calls": 0,
+            }
+
+        sessions_with_spans = span_view.get("sessions_with_spans", set())
+        for row in session_rows:
+            sid = str(row.get("id") or "").strip()
+            if sid in sessions_with_spans:
+                model = str(row.get("model") or "").strip() or "unknown"
+                target = by_model.get(model)
+                if target:
+                    target["api_calls"] += _safe_int(row.get("api_call_count"))
+                continue
+            model = str(row.get("model") or "").strip() or "unknown"
+            target = by_model.setdefault(
+                model,
+                {
+                    "model": model,
+                    "estimated_cost": 0.0,
+                    "actual_cost": 0.0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "runs": 0,
+                    "api_calls": 0,
+                },
+            )
+            target["estimated_cost"] += _safe_float(row.get("estimated_cost_usd"))
+            target["actual_cost"] += _safe_float(row.get("actual_cost_usd"))
+            target["input_tokens"] += _safe_int(row.get("input_tokens"))
+            target["output_tokens"] += _safe_int(row.get("output_tokens"))
+            target["runs"] += 1
+            target["api_calls"] += _safe_int(row.get("api_call_count"))
+
+        rows = sorted(
+            (
+                {
+                    **entry,
+                    "estimated_cost": round(_safe_float(entry.get("estimated_cost")), 6),
+                    "actual_cost": round(_safe_float(entry.get("actual_cost")), 6),
+                }
+                for entry in by_model.values()
+            ),
+            key=lambda item: _safe_float(item.get("estimated_cost")),
+            reverse=True,
+        )
+        return {"by_model": rows, "period_days": days}
+    finally:
+        db.close()
+
+
+@app.get("/api/costs/by-day")
+async def get_costs_by_day(days: int = 30, profile: Optional[str] = None):
+    """Daily cost trend for sparkline rendering."""
+    db = _open_session_db_for_profile(profile)
+    try:
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        session_rows = _session_rows_for_costs(db, cutoff=cutoff)
+        span_view = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in session_rows],
+            cutoff=cutoff,
+        )
+        by_day: Dict[str, Dict[str, Any]] = {
+            day: {
+                "day": day,
+                "estimated_cost": _safe_float(values.get("cost_usd")),
+                "input_tokens": _safe_int(values.get("input_tokens")),
+                "output_tokens": _safe_int(values.get("output_tokens")),
+                "runs": _safe_int(values.get("runs")),
+            }
+            for day, values in (span_view.get("by_day") or {}).items()
+        }
+        sessions_with_spans = span_view.get("sessions_with_spans", set())
+        for row in session_rows:
+            sid = str(row.get("id") or "").strip()
+            if sid in sessions_with_spans:
+                continue
+            day = datetime.fromtimestamp(_safe_float(row.get("started_at"))).strftime("%Y-%m-%d")
+            target = by_day.setdefault(
+                day,
+                {"day": day, "estimated_cost": 0.0, "input_tokens": 0, "output_tokens": 0, "runs": 0},
+            )
+            target["estimated_cost"] += _safe_float(row.get("estimated_cost_usd"))
+            target["input_tokens"] += _safe_int(row.get("input_tokens"))
+            target["output_tokens"] += _safe_int(row.get("output_tokens"))
+            target["runs"] += 1
+
+        rows = [
+            {
+                "day": day,
+                "estimated_cost": round(_safe_float(entry.get("estimated_cost")), 6),
+                "input_tokens": _safe_int(entry.get("input_tokens")),
+                "output_tokens": _safe_int(entry.get("output_tokens")),
+                "runs": _safe_int(entry.get("runs")),
+            }
+            for day, entry in sorted(by_day.items(), key=lambda item: item[0])
+        ]
+        return {"by_day": rows, "period_days": days}
+    finally:
+        db.close()
+
+
+@app.get("/api/costs/savings")
+async def get_costs_savings(days: int = 30, profile: Optional[str] = None):
+    """
+    Routing downgrade savings (real when recorded, estimate as fallback).
+    """
+    MID_COST_FACTOR = 0.30
+
+    db = _open_session_db_for_profile(profile)
+    try:
+        cutoff = time.time() - (max(1, int(days)) * 86400)
+        session_rows = _session_rows_for_costs(db, cutoff=cutoff)
+        span_view = _span_cost_views_for_sessions(
+            session_ids=[str(row.get("id") or "") for row in session_rows],
+            cutoff=cutoff,
+        )
+        savings = span_view.get("savings", {}) if isinstance(span_view, dict) else {}
+        savings_spans = _safe_int(savings.get("savings_spans"))
+        if savings_spans > 0:
+            return {
+                "estimated_savings_usd": round(_safe_float(savings.get("total_savings_usd")), 6),
+                "premium_spend_usd": round(_safe_float(savings.get("premium_spend_usd")), 6),
+                "premium_runs": _safe_int(savings.get("premium_runs")),
+                "mid_cost_factor": MID_COST_FACTOR,
+                "is_estimate": False,
+                "note": "Savings from recorded per-call baseline metadata.",
+                "period_days": days,
+            }
+
+        from hermes_cli.cost_guardrails import is_premium_model
+
+        premium_spend = 0.0
+        premium_runs = 0
+        for row in session_rows:
+            model_name = str(row.get("model") or "")
+            if is_premium_model(model_name):
+                premium_spend += _safe_float(row.get("estimated_cost_usd"))
+                premium_runs += 1
+        estimated_savings = premium_spend * (1.0 - MID_COST_FACTOR)
+        return {
+            "estimated_savings_usd": round(estimated_savings, 6),
+            "premium_spend_usd": round(premium_spend, 6),
+            "premium_runs": premium_runs,
+            "mid_cost_factor": MID_COST_FACTOR,
+            "is_estimate": True,
+            "note": "Best-effort estimate; no recorded baseline savings in window.",
+            "period_days": days,
+        }
+    finally:
+        db.close()
+
+
+def _parse_optional_epoch_param(value: Optional[str], *, field_name: str) -> Optional[float]:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    try:
+        normalized = raw.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return float(parsed.timestamp())
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {field_name}; use unix epoch seconds or ISO-8601.",
+        ) from exc
+
+
+def _today_start_epoch_local() -> float:
+    now = datetime.now().astimezone()
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return float(today.timestamp())
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value or 0)
+    except Exception:
+        return default
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value or 0.0)
+    except Exception:
+        return default
+
+
+def _budget_value(value: Any) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except Exception:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _trace_root_fields(spans: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not spans:
+        return {"root_kind": None, "agent": None, "model": None}
+    root = spans[0]
+    return {
+        "root_kind": root.get("kind"),
+        "agent": root.get("agent"),
+        "model": root.get("model"),
+    }
+
+
+def _mission_session_ids(board_slug: str) -> List[str]:
+    if not board_slug:
+        return []
+    try:
+        from hermes_cli.kanban_db import kanban_db_path
+        import sqlite3
+
+        board_db = kanban_db_path(board=board_slug)
+        if not board_db.exists():
+            return []
+        conn = sqlite3.connect(str(board_db))
+        try:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT session_id
+                FROM tasks
+                WHERE session_id IS NOT NULL AND TRIM(session_id) != ''
+                """
+            ).fetchall()
+            return [str(row[0]) for row in rows if row and row[0]]
+        finally:
+            conn.close()
+    except Exception:
+        return []
+
+
+def _derived_mission_id(board_slug: str) -> str:
+    slug = str(board_slug or "").strip()
+    return f"board:{slug}" if slug else "board:unknown"
+
+
+def _session_runtime_status(session: Dict[str, Any]) -> str:
+    if not session:
+        return "unknown"
+    if session.get("ended_at") is None:
+        return "running"
+    reason = str(session.get("end_reason") or "").strip()
+    return reason or "ended"
+
+
+def _mission_updated_at(
+    base_updated_at: float,
+    board_snapshot: Dict[str, Any],
+    session_rows: List[Dict[str, Any]],
+    span_rows: List[Dict[str, Any]],
+) -> float:
+    latest = _safe_float(base_updated_at, 0.0)
+    latest = max(latest, _safe_float(board_snapshot.get("latest_event_ts"), 0.0))
+    for row in session_rows:
+        latest = max(
+            latest,
+            _safe_float(row.get("started_at"), 0.0),
+            _safe_float(row.get("ended_at"), 0.0),
+        )
+    for row in span_rows:
+        latest = max(latest, _safe_float(row.get("started_at"), 0.0))
+    return latest
+
+
+def _load_board_snapshot(board_slug: str) -> Dict[str, Any]:
+    from hermes_cli import kanban_db
+
+    empty_snapshot: Dict[str, Any] = {
+        "tasks": [],
+        "task_events": [],
+        "by_status": {},
+        "latest_event_ts": 0,
+    }
+    if not board_slug:
+        return empty_snapshot
+
+    conn = None
+    try:
+        conn = kanban_db.connect(board=board_slug)
+        task_rows = kanban_db.list_tasks(conn, include_archived=False)
+        stats = kanban_db.board_stats(conn)
+        tasks = []
+        events: List[Dict[str, Any]] = []
+        latest_event_ts = 0
+        for task in task_rows:
+            tasks.append(
+                {
+                    "id": task.id,
+                    "title": task.title or task.id,
+                    "status": task.status,
+                    "assignee": task.assignee,
+                    "session_id": task.session_id,
+                }
+            )
+            for ev in kanban_db.list_events(conn, task.id):
+                ts = _safe_int(ev.created_at)
+                latest_event_ts = max(latest_event_ts, ts)
+                events.append(
+                    {
+                        "ts": ts,
+                        "kind": "task_event",
+                        "label": f"{task.title or task.id}: {ev.kind}",
+                    }
+                )
+        by_status = stats.get("by_status", {}) if isinstance(stats, dict) else {}
+        return {
+            "tasks": tasks,
+            "task_events": events,
+            "by_status": by_status if isinstance(by_status, dict) else {},
+            "latest_event_ts": latest_event_ts,
+        }
+    except Exception:
+        return empty_snapshot
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _session_rows_for_ids(db: Any, session_ids: List[str]) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for sid in session_ids:
+        try:
+            row = db.get_session(sid)
+        except Exception:
+            row = None
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _mission_span_rows(session_ids: List[str]) -> Dict[str, Any]:
+    from hermes_cli import traces_store
+    import sqlite3
+
+    output: Dict[str, Any] = {
+        "spans": [],
+        "delegations": [],
+        "models": set(),
+        "timeline": [],
+    }
+    if not session_ids:
+        return output
+
+    db_path = traces_store.traces_db_path()
+    if not db_path.exists():
+        return output
+
+    session_set = {str(sid) for sid in session_ids if str(sid).strip()}
+    if not session_set:
+        return output
+
+    placeholders = ",".join("?" for _ in session_set)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        span_rows = conn.execute(
+            f"""
+            SELECT session_id, kind, agent, model, cost_usd, status, started_at, attributes
+            FROM spans
+            WHERE session_id IN ({placeholders})
+            ORDER BY started_at ASC
+            """,
+            list(session_set),
+        ).fetchall()
+        delegation_rows = conn.execute(
+            """
+            SELECT session_id, kind, agent, model, cost_usd, status, started_at, attributes
+            FROM spans
+            WHERE kind = 'delegation'
+            ORDER BY started_at ASC
+            """,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        conn.close()
+        return output
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    spans = [dict(row) for row in span_rows]
+    output["spans"] = spans
+    output["timeline"] = [
+        {
+            "ts": _safe_float(row.get("started_at")),
+            "kind": "span",
+            "label": f"{row.get('kind') or 'span'}:{row.get('agent') or 'agent'}",
+        }
+        for row in spans
+        if row.get("started_at") is not None
+    ]
+    output["models"] = {
+        str(row.get("model"))
+        for row in spans
+        if str(row.get("model") or "").strip()
+    }
+
+    delegations: List[Dict[str, Any]] = []
+    for raw_row in delegation_rows:
+        row = dict(raw_row)
+        attrs: Dict[str, Any] = {}
+        raw_attrs = row.get("attributes")
+        if isinstance(raw_attrs, str) and raw_attrs:
+            try:
+                parsed = json.loads(raw_attrs)
+                if isinstance(parsed, dict):
+                    attrs = parsed
+            except Exception:
+                attrs = {}
+
+        child_sid = str(attrs.get("child_session_id") or row.get("session_id") or "").strip()
+        parent_sid = str(attrs.get("parent_session_id") or "").strip() or None
+        if not child_sid:
+            continue
+        if child_sid not in session_set and (parent_sid is None or parent_sid not in session_set):
+            continue
+        delegations.append(
+            {
+                "session_id": child_sid,
+                "parent_session_id": parent_sid,
+                "agent": row.get("agent") or attrs.get("child_role"),
+                "model": row.get("model"),
+                "cost_usd": _safe_float(row.get("cost_usd")),
+                "status": attrs.get("child_status") or row.get("status") or "unknown",
+            }
+        )
+    output["delegations"] = delegations
+    return output
+
+
+def _mission_summary_payload(
+    *,
+    mission_id: str,
+    board_slug: str,
+    title: str,
+    status: str,
+    owner: Optional[str],
+    base_updated_at: float,
+    board_snapshot: Dict[str, Any],
+    session_rows: List[Dict[str, Any]],
+    span_rows: List[Dict[str, Any]],
+    span_models: set[str],
+) -> Dict[str, Any]:
+    by_status = board_snapshot.get("by_status", {}) if isinstance(board_snapshot, dict) else {}
+    total = int(sum(_safe_int(v) for v in by_status.values())) if isinstance(by_status, dict) else 0
+    done = _safe_int(by_status.get("done")) if isinstance(by_status, dict) else 0
+    pct = float((done / total) * 100.0) if total > 0 else 0.0
+    cost_usd = 0.0
+    total_tokens = 0
+    session_models: set[str] = set()
+    for row in session_rows:
+        estimated = row.get("estimated_cost_usd")
+        actual = row.get("actual_cost_usd")
+        cost_usd += _safe_float(estimated if estimated is not None else actual)
+        total_tokens += _safe_int(row.get("input_tokens")) + _safe_int(row.get("output_tokens"))
+        model_name = str(row.get("model") or "").strip()
+        if model_name:
+            session_models.add(model_name)
+    models = sorted(session_models.union(span_models))
+    updated_at = _mission_updated_at(base_updated_at, board_snapshot, session_rows, span_rows)
+    return {
+        "mission_id": mission_id,
+        "board_slug": board_slug,
+        "title": title,
+        "status": status,
+        "owner": owner,
+        "progress": {"done": done, "total": total, "pct": round(pct, 2)},
+        "models": models,
+        "cost_usd": round(cost_usd, 6),
+        "total_tokens": total_tokens,
+        "run_count": len(session_rows),
+        "updated_at": updated_at,
+    }
+
+
+def _mission_catalog() -> List[Dict[str, Any]]:
+    from hermes_cli import kanban_db, traces_store
+
+    missions = traces_store.list_missions(include_rollup=False, limit=2000, offset=0)
+    missions_by_board: Dict[str, Dict[str, Any]] = {}
+    for mission in missions:
+        slug = str(mission.get("board_slug") or "").strip()
+        if slug and slug not in missions_by_board:
+            missions_by_board[slug] = mission
+
+    boards = kanban_db.list_boards(include_archived=True)
+    board_by_slug = {
+        str(board.get("slug") or "").strip(): board
+        for board in boards
+        if str(board.get("slug") or "").strip()
+    }
+
+    all_slugs = sorted(set(missions_by_board.keys()).union(board_by_slug.keys()))
+    catalog: List[Dict[str, Any]] = []
+    for slug in all_slugs:
+        mission = missions_by_board.get(slug) or {}
+        board_meta = board_by_slug.get(slug) or {}
+        catalog.append(
+            {
+                "mission_id": str(mission.get("id") or _derived_mission_id(slug)),
+                "board_slug": slug,
+                "title": str(mission.get("title") or board_meta.get("name") or slug),
+                "status": str(
+                    mission.get("status")
+                    or ("archived" if bool(board_meta.get("archived")) else "todo")
+                ),
+                "owner": mission.get("owner"),
+                "updated_at": _safe_float(mission.get("updated_at") or board_meta.get("created_at")),
+                "tags": mission.get("tags") if isinstance(mission.get("tags"), list) else [],
+            }
+        )
+    return catalog
+
+
+class MissionUpsertRequest(BaseModel):
+    board_slug: str
+    title: Optional[str] = None
+    owner: Optional[str] = None
+    status: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+class OpsAutopilotDiagnoseRequest(BaseModel):
+    incident_id: Optional[str] = None
+    incident: Optional[Dict[str, Any]] = None
+    assignee_profile: Optional[str] = None
+
+
+class TemplateInstantiateRequest(BaseModel):
+    title: Optional[str] = None
+    owner: Optional[str] = None
+
+
+def _slugify_board_name(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    if not slug:
+        return "mission"
+    return slug[:48]
+
+
+def _allocate_template_board_slug(base_slug: str) -> str:
+    from hermes_cli import kanban_db
+
+    candidate = _slugify_board_name(base_slug)
+    if not kanban_db.board_exists(candidate):
+        return candidate
+    suffix = 2
+    while True:
+        bounded = candidate[:44]
+        trial = f"{bounded}-{suffix}"
+        if not kanban_db.board_exists(trial):
+            return trial
+        suffix += 1
+
+
+def _seed_template_tasks(
+    *,
+    conn: Any,
+    kanban_db: Any,
+    board_slug: str,
+    template: Dict[str, Any],
+    owner: Optional[str],
+) -> int:
+    tasks = template.get("creates", {}).get("tasks", [])
+    if not isinstance(tasks, list):
+        return 0
+    created = 0
+    for item in tasks:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        requested_status = str(item.get("status") or "todo").strip().lower() or "todo"
+        task_owner = str(item.get("assignee") or owner or "").strip() or None
+        body = item.get("body")
+        if body is not None:
+            body = str(body)
+        task_id = kanban_db.create_task(
+            conn,
+            title=title,
+            body=body,
+            assignee=task_owner,
+            initial_status="running",
+            board=board_slug,
+        )
+        if requested_status != "running":
+            try:
+                valid_statuses = set(getattr(kanban_db, "VALID_STATUSES", set()))
+                status_to_write = requested_status if requested_status in valid_statuses else "todo"
+                conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status_to_write, task_id))
+            except Exception:
+                conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (task_id,))
+        created += 1
+    return created
+
+
+def _tracer_health_payload() -> Dict[str, Any]:
+    payload = {
+        "dropped_spans": 0,
+        "queue_size": 0,
+        "healthy": False,
+    }
+    try:
+        from plugins.observability import sqlite_traces
+
+        payload["dropped_spans"] = _safe_int(sqlite_traces.get_dropped_spans())
+        runtime_getter = getattr(sqlite_traces, "_get_runtime", None)
+        if callable(runtime_getter):
+            runtime = runtime_getter()
+            recorder = getattr(runtime, "recorder", None)
+            queue_obj = getattr(recorder, "_queue", None)
+            worker = getattr(recorder, "_worker", None)
+            watchdog = getattr(recorder, "_watchdog", None)
+            if queue_obj is not None and hasattr(queue_obj, "qsize"):
+                payload["queue_size"] = _safe_int(queue_obj.qsize())
+            payload["healthy"] = bool(
+                worker is not None
+                and worker.is_alive()
+                and watchdog is not None
+                and watchdog.is_alive()
+            )
+    except Exception:
+        pass
+    return payload
+
+
+@app.get("/api/templates")
+async def get_templates(profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import mission_templates
+
+        return {"templates": mission_templates.list_template_catalog()}
+
+
+@app.post("/api/templates/{template_id}/instantiate")
+async def instantiate_template(
+    template_id: str,
+    body: Optional[TemplateInstantiateRequest] = None,
+    profile: Optional[str] = None,
+):
+    with _config_profile_scope(profile):
+        from hermes_cli import kanban_db, mission_templates, traces_store
+
+        template = mission_templates.get_template(template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail=f"Unknown template: {template_id}")
+
+        default_board_name = str(template.get("creates", {}).get("board") or template.get("name") or "Mission")
+        requested_title = str(body.title).strip() if body and body.title is not None else ""
+        board_title = requested_title or default_board_name
+
+        default_owner = str(template.get("defaults", {}).get("assignee") or "").strip()
+        requested_owner = str(body.owner).strip() if body and body.owner is not None else ""
+        owner = requested_owner or default_owner or None
+
+        board_slug = _allocate_template_board_slug(board_title)
+        kanban_db.create_board(
+            board_slug,
+            name=board_title,
+            description=str(template.get("description") or board_title),
+        )
+
+        conn = kanban_db.connect(board=board_slug)
+        try:
+            _seed_template_tasks(
+                conn=conn,
+                kanban_db=kanban_db,
+                board_slug=board_slug,
+                template=template,
+                owner=owner,
+            )
+        finally:
+            conn.close()
+
+        mission_id = _derived_mission_id(board_slug)
+        model_tier = str(template.get("defaults", {}).get("model_tier") or "").strip()
+        mission = traces_store.upsert_mission(
+            {
+                "id": mission_id,
+                "board_slug": board_slug,
+                "title": board_title,
+                "status": "todo",
+                "owner": owner,
+                "tags": [
+                    f"template:{template['id']}",
+                    *([f"model-tier:{model_tier}"] if model_tier else []),
+                ],
+            }
+        )
+
+        response: Dict[str, Any] = {
+            "mission_id": str(mission.get("id") or mission_id),
+            "board_slug": board_slug,
+        }
+        cron_spec = template.get("cron")
+        if isinstance(cron_spec, dict):
+            try:
+                cron_job = _call_cron_for_profile(
+                    profile,
+                    "create_job",
+                    prompt=str(cron_spec.get("prompt") or f"Watch mission {board_slug}"),
+                    schedule=str(cron_spec.get("schedule") or "every 30m"),
+                    name=str(cron_spec.get("name") or f"{board_title} automation"),
+                    deliver=str(cron_spec.get("deliver") or "local"),
+                )
+                if isinstance(cron_job, dict):
+                    response["cron_job_id"] = cron_job.get("id")
+            except HTTPException as exc:
+                if profile:
+                    raise
+                _log.warning("Template %s cron unavailable for default profile: %s", template_id, exc.detail)
+                response["warning"] = f"Cron skipped: {exc.detail}"
+            except Exception as exc:
+                _log.warning("Template %s instantiated without cron job: %s", template_id, exc)
+                response["warning"] = f"Cron skipped: {exc}"
+        return response
+
+
+# ── Mission Builder endpoints (Wave 9) ────────────────────────────────────────
+
+
+class DraftInstantiateTask(BaseModel):
+    title: str
+    description: Optional[str] = None
+    assignee: Optional[str] = None
+    status: Optional[str] = "todo"
+
+
+class DraftInstantiateRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    board: Optional[str] = None
+    owner: Optional[str] = None
+    tasks: List[DraftInstantiateTask] = []
+    defaults: Optional[Dict[str, Any]] = None
+
+
+class CustomTemplateSaveRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    board: Optional[str] = None
+    owner: Optional[str] = None
+    tasks: List[DraftInstantiateTask] = []
+    defaults: Optional[Dict[str, Any]] = None
+
+
+@app.get("/api/templates/{template_id}")
+async def get_template_detail(template_id: str, profile: Optional[str] = None):
+    """Return the full template record including tasks list (not just the catalog summary)."""
+    with _config_profile_scope(profile):
+        from hermes_cli import mission_templates
+
+        template = mission_templates.get_template(template_id)
+        if template is None:
+            raise HTTPException(status_code=404, detail=f"Unknown template: {template_id}")
+
+        creates = template.get("creates", {})
+        tasks_raw = creates.get("tasks", [])
+        return {
+            "id": template["id"],
+            "name": template["name"],
+            "description": template.get("description", ""),
+            "defaults": template.get("defaults", {}),
+            "creates": {
+                "board": creates.get("board") or template["name"],
+                "tasks": tasks_raw if isinstance(tasks_raw, list) else [],
+                "cron": bool(template.get("cron")),
+            },
+        }
+
+
+@app.post("/api/templates")
+async def save_custom_template(body: CustomTemplateSaveRequest, profile: Optional[str] = None):
+    """Persist a custom mission template so it appears in the template catalog."""
+    with _config_profile_scope(profile):
+        import uuid as _uuid
+        from hermes_cli import mission_templates
+
+        template_id = f"custom-{_uuid.uuid4().hex[:8]}"
+        tasks_dicts = [t.model_dump(exclude_none=True) for t in body.tasks]
+        template: Dict[str, Any] = {
+            "id": template_id,
+            "name": body.name,
+            "description": body.description or body.name,
+            "defaults": body.defaults or {},
+            "creates": {
+                "board": body.board or body.name,
+                "tasks": tasks_dicts,
+            },
+        }
+        mission_templates.save_custom_template(template)
+        return {"id": template_id, "name": body.name}
+
+
+@app.post("/api/templates/instantiate-draft")
+async def instantiate_draft(body: DraftInstantiateRequest, profile: Optional[str] = None):
+    """Create a Kanban board + mission record from a builder draft without saving a template."""
+    with _config_profile_scope(profile):
+        from hermes_cli import kanban_db, traces_store
+
+        board_title = (body.board or body.name or "Mission").strip()
+        board_slug = _allocate_template_board_slug(board_title)
+
+        kanban_db.create_board(
+            board_slug,
+            name=board_title,
+            description=body.description or board_title,
+        )
+
+        tasks_dicts = [t.model_dump(exclude_none=True) for t in body.tasks]
+        synthetic_template: Dict[str, Any] = {
+            "creates": {"tasks": tasks_dicts},
+        }
+
+        conn = kanban_db.connect(board=board_slug)
+        try:
+            _seed_template_tasks(
+                conn=conn,
+                kanban_db=kanban_db,
+                board_slug=board_slug,
+                template=synthetic_template,
+                owner=body.owner,
+            )
+        finally:
+            conn.close()
+
+        mission_id = _derived_mission_id(board_slug)
+        defaults = body.defaults or {}
+        model_tier = str(defaults.get("model_tier") or "").strip()
+        mission = traces_store.upsert_mission(
+            {
+                "id": mission_id,
+                "board_slug": board_slug,
+                "title": board_title,
+                "status": "todo",
+                "owner": body.owner,
+                "tags": [
+                    "source:builder",
+                    *([f"model-tier:{model_tier}"] if model_tier else []),
+                ],
+            }
+        )
+        return {
+            "mission_id": str(mission.get("id") or mission_id),
+            "board_slug": board_slug,
+        }
+
+
+@app.get("/api/traces")
+async def get_traces(
+    limit: int = 50,
+    offset: int = 0,
+    model: Optional[str] = None,
+    agent: Optional[str] = None,
+    status: Optional[str] = None,
+    session_id: Optional[str] = None,
+    since: Optional[str] = None,
+    until: Optional[str] = None,
+    profile: Optional[str] = None,
+):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+
+        filters: Dict[str, Any] = {}
+        if model:
+            filters["model"] = model
+        if agent:
+            filters["agent"] = agent
+        if status:
+            filters["status"] = status
+        if session_id:
+            filters["session_id"] = session_id
+        start_time = _parse_optional_epoch_param(since, field_name="since")
+        end_time = _parse_optional_epoch_param(until, field_name="until")
+        if start_time is not None:
+            filters["start_time"] = start_time
+        if end_time is not None:
+            filters["end_time"] = end_time
+
+        result = traces_store.query_traces(
+            filters=filters,
+            paging={"limit": limit, "offset": offset},
+        )
+        traces_payload: List[Dict[str, Any]] = []
+        for row in result.get("items", []):
+            spans = traces_store.get_trace(str(row.get("trace_id") or ""))
+            root_fields = _trace_root_fields(spans)
+            traces_payload.append(
+                {
+                    "trace_id": row.get("trace_id"),
+                    "root_kind": root_fields["root_kind"],
+                    "agent": root_fields["agent"],
+                    "model": root_fields["model"],
+                    "started_at": row.get("started_at"),
+                    "ended_at": row.get("ended_at"),
+                    "duration_ms": _safe_int(row.get("duration_ms")),
+                    "span_count": _safe_int(row.get("span_count")),
+                    "total_tokens": _safe_int(row.get("total_tokens")),
+                    "cost_usd": _safe_float(row.get("cost_usd")),
+                    "status": row.get("status") or "ok",
+                }
+            )
+
+        paging = result.get("paging", {})
+        return {
+            "traces": traces_payload,
+            "total": _safe_int(paging.get("total")),
+            "limit": _safe_int(paging.get("limit"), 50),
+            "offset": _safe_int(paging.get("offset"), 0),
+        }
+
+
+@app.get("/api/traces/{trace_id}")
+async def get_trace_detail(trace_id: str, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+
+        spans = traces_store.get_trace(trace_id)
+        if not spans:
+            raise HTTPException(status_code=404, detail="Trace not found")
+
+        formatted_spans: List[Dict[str, Any]] = []
+        total_duration = 0
+        total_tokens = 0
+        total_cost = 0.0
+        error_count = 0
+        for span in spans:
+            duration_ms = _safe_int(span.get("duration_ms"))
+            span_tokens = _safe_int(span.get("total_tokens"))
+            span_cost = _safe_float(span.get("cost_usd"))
+            is_error = (span.get("status") == "error") or bool(span.get("error"))
+            if is_error:
+                error_count += 1
+            total_duration += duration_ms
+            total_tokens += span_tokens
+            total_cost += span_cost
+            formatted_spans.append(
+                {
+                    "span_id": span.get("span_id"),
+                    "parent_id": span.get("parent_id"),
+                    "session_id": span.get("session_id"),
+                    "kind": span.get("kind"),
+                    "name": span.get("name"),
+                    "agent": span.get("agent"),
+                    "model": span.get("model"),
+                    "provider": span.get("provider"),
+                    "status": span.get("status"),
+                    "started_at": span.get("started_at"),
+                    "ended_at": span.get("ended_at"),
+                    "duration_ms": duration_ms,
+                    "input_tokens": _safe_int(span.get("input_tokens")),
+                    "output_tokens": _safe_int(span.get("output_tokens")),
+                    "total_tokens": span_tokens,
+                    "cost_usd": span_cost,
+                    "error": span.get("error"),
+                }
+            )
+
+        return {
+            "trace_id": trace_id,
+            "spans": formatted_spans,
+            "totals": {
+                "duration_ms": total_duration,
+                "total_tokens": total_tokens,
+                "cost_usd": total_cost,
+                "span_count": len(formatted_spans),
+                "error_count": error_count,
+            },
+        }
+
+
+@app.get("/api/missions")
+async def get_missions(profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        db = _open_session_db_for_profile(profile)
+        try:
+            payload: List[Dict[str, Any]] = []
+            for mission in _mission_catalog():
+                board_slug = str(mission.get("board_slug") or "")
+                board_snapshot = _load_board_snapshot(board_slug)
+                session_ids = sorted(
+                    {
+                        str(task.get("session_id"))
+                        for task in board_snapshot.get("tasks", [])
+                        if str(task.get("session_id") or "").strip()
+                    }
+                )
+                session_rows = _session_rows_for_ids(db, session_ids)
+                span_payload = _mission_span_rows(session_ids)
+                payload.append(
+                    _mission_summary_payload(
+                        mission_id=str(mission.get("mission_id") or ""),
+                        board_slug=board_slug,
+                        title=str(mission.get("title") or board_slug),
+                        status=str(mission.get("status") or "todo"),
+                        owner=mission.get("owner"),
+                        base_updated_at=_safe_float(mission.get("updated_at")),
+                        board_snapshot=board_snapshot,
+                        session_rows=session_rows,
+                        span_rows=span_payload.get("spans", []),
+                        span_models=span_payload.get("models", set()),
+                    )
+                )
+            payload.sort(key=lambda item: _safe_float(item.get("updated_at")), reverse=True)
+            return {"missions": payload, "total": len(payload)}
+        finally:
+            db.close()
+
+
+@app.get("/api/missions/{mission_id}")
+async def get_mission_detail(mission_id: str, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        db = _open_session_db_for_profile(profile)
+        try:
+            catalog = _mission_catalog()
+            target = next((item for item in catalog if item.get("mission_id") == mission_id), None)
+            if target is None:
+                target = next((item for item in catalog if item.get("board_slug") == mission_id), None)
+            if target is None:
+                raise HTTPException(status_code=404, detail="Mission not found")
+
+            board_slug = str(target.get("board_slug") or "")
+            board_snapshot = _load_board_snapshot(board_slug)
+            tasks = [
+                {
+                    "id": task.get("id"),
+                    "title": task.get("title"),
+                    "status": task.get("status"),
+                    "assignee": task.get("assignee"),
+                    "session_id": task.get("session_id"),
+                }
+                for task in board_snapshot.get("tasks", [])
+            ]
+            session_ids = sorted(
+                {
+                    str(task.get("session_id"))
+                    for task in tasks
+                    if str(task.get("session_id") or "").strip()
+                }
+            )
+            session_rows = _session_rows_for_ids(db, session_ids)
+            span_payload = _mission_span_rows(session_ids)
+            summary = _mission_summary_payload(
+                mission_id=str(target.get("mission_id") or mission_id),
+                board_slug=board_slug,
+                title=str(target.get("title") or board_slug),
+                status=str(target.get("status") or "todo"),
+                owner=target.get("owner"),
+                base_updated_at=_safe_float(target.get("updated_at")),
+                board_snapshot=board_snapshot,
+                session_rows=session_rows,
+                span_rows=span_payload.get("spans", []),
+                span_models=span_payload.get("models", set()),
+            )
+
+            delegations: Dict[str, Dict[str, Any]] = {}
+            for item in span_payload.get("delegations", []):
+                child_sid = str(item.get("session_id") or "").strip()
+                if not child_sid:
+                    continue
+                delegations[child_sid] = {
+                    "session_id": child_sid,
+                    "parent_session_id": item.get("parent_session_id"),
+                    "agent": item.get("agent"),
+                    "model": item.get("model"),
+                    "cost_usd": _safe_float(item.get("cost_usd")),
+                    "status": item.get("status") or "unknown",
+                }
+            session_by_id = {str(row.get("id")): row for row in session_rows if row.get("id")}
+            for sid, session in session_by_id.items():
+                parent_sid = str(session.get("parent_session_id") or "").strip() or None
+                if not parent_sid:
+                    continue
+                existing = delegations.get(sid, {"session_id": sid})
+                existing["parent_session_id"] = existing.get("parent_session_id") or parent_sid
+                existing["agent"] = existing.get("agent") or "delegate"
+                existing["model"] = existing.get("model") or session.get("model")
+                estimated = session.get("estimated_cost_usd")
+                actual = session.get("actual_cost_usd")
+                existing["cost_usd"] = _safe_float(
+                    existing.get("cost_usd")
+                    if existing.get("cost_usd") not in (None, 0, 0.0)
+                    else (estimated if estimated is not None else actual)
+                )
+                existing["status"] = existing.get("status") or _session_runtime_status(session)
+                delegations[sid] = existing
+
+            timeline = list(board_snapshot.get("task_events", [])) + list(span_payload.get("timeline", []))
+            timeline.sort(key=lambda row: _safe_float(row.get("ts")))
+
+            top_runs: List[Dict[str, Any]] = []
+            for session in session_rows:
+                started_at = _safe_float(session.get("started_at"))
+                ended_at = session.get("ended_at")
+                ended_ts = _safe_float(ended_at) if ended_at is not None else time.time()
+                estimated = session.get("estimated_cost_usd")
+                actual = session.get("actual_cost_usd")
+                top_runs.append(
+                    {
+                        "session_id": session.get("id"),
+                        "cost_usd": _safe_float(estimated if estimated is not None else actual),
+                        "status": _session_runtime_status(session),
+                        "duration_ms": max(0, int((ended_ts - started_at) * 1000)),
+                    }
+                )
+            top_runs.sort(key=lambda row: _safe_float(row.get("cost_usd")), reverse=True)
+
+            return {
+                "mission": summary,
+                "tasks": tasks,
+                "delegation_tree": sorted(
+                    delegations.values(),
+                    key=lambda row: (_safe_float(row.get("cost_usd")) * -1, str(row.get("session_id") or "")),
+                ),
+                "timeline": timeline,
+                "top_runs": top_runs[:5],
+            }
+        finally:
+            db.close()
+
+
+@app.post("/api/missions")
+async def post_mission(body: MissionUpsertRequest, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import kanban_db, traces_store
+
+        board_slug = str(body.board_slug or "").strip()
+        if not board_slug:
+            raise HTTPException(status_code=400, detail="board_slug is required")
+        existing = traces_store.list_missions(
+            board_slug=board_slug,
+            include_rollup=False,
+            limit=1,
+            offset=0,
+        )
+        current = existing[0] if existing else {}
+        board_meta = kanban_db.read_board_metadata(board_slug)
+        mission_id = str(current.get("id") or _derived_mission_id(board_slug))
+        title = (
+            str(body.title).strip()
+            if body.title is not None and str(body.title).strip()
+            else str(current.get("title") or board_meta.get("name") or board_slug)
+        )
+        payload = traces_store.upsert_mission(
+            {
+                "id": mission_id,
+                "board_slug": board_slug,
+                "title": title,
+                "owner": body.owner if body.owner is not None else current.get("owner"),
+                "status": (
+                    body.status
+                    if body.status is not None
+                    else str(current.get("status") or "todo")
+                ),
+                "tags": body.tags if body.tags is not None else current.get("tags") or [],
+            }
+        )
+        return {"mission": payload}
+
+
+def _build_fleet_metrics_payload(profile: Optional[str]) -> Dict[str, Any]:
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+
+        queue_payload = {"ready": 0, "in_progress": 0, "blocked": 0}
+        try:
+            from hermes_cli import kanban_db
+
+            conn = kanban_db.connect()
+            try:
+                stats = kanban_db.board_stats(conn)
+            finally:
+                conn.close()
+            by_status = stats.get("by_status", {}) if isinstance(stats, dict) else {}
+            queue_payload = {
+                "ready": _safe_int(by_status.get("ready")),
+                "in_progress": _safe_int(by_status.get("running")) + _safe_int(by_status.get("review")),
+                "blocked": _safe_int(by_status.get("blocked")),
+            }
+        except Exception:
+            pass
+
+        today_start = _today_start_epoch_local()
+        throughput_raw = traces_store.fleet_throughput(window_minutes=60)
+        traces_today_total = traces_store.query_traces(
+            filters={"start_time": today_start},
+            paging={"limit": 1, "offset": 0},
+        ).get("paging", {}).get("total", 0)
+
+        bottlenecks = [
+            {
+                "name": item.get("name"),
+                "kind": item.get("kind"),
+                "avg_duration_ms": _safe_float(item.get("avg_duration_ms")),
+                "count": _safe_int(item.get("samples")),
+            }
+            for item in traces_store.fleet_bottlenecks(limit=10, window_minutes=60)
+        ]
+
+        recurring_errors: List[Dict[str, Any]] = []
+        try:
+            import sqlite3
+
+            db_path = traces_store.traces_db_path()
+            if db_path.exists():
+                conn = sqlite3.connect(str(db_path))
+                conn.row_factory = sqlite3.Row
+                try:
+                    rows = conn.execute(
+                        """
+                        SELECT COALESCE(error, 'unknown') AS error,
+                               COUNT(*) AS count,
+                               MAX(started_at) AS last_seen
+                        FROM spans
+                        WHERE status = 'error' AND started_at >= ?
+                        GROUP BY error
+                        ORDER BY count DESC
+                        LIMIT 10
+                        """,
+                        (time.time() - (60 * 60),),
+                    ).fetchall()
+                finally:
+                    conn.close()
+                recurring_errors = [
+                    {
+                        "error": row["error"],
+                        "count": _safe_int(row["count"]),
+                        "last_seen": row["last_seen"],
+                    }
+                    for row in rows
+                ]
+        except Exception:
+            recurring_errors = []
+
+        if not recurring_errors:
+            recurring_errors = [
+                {
+                    "error": item.get("error_class") or "unknown",
+                    "count": _safe_int(item.get("hits")),
+                    "last_seen": None,
+                }
+                for item in traces_store.fleet_recurring_errors(limit=10, window_minutes=60)
+            ]
+
+        cost_today_usd = 0.0
+        try:
+            import sqlite3
+
+            db_path = traces_store.traces_db_path()
+            if db_path.exists():
+                conn = sqlite3.connect(str(db_path))
+                conn.row_factory = sqlite3.Row
+                try:
+                    row = conn.execute(
+                        """
+                        SELECT COALESCE(SUM(cost_usd), 0.0) AS total
+                        FROM spans
+                        WHERE started_at >= ?
+                        """,
+                        (today_start,),
+                    ).fetchone()
+                    if row is not None:
+                        cost_today_usd = _safe_float(row["total"])
+                finally:
+                    conn.close()
+        except Exception:
+            pass
+
+        return {
+            "queue": queue_payload,
+            "throughput": {
+                "spans_per_min": _safe_float(throughput_raw.get("spans_per_minute")),
+                "traces_today": _safe_int(traces_today_total),
+            },
+            "bottlenecks": bottlenecks,
+            "recurring_errors": recurring_errors,
+            "cost_today_usd": cost_today_usd,
+            "tracer": _tracer_health_payload(),
+        }
+
+
+def _autopilot_report_scaffold(incident: Dict[str, Any]) -> Dict[str, Any]:
+    title = str(incident.get("title") or "Operational incident").strip() or "Operational incident"
+    detail = str(incident.get("detail") or "").strip()
+    suggested = str(incident.get("suggested_action") or "Investigate traces and queue state.").strip()
+    severity = str(incident.get("severity") or "warning").strip()
+    return {
+        "summary": f"{title} ({severity})",
+        "suspected_cause": detail or "Signal thresholds were exceeded in recent fleet telemetry.",
+        "suggested_fix": suggested,
+        "next_steps": [
+            "Review evidence attached to the incident.",
+            "Validate queue and trace state for affected runs.",
+            "Apply the suggested fix and monitor recurrence.",
+        ],
+    }
+
+
+def _resolve_autopilot_incident(
+    incidents: List[Dict[str, Any]],
+    body: OpsAutopilotDiagnoseRequest,
+) -> Dict[str, Any]:
+    if body.incident_id:
+        target_id = str(body.incident_id).strip()
+        if not target_id:
+            raise HTTPException(status_code=400, detail="incident_id cannot be empty")
+        target = next((item for item in incidents if str(item.get("id")) == target_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        return target
+    if isinstance(body.incident, dict):
+        raw_id = str(body.incident.get("id") or "").strip()
+        raw_kind = str(body.incident.get("kind") or "custom").strip() or "custom"
+        if not raw_id:
+            raw_id = f"{raw_kind}:{int(time.time())}"
+        return {
+            "id": raw_id,
+            "kind": raw_kind,
+            "severity": str(body.incident.get("severity") or "warning"),
+            "title": str(body.incident.get("title") or "Operational incident"),
+            "detail": str(body.incident.get("detail") or "Manual incident submitted by operator."),
+            "evidence": body.incident.get("evidence") if isinstance(body.incident.get("evidence"), dict) else {},
+            "suggested_action": str(body.incident.get("suggested_action") or "Open a diagnostic mission."),
+        }
+    raise HTTPException(status_code=400, detail="Provide incident_id or incident payload")
+
+
+def _create_autopilot_diagnostic(
+    *,
+    profile: Optional[str],
+    incident: Dict[str, Any],
+    assignee_profile: Optional[str],
+) -> Dict[str, Any]:
+    from hermes_cli import kanban_db, mission_templates, traces_store
+
+    assignee = str(assignee_profile or profile or "").strip() or "ops"
+    template = mission_templates.get_template("ops-watchdog") or {
+        "id": "ops-watchdog",
+        "name": "Ops Watchdog",
+        "description": "Operator-triggered diagnostics for operational incidents.",
+        "creates": {"tasks": []},
+    }
+
+    board_title = f"Diagnostic — {str(incident.get('title') or 'ops incident').strip()}"
+    board_slug = _allocate_template_board_slug(board_title)
+    kanban_task_id: Optional[str] = None
+    kanban_warning: Optional[str] = None
+    try:
+        kanban_db.create_board(
+            board_slug,
+            name=board_title,
+            description=str(template.get("description") or board_title),
+        )
+        conn = kanban_db.connect(board=board_slug)
+        try:
+            _seed_template_tasks(
+                conn=conn,
+                kanban_db=kanban_db,
+                board_slug=board_slug,
+                template=template,
+                owner=assignee,
+            )
+            detail = str(incident.get("detail") or "").strip()
+            evidence = incident.get("evidence")
+            evidence_blob = json.dumps(evidence, ensure_ascii=False, indent=2) if isinstance(evidence, dict) else "{}"
+            task_body = (
+                f"Incident ID: {incident.get('id')}\n"
+                f"Kind: {incident.get('kind')}\n"
+                f"Severity: {incident.get('severity')}\n"
+                f"Detail: {detail}\n\n"
+                f"Evidence:\n{evidence_blob}\n"
+            )
+            kanban_task_id = kanban_db.create_task(
+                conn,
+                title=f"Diagnose incident: {incident.get('title') or incident.get('id')}",
+                body=task_body,
+                assignee=assignee,
+                initial_status="running",
+                board=board_slug,
+            )
+            conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (kanban_task_id,))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        kanban_warning = str(exc)
+
+    mission_id = _derived_mission_id(board_slug)
+    mission = traces_store.upsert_mission(
+        {
+            "id": mission_id,
+            "board_slug": board_slug,
+            "title": board_title,
+            "status": "todo",
+            "owner": assignee,
+            "tags": [
+                "template:ops-watchdog",
+                "diagnostic",
+                f"incident:{incident.get('kind') or 'unknown'}",
+                f"incident-id:{incident.get('id') or 'unknown'}",
+            ],
+        }
+    )
+    report = _autopilot_report_scaffold(incident)
+    response: Dict[str, Any] = {
+        "mission_id": str(mission.get("id") or mission_id),
+        "kanban_task_id": kanban_task_id,
+        "report": report,
+    }
+    if kanban_warning:
+        response["kanban_warning"] = f"Kanban task creation failed, mission registry kept: {kanban_warning}"
+    return response
+
+
+@app.get("/api/ops/fleet-metrics")
+async def get_fleet_metrics(profile: Optional[str] = None):
+    return _build_fleet_metrics_payload(profile)
+
+
+@app.get("/api/ops/autopilot/incidents")
+async def get_autopilot_incidents(profile: Optional[str] = None):
+    from hermes_cli.ops_autopilot import detect_incidents
+
+    with _config_profile_scope(profile):
+        config = load_config()
+        fleet_metrics = _build_fleet_metrics_payload(profile)
+        cost_status = _cost_guardrails_payload(profile).get("status", {})
+        incidents = detect_incidents(
+            fleet_metrics=fleet_metrics,
+            cost_status=cost_status if isinstance(cost_status, dict) else {},
+            config=config.get("ops_autopilot") if isinstance(config, dict) else {},
+        )
+        return {"incidents": incidents}
+
+
+@app.post("/api/ops/autopilot/diagnose")
+async def post_autopilot_diagnose(
+    body: OpsAutopilotDiagnoseRequest,
+    profile: Optional[str] = None,
+):
+    from hermes_cli.ops_autopilot import detect_incidents
+
+    with _config_profile_scope(profile):
+        config = load_config()
+        fleet_metrics = _build_fleet_metrics_payload(profile)
+        cost_status = _cost_guardrails_payload(profile).get("status", {})
+        incidents = detect_incidents(
+            fleet_metrics=fleet_metrics,
+            cost_status=cost_status if isinstance(cost_status, dict) else {},
+            config=config.get("ops_autopilot") if isinstance(config, dict) else {},
+        )
+        incident = _resolve_autopilot_incident(incidents, body)
+        return _create_autopilot_diagnostic(
+            profile=profile,
+            incident=incident,
+            assignee_profile=body.assignee_profile,
+        )
+
+
+@app.get("/api/costs/by-mission")
+async def get_costs_by_mission(days: int = 30, profile: Optional[str] = None):
+    with _config_profile_scope(profile):
+        from hermes_cli import traces_store
+
+        db = _open_session_db_for_profile(profile)
+        try:
+            cutoff = time.time() - (max(1, int(days)) * 86400)
+            missions = traces_store.list_missions(include_rollup=False, limit=500, offset=0)
+            payload: List[Dict[str, Any]] = []
+            for mission in missions:
+                # Rollup is best-effort here: cost endpoint shouldn't fail if a
+                # board has an unexpected/partial schema.
+                try:
+                    _ = traces_store.mission_rollup(mission)
+                except Exception:
+                    pass
+                session_ids = _mission_session_ids(str(mission.get("board_slug") or ""))
+                rows: List[Dict[str, Any]] = []
+                if session_ids:
+                    placeholders = ",".join("?" for _ in session_ids)
+                    cur = db._conn.execute(
+                        f"""
+                        SELECT id AS session_id,
+                               COALESCE(estimated_cost_usd, 0) AS cost_usd,
+                               COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) AS total_tokens
+                        FROM sessions
+                        WHERE id IN ({placeholders}) AND started_at > ?
+                        ORDER BY COALESCE(estimated_cost_usd, 0) DESC
+                        """,
+                        [*session_ids, cutoff],
+                    )
+                    rows = [dict(r) for r in cur.fetchall()]
+                span_view = _span_cost_views_for_sessions(
+                    session_ids=session_ids,
+                    cutoff=cutoff,
+                )
+                by_session = span_view.get("by_session", {}) if isinstance(span_view, dict) else {}
+                sessions_with_spans = span_view.get("sessions_with_spans", set())
+                mission_has_recorded = bool(sessions_with_spans)
+
+                total_cost = 0.0
+                total_tokens = 0
+                top_runs_source: List[Dict[str, Any]] = []
+                for row in rows:
+                    sid = str(row.get("session_id") or "").strip()
+                    if sid in sessions_with_spans and sid in by_session:
+                        span_row = by_session[sid]
+                        run_cost = _safe_float(span_row.get("cost_usd"))
+                        run_tokens = _safe_int(span_row.get("input_tokens")) + _safe_int(span_row.get("output_tokens"))
+                    else:
+                        run_cost = _safe_float(row.get("cost_usd"))
+                        run_tokens = _safe_int(row.get("total_tokens"))
+                    total_cost += run_cost
+                    total_tokens += run_tokens
+                    top_runs_source.append({"session_id": sid, "cost_usd": run_cost})
+                top_runs_source.sort(key=lambda item: _safe_float(item.get("cost_usd")), reverse=True)
+                top_runs = [
+                    {
+                        "session_id": r.get("session_id"),
+                        "cost_usd": _safe_float(r.get("cost_usd")),
+                    }
+                    for r in top_runs_source[:3]
+                ]
+                payload.append(
+                    {
+                        "mission_id": mission.get("id"),
+                        "title": mission.get("title"),
+                        "status": mission.get("status"),
+                        "cost_usd": total_cost,
+                        "total_tokens": total_tokens,
+                        "run_count": len(rows),
+                        "top_runs": top_runs,
+                        "is_estimate": not mission_has_recorded,
+                    }
+                )
+
+            payload.sort(key=lambda item: item.get("cost_usd", 0.0), reverse=True)
+            any_recorded = any(not bool(item.get("is_estimate")) for item in payload)
+            return {
+                "missions": payload,
+                "is_estimate": not any_recorded,
+            }
+        finally:
+            db.close()
 
 
 # ---------------------------------------------------------------------------
