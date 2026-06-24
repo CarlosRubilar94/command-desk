@@ -114,8 +114,35 @@ class TestBuildContextPrompt:
         long_body = "x" * 30_000
         messages = [{"role": "user", "content": long_body}]
         prompt = _build_context_prompt(messages, "Short follow-up")
-        # Must never exceed limit + slack for the current user message
+        # History is truncated, but the current user turn is preserved, so the
+        # total stays within the history budget plus the small current turn.
         assert len(prompt) < 30_000
+        assert "Human: Short follow-up" in prompt
+
+    def test_large_system_prompt_never_drops_current_turn(self):
+        # Regression: a system prompt larger than _HISTORY_MAX_CHARS previously
+        # drove keep_tail negative and truncated away the user's actual
+        # question. The system prompt and current turn must both survive.
+        big_system = "S" * 61_525
+        messages = [{"role": "system", "content": big_system}]
+        prompt = _build_context_prompt(messages, "What is my balance?")
+        assert big_system in prompt  # system prompt preserved in full
+        assert "Human: What is my balance?" in prompt  # current turn preserved
+        assert prompt.rstrip().endswith("Assistant:")
+
+    def test_large_system_prompt_truncates_only_middle_history(self):
+        big_system = "S" * 61_525
+        messages = [
+            {"role": "system", "content": big_system},
+            {"role": "user", "content": "OLD-OLDEST " + ("h" * 30_000)},
+            {"role": "assistant", "content": "older reply"},
+        ]
+        prompt = _build_context_prompt(messages, "latest question")
+        # System + current turn intact; oldest history trimmed from the front.
+        assert big_system in prompt
+        assert "Human: latest question" in prompt
+        assert "[...earlier turns truncated...]" in prompt
+        assert "OLD-OLDEST" not in prompt
 
 
 # ---------------------------------------------------------------------------
