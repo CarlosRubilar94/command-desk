@@ -751,8 +751,26 @@ def init_agent(
         agent.client = None
         agent._client_kwargs = {}
         agent.api_key = ""
+        # Automatic fallback to Codex when the Claude Pro session/usage/rate
+        # limit is hit (claude -p exits non-zero).  Read from config.yaml
+        # ``model.claude_cli_fallback`` (default "openai-codex" = ON; ""/"none"
+        # disables).  Consumed by agent/claude_cli_runtime.py via getattr.
+        agent.claude_cli_fallback = "openai-codex"
+        try:
+            from hermes_cli.config import load_config as _load_cc_cfg
+            _cc_model = _load_cc_cfg().get("model", {})
+            if isinstance(_cc_model, dict) and "claude_cli_fallback" in _cc_model:
+                agent.claude_cli_fallback = str(
+                    _cc_model.get("claude_cli_fallback") or ""
+                ).strip()
+        except Exception:
+            pass
         if not agent.quiet_mode:
-            print(f"🤖 AI Agent initialized with model: {agent.model} (Claude Code CLI subprocess)")
+            _fb_label = agent.claude_cli_fallback or "off"
+            print(
+                f"🤖 AI Agent initialized with model: {agent.model} "
+                f"(Claude Code CLI subprocess, fallback={_fb_label})"
+            )
     else:
         if api_key and base_url:
             # Explicit credentials from CLI/gateway — construct directly.

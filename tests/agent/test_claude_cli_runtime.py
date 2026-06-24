@@ -17,6 +17,8 @@ from agent.claude_cli_runtime import (
     DEFAULT_CLAUDE_BIN,
     _build_context_prompt,
     _find_claude_bin,
+    _is_usage_limit_error,
+    _resolve_codex_fallback,
     run_claude_cli_turn,
 )
 
@@ -335,3 +337,245 @@ class TestRunClaudeCliTurnErrors:
         # Empty response is not a hard failure, but error is recorded.
         assert "(empty response)" in result["final_response"]
         assert result["error"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Usage-limit detection + fallback target resolution (pure helpers)
+# ---------------------------------------------------------------------------
+
+class TestUsageLimitDetection:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "You've hit your session limit · resets 7:50pm (America/Sao_Paulo)",
+            "Usage limit reached",
+            "RATE LIMIT exceeded",
+            "rate-limit hit",
+            "429 Too Many Requests",
+            "your quota has been exhausted",
+            "You've reached your limit for today",
+        ],
+    )
+    def test_detects_limit(self, text):
+        assert _is_usage_limit_error(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        ["", "auth failed", "network error", "model not found", "boom"],
+    )
+    def test_non_limit_text(self, text):
+        assert _is_usage_limit_error(text) is False
+
+
+class TestResolveCodexFallback:
+    def test_default_on_when_attr_absent(self):
+        agent = _make_agent()
+        del agent.claude_cli_fallback  # behave like a real agent without the attr
+        assert _resolve_codex_fallback(agent) == "openai-codex"
+
+    @pytest.mark.parametrize("val", ["none", "", "off", "false", "0", "disabled", "NONE"])
+    def test_disabled_values(self, val):
+        agent = _make_agent(claude_cli_fallback=val)
+        assert _resolve_codex_fallback(agent) == ""
+
+    @pytest.mark.parametrize(
+        "val", ["openai-codex", "codex", "codex_app_server", "OpenAI-Codex"]
+    )
+    def test_codex_aliases(self, val):
+        agent = _make_agent(claude_cli_fallback=val)
+        assert _resolve_codex_fallback(agent) == "openai-codex"
+
+    def test_magicmock_attr_treated_as_disabled(self):
+        # A bare MagicMock agent yields a non-string sentinel → disabled, so
+        # unit tests never spawn a real Codex subprocess unless they opt in.
+        agent = _make_agent()
+        assert _resolve_codex_fallback(agent) == ""
+
+    def test_unsupported_value_disabled(self):
+        agent = _make_agent(claude_cli_fallback="some-random-provider")
+        assert _resolve_codex_fallback(agent) == ""
+
+
+# ---------------------------------------------------------------------------
+# Automatic fallback to Codex when the Pro session/usage limit is hit
+# ---------------------------------------------------------------------------
+
+# Exact stderr observed live when the Pro quota is exhausted.
+_LIMIT_STDERR = "You've hit your session limit · resets 7:50pm (America/Sao_Paulo)"
+
+_LIMIT_BANNER = "[claude-cli no limite Pro — respondendo via Codex]"
+_ERROR_BANNER = "[claude-cli falhou — respondendo via Codex]"
+
+
+def _codex_ok(text: str = "Codex answer") -> dict:
+    return {
+        "final_response": text,
+        "messages": [],
+        "api_calls": 1,
+        "completed": True,
+        "partial": False,
+        "error": None,
+    }
+
+
+def _codex_fail(error: str = "codex app-server boom") -> dict:
+    return {
+        "final_response": "[codex] dead",
+        "messages": [],
+        "api_calls": 0,
+        "completed": False,
+        "partial": True,
+        "error": error,
+    }
+
+
+class TestClaudeCliCodexFallback:
+    def test_limit_error_triggers_codex_fallback(self):
+        agent = _make_agent(claude_cli_fallback="openai-codex")
+        agent._run_codex_app_server_turn = MagicMock(return_value=_codex_ok("Codex says hi"))
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_err_proc(rc=1, stderr=_LIMIT_STDERR)),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hello",
+                original_user_message="Hello",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        agent._run_codex_app_server_turn.assert_called_once()
+        assert result["final_response"].startswith(_LIMIT_BANNER)
+        assert "Codex says hi" in result["final_response"]
+        assert result["completed"] is True
+        assert result["claude_cli_fallback"] == "openai-codex"
+
+    def test_success_does_not_trigger_fallback(self):
+        agent = _make_agent(claude_cli_fallback="openai-codex")
+        agent._run_codex_app_server_turn = MagicMock()
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_ok_proc("Claude direct answer")),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hello",
+                original_user_message="Hello",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        agent._run_codex_app_server_turn.assert_not_called()
+        assert result["final_response"] == "Claude direct answer"
+        assert result["completed"] is True
+        assert _LIMIT_BANNER not in result["final_response"]
+
+    def test_codex_fallback_also_fails_combined_error(self):
+        agent = _make_agent(claude_cli_fallback="openai-codex")
+        agent._run_codex_app_server_turn = MagicMock(return_value=_codex_fail("codex app-server boom"))
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_err_proc(rc=1, stderr=_LIMIT_STDERR)),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hi",
+                original_user_message="Hi",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        assert result["completed"] is False
+        # Both failures are surfaced — neither is swallowed.
+        assert "session limit" in result["error"].lower()
+        assert "codex app-server boom" in result["error"]
+        assert "claude-cli" in result["final_response"]
+        assert "codex" in result["final_response"].lower()
+
+    def test_codex_fallback_raises_combined_error(self):
+        agent = _make_agent(claude_cli_fallback="openai-codex")
+        agent._run_codex_app_server_turn = MagicMock(side_effect=RuntimeError("spawn failed"))
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_err_proc(rc=1, stderr=_LIMIT_STDERR)),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hi",
+                original_user_message="Hi",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        assert result["completed"] is False
+        assert "[claude-cli error]" in result["final_response"]
+        assert "spawn failed" in result["final_response"]
+        assert "spawn failed" in result["error"]
+
+    def test_fallback_disabled_shows_original_error(self):
+        agent = _make_agent(claude_cli_fallback="none")
+        agent._run_codex_app_server_turn = MagicMock()
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_err_proc(rc=1, stderr=_LIMIT_STDERR)),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hi",
+                original_user_message="Hi",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        agent._run_codex_app_server_turn.assert_not_called()
+        assert result["completed"] is False
+        assert "[claude-cli error]" in result["final_response"]
+        assert "session limit" in result["final_response"].lower()
+
+    def test_nonlimit_exit_uses_generic_banner(self):
+        agent = _make_agent(claude_cli_fallback="openai-codex")
+        agent._run_codex_app_server_turn = MagicMock(return_value=_codex_ok("Codex generic answer"))
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_err_proc(rc=2, stderr="auth failed")),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hi",
+                original_user_message="Hi",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        agent._run_codex_app_server_turn.assert_called_once()
+        assert result["final_response"].startswith(_ERROR_BANNER)
+        assert "no limite Pro" not in result["final_response"]
+        assert "Codex generic answer" in result["final_response"]
+        assert result["completed"] is True
+
+    def test_unsupported_fallback_value_treated_as_disabled(self):
+        agent = _make_agent(claude_cli_fallback="some-random-provider")
+        agent._run_codex_app_server_turn = MagicMock()
+
+        with (
+            patch("agent.claude_cli_runtime.shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_err_proc(rc=1, stderr=_LIMIT_STDERR)),
+        ):
+            result = run_claude_cli_turn(
+                agent,
+                user_message="Hi",
+                original_user_message="Hi",
+                messages=[],
+                effective_task_id="t1",
+            )
+
+        agent._run_codex_app_server_turn.assert_not_called()
+        assert result["completed"] is False
+        assert "[claude-cli error]" in result["final_response"]
