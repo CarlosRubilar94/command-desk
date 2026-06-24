@@ -26,7 +26,6 @@ import {
   Hammer,
   Info,
   LayoutTemplate,
-  Minus,
   Plus,
   RotateCcw,
   Save,
@@ -37,7 +36,6 @@ import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { api } from "@/lib/api";
 import type { TemplateRow, FullTemplateResponse } from "@/lib/api";
 import { DeckPageShell } from "@/components/DeckPageShell";
-import { DeckBtn } from "@/components/DeckOps";
 import { EmptyState, ErrorState, SkeletonTable } from "@/components/ds";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn } from "@/lib/utils";

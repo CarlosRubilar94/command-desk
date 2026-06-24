@@ -73,7 +73,7 @@ export default function PluginsPage() {
       </Button>,
     );
     return () => setAfterTitle(null);
-  }, [loading, rescanBusy, setAfterTitle, t.pluginsPage.refreshDashboard]);
+  }, [loading, onRescan, rescanBusy, setAfterTitle, t.pluginsPage.refreshDashboard]);
 
   const onInstall = async () => {
     const id = installId.trim();
@@ -101,7 +101,7 @@ export default function PluginsPage() {
     }
   };
 
-  const onRescan = async () => {
+  const onRescan = useCallback(async () => {
     setRescanBusy(true);
     try {
       const rc = await api.rescanPlugins();
@@ -115,7 +115,7 @@ export default function PluginsPage() {
     } finally {
       setRescanBusy(false);
     }
-  };
+  }, [loadHub, showToast, t.pluginsPage.refreshDashboard]);
 
   const onSaveProviders = async () => {
     setProviderBusy(true);

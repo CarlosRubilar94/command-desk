@@ -340,20 +340,23 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     return () => mql.removeEventListener("change", onChange);
   }, []);
 
-  const agentActivityToggle = (
-    <button
-      type="button"
-      onClick={toggleAgentActivity}
-      aria-pressed={showAgentActivity}
-      title="Show delegate_task activity in the sidebar"
-      className={cn(
-        "deck-btn-sm",
-        showAgentActivity ? "primary" : "ghost",
-      )}
-    >
-      <GitBranch className="h-3.5 w-3.5 shrink-0" />
-      Delegation
-    </button>
+  const agentActivityToggle = useMemo(
+    () => (
+      <button
+        type="button"
+        onClick={toggleAgentActivity}
+        aria-pressed={showAgentActivity}
+        title="Show delegate_task activity in the sidebar"
+        className={cn(
+          "deck-btn-sm",
+          showAgentActivity ? "primary" : "ghost",
+        )}
+      >
+        <GitBranch className="h-3.5 w-3.5 shrink-0" />
+        Delegation
+      </button>
+    ),
+    [showAgentActivity, toggleAgentActivity],
   );
 
   useEffect(() => {
@@ -384,6 +387,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     );
     return () => setEnd(null);
   }, [
+    agentActivityToggle,
     isActive,
     narrow,
     mobilePanelOpen,
@@ -850,7 +854,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         copyResetRef.current = null;
       }
     };
-  }, [channel, resumeParam, scopedProfile, reconnectNonce]);
+  }, [channel, resumeParam, scopedProfile, reconnectNonce, terminalTheme]);
 
   // When the user returns to the chat tab (isActive: false → true), the
   // terminal host just transitioned from display:none to display:flex.

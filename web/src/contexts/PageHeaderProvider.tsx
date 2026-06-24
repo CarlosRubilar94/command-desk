@@ -18,13 +18,11 @@ export function PageHeaderProvider({
   const [afterTitle, setAfterTitle] = useState<ReactNode>(null);
   const [end, setEnd] = useState<ReactNode>(null);
 
-  /* eslint-disable react-hooks/set-state-in-effect */
   useLayoutEffect(() => {
     setTitleOverride(null);
     setAfterTitle(null);
     setEnd(null);
   }, [pathname]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const defaultTitle = useMemo(
     () => resolvePageTitle(pathname, t, pluginTabs),

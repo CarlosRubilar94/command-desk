@@ -309,12 +309,9 @@ def find_node_executable_on_path(command: str) -> str | None:
         return command_str if Path(command_str).is_file() else None
 
     for name in _candidate_node_command_names(command_str):
-        for directory in os.environ.get("PATH", "").split(os.pathsep):
-            if not directory:
-                continue
-            candidate = Path(directory) / name
-            if candidate.is_file():
-                return str(candidate)
+        resolved = shutil.which(name)
+        if resolved:
+            return resolved
     return None
 
 

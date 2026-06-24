@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState, memo } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LayoutTemplate, Plus, RefreshCw, Target } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
@@ -813,7 +813,7 @@ export default function MissionsPage() {
       </div>,
     );
     return () => setEnd(null);
-  }, [loading, load, navigate, setEnd, setTemplatesOpen]);
+  }, [loading, load, setEnd, setTemplatesOpen]);
 
   const openMission = useCallback((m: MissionRow) => {
     setSelected(m);

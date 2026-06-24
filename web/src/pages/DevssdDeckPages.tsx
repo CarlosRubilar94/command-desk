@@ -105,7 +105,6 @@ export function DevssdDoctorPage() {
 export function BitwardenStatusPage() {
   const { status, loading, error, refresh } = useDevssdStatus();
   const bw = status?.bitwarden;
-  const bwOk = Boolean(bw?.enabled && bw.token_present && bw.project_configured);
 
   return (
     <DevssdShell
