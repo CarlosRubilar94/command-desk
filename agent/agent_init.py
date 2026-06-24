@@ -314,7 +314,14 @@ def init_agent(
     agent.provider = provider_name or ""
     agent.acp_command = acp_command or command
     agent.acp_args = list(acp_args or args or [])
-    if api_mode in {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse", "codex_app_server"}:
+    if agent.provider == "claude-cli":
+        # Claude Code CLI subprocess runtime — driven via `claude -p`, no
+        # HTTP client / API key (see agent/claude_cli_runtime.py).  Forced
+        # ahead of the generic api_mode whitelist so a stale persisted
+        # api_mode (e.g. chat_completions from a prior provider) can never
+        # route this provider down the HTTP path.
+        agent.api_mode = "claude_cli"
+    elif api_mode in {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse", "codex_app_server", "claude_cli"}:
         agent.api_mode = api_mode
     elif agent.provider == "openai-codex":
         agent.api_mode = "codex_responses"
@@ -733,6 +740,19 @@ def init_agent(
         if not agent.quiet_mode:
             _gr_label = " + Guardrails" if agent._bedrock_guardrail_config else ""
             print(f"🤖 AI Agent initialized with model: {agent.model} (AWS Bedrock, {agent._bedrock_region}{_gr_label})")
+    elif agent.api_mode == "claude_cli":
+        # Claude Code CLI subprocess runtime: the conversation loop drives
+        # `claude -p` via subprocess (see agent/claude_cli_runtime.py), so no
+        # OpenAI/HTTP client and no API key are needed.  Auth is handled
+        # entirely by the local `claude` Pro/OAuth session.  Mirrors the
+        # bedrock/anthropic-native paths above that set client=None and bypass
+        # the OpenAI client construction + the "no API key was found" gate —
+        # claude-cli must NOT require a CLAUDE_CLI_API_KEY env var.
+        agent.client = None
+        agent._client_kwargs = {}
+        agent.api_key = ""
+        if not agent.quiet_mode:
+            print(f"🤖 AI Agent initialized with model: {agent.model} (Claude Code CLI subprocess)")
     else:
         if api_key and base_url:
             # Explicit credentials from CLI/gateway — construct directly.
