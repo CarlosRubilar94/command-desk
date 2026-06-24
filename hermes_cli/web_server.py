@@ -9447,6 +9447,326 @@ async def mcp_control_center(profile: Optional[str] = None):
 
 
 # ---------------------------------------------------------------------------
+# Setup / Integration Health — read-only aggregation endpoint.
+#
+# Returns a single JSON snapshot of every integration, with:
+#   - status enum (READY / WAITING_CREDENTIAL / WAITING_SERVICE / LOCKED /
+#                  DISABLED / FAILED)
+#   - safe hint strings (env-var NAMES and booleans only — never values)
+#   - readiness summary (counts + %)
+#
+# SECURITY: this endpoint NEVER returns secret values. It surfaces only:
+#   - env var names (not their content)
+#   - boolean presence flags
+#   - CLI status strings (bw status enum, process-running bool)
+# ---------------------------------------------------------------------------
+
+_SETUP_STATUS_READY = "READY"
+_SETUP_STATUS_WAITING_CREDENTIAL = "WAITING_CREDENTIAL"
+_SETUP_STATUS_WAITING_SERVICE = "WAITING_SERVICE"
+_SETUP_STATUS_LOCKED = "LOCKED"
+_SETUP_STATUS_DISABLED = "DISABLED"
+_SETUP_STATUS_FAILED = "FAILED"
+
+
+def _setup_key_present(env_vars: list[str]) -> bool:
+    """Return True if ANY of the env var names has a non-empty value."""
+    import os as _os
+    for v in env_vars:
+        if _os.environ.get(v, "").strip():
+            return True
+    # Also probe ~/.hermes/.env (name/bool only — value never returned).
+    try:
+        from hermes_cli.config import get_env_value as _gev
+        for v in env_vars:
+            if _gev(v, "").strip():
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _setup_skill_counts() -> dict[str, int]:
+    """Return {active, disabled, total} skill counts (no values, no paths)."""
+    try:
+        from hermes_cli.config import load_config as _lc
+        from hermes_cli.skills_config import get_disabled_skills as _gds
+        cfg = _lc()
+        disabled = _gds(cfg)
+        total_all: list[dict] = []
+        try:
+            from hermes_cli.skills_config import _list_all_skills as _las
+            total_all = _las()
+        except Exception:
+            pass
+        total = max(len(total_all), len(disabled))
+        active = max(0, total - len(disabled))
+        return {"active": active, "disabled": len(disabled), "total": total}
+    except Exception:
+        return {"active": 0, "disabled": 0, "total": 0}
+
+
+def _setup_mcp_counts() -> dict[str, int]:
+    """Aggregate MCP server status counts — reuses _get_mcp_servers + _resolve_server_status."""
+    try:
+        from hermes_cli.mcp_config import _get_mcp_servers as _gms
+        bw = _bw_status()
+        bw_locked = bw.get("locked", True)
+        servers = _gms()
+        counts: dict[str, int] = {
+            _SETUP_STATUS_READY: 0,
+            _SETUP_STATUS_WAITING_CREDENTIAL: 0,
+            _SETUP_STATUS_WAITING_SERVICE: 0,
+            _SETUP_STATUS_DISABLED: 0,
+            _SETUP_STATUS_FAILED: 0,
+            "WAITING_BITWARDEN": 0,
+        }
+        for sname, scfg in servers.items():
+            chip = _resolve_server_status(sname, scfg, bw_locked)
+            counts[chip] = counts.get(chip, 0) + 1
+        return {"total": len(servers), **counts}
+    except Exception:
+        return {"total": 0}
+
+
+def _setup_obsidian_bridge_status() -> str:
+    """Check if Obsidian bridge dir is accessible (read-only, name only)."""
+    import os as _os
+    bridge_env = _os.environ.get("OBSIDIAN_VAULT_PATH", "").strip()
+    if bridge_env:
+        return _SETUP_STATUS_READY
+    # Check ~/.hermes/.env for the var name.
+    try:
+        from hermes_cli.config import get_env_value as _gev
+        if _gev("OBSIDIAN_VAULT_PATH", "").strip():
+            return _SETUP_STATUS_READY
+    except Exception:
+        pass
+    return _SETUP_STATUS_DISABLED
+
+
+@app.get("/api/setup/health")
+async def get_setup_health():
+    """Read-only Integration Health aggregation for the /setup dashboard page.
+
+    Composes data from:
+      - ``_bw_status`` / ``_bitwarden_cli_status``  (Bitwarden, bws token)
+      - env-var name presence checks (providers)
+      - ``_get_mcp_servers`` + ``_resolve_server_status``  (MCP counts)
+      - ``_setup_skill_counts``  (skills active/disabled)
+      - ``_resolve_gateway_liveness``  (gateway running state)
+
+    SECURITY: Returns ONLY env-var names, booleans, and status enums.
+    Secret values are NEVER included in the response.
+    """
+    import os as _os
+
+    # ── Secrets provider ────────────────────────────────────────────────
+    bw_cli = _bitwarden_cli_status()
+    bw_locked = bw_cli.get("locked", True)
+    bw_available = bw_cli.get("available", False)
+
+    bws_token_env = "BWS_ACCESS_TOKEN"
+    bws_token_present = bool(_os.environ.get(bws_token_env, "").strip())
+    if not bws_token_present:
+        try:
+            from hermes_cli.config import get_env_value as _gev
+            bws_token_present = bool(_gev(bws_token_env, "").strip())
+        except Exception:
+            pass
+
+    env_file_exists = False
+    try:
+        from hermes_cli.config import get_env_path as _gep
+        env_path = _gep()
+        env_file_exists = env_path.is_file()
+    except Exception:
+        pass
+
+    if not bw_available and bw_locked:
+        secrets_status = _SETUP_STATUS_LOCKED
+        secrets_hint = "Run `bw login` then `bw unlock` in your terminal, then refresh."
+    elif bw_available and not bw_locked:
+        secrets_status = _SETUP_STATUS_READY
+        secrets_hint = None
+    elif bws_token_present:
+        secrets_status = _SETUP_STATUS_READY
+        secrets_hint = None
+    elif env_file_exists:
+        secrets_status = _SETUP_STATUS_READY
+        secrets_hint = None
+    else:
+        secrets_status = _SETUP_STATUS_WAITING_CREDENTIAL
+        secrets_hint = (
+            f"Set {bws_token_env} in ~/.hermes/.env or Bitwarden, or run `bw unlock`."
+        )
+
+    secrets_section: dict = {
+        "status": secrets_status,
+        "bw_cli_available": bw_available,
+        "bw_locked": bw_locked,
+        "bws_token_env": bws_token_env,
+        "bws_token_present": bws_token_present,
+        "env_fallback_exists": env_file_exists,
+        "hint": secrets_hint,
+    }
+
+    # ── Model providers ──────────────────────────────────────────────────
+    providers: list[dict] = []
+
+    # Anthropic
+    anth_vars = ["ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]
+    anth_present = _setup_key_present(anth_vars)
+    providers.append({
+        "name": "Anthropic",
+        "key_env": "ANTHROPIC_API_KEY",
+        "key_present": anth_present,
+        "status": _SETUP_STATUS_READY if anth_present else _SETUP_STATUS_WAITING_CREDENTIAL,
+        "hint": None if anth_present else (
+            "Set ANTHROPIC_API_KEY in ~/.hermes/.env or Bitwarden "
+            "(or run `hermes setup model`)."
+        ),
+    })
+
+    # Cursor SDK
+    cursor_var = "CURSOR_API_KEY"
+    cursor_present = _setup_key_present([cursor_var])
+    providers.append({
+        "name": "Cursor SDK",
+        "key_env": cursor_var,
+        "key_present": cursor_present,
+        "status": _SETUP_STATUS_READY if cursor_present else _SETUP_STATUS_WAITING_CREDENTIAL,
+        "hint": None if cursor_present else (
+            f"Set {cursor_var} in ~/.hermes/.env; install with `pip install cursor-sdk`."
+        ),
+    })
+
+    # Codex CLI / Responses-API fallback
+    import shutil as _shutil
+    codex_cli_present = bool(_shutil.which("codex"))
+    providers.append({
+        "name": "Codex CLI",
+        "cli_present": codex_cli_present,
+        "key_env": None,
+        "key_present": None,
+        "status": _SETUP_STATUS_READY,
+        "hint": (
+            "CLI not found — Responses-API fallback active (OpenAI key required)."
+            if not codex_cli_present else None
+        ),
+        "fallback_active": not codex_cli_present,
+    })
+
+    # Gemini
+    gemini_var = "GEMINI_API_KEY"
+    gemini_present = _setup_key_present([gemini_var])
+    providers.append({
+        "name": "Gemini",
+        "key_env": gemini_var,
+        "key_present": gemini_present,
+        "status": _SETUP_STATUS_READY if gemini_present else _SETUP_STATUS_DISABLED,
+        "hint": None if gemini_present else f"Set {gemini_var} to enable Gemini provider.",
+    })
+
+    # ── MCP servers ──────────────────────────────────────────────────────
+    mcp_counts = _setup_mcp_counts()
+    mcp_ready = mcp_counts.get(_SETUP_STATUS_READY, 0)
+    mcp_total = mcp_counts.get("total", 0)
+    mcp_waiting = (
+        mcp_counts.get(_SETUP_STATUS_WAITING_CREDENTIAL, 0)
+        + mcp_counts.get("WAITING_BITWARDEN", 0)
+        + mcp_counts.get(_SETUP_STATUS_WAITING_SERVICE, 0)
+    )
+    mcp_failed = mcp_counts.get(_SETUP_STATUS_FAILED, 0)
+    if mcp_failed > 0:
+        mcp_status = _SETUP_STATUS_FAILED
+    elif mcp_waiting > 0 and mcp_ready == 0:
+        mcp_status = _SETUP_STATUS_WAITING_CREDENTIAL
+    elif mcp_total == 0:
+        mcp_status = _SETUP_STATUS_DISABLED
+    else:
+        mcp_status = _SETUP_STATUS_READY
+    mcp_section: dict = {
+        "status": mcp_status,
+        "total": mcp_total,
+        "ready": mcp_ready,
+        "waiting": mcp_waiting,
+        "disabled": mcp_counts.get(_SETUP_STATUS_DISABLED, 0),
+        "failed": mcp_failed,
+        "hint": "Visit /mcp to configure MCP servers." if mcp_waiting > 0 else None,
+    }
+
+    # ── Skills ───────────────────────────────────────────────────────────
+    skill_counts = _setup_skill_counts()
+    skills_section: dict = {
+        "status": _SETUP_STATUS_READY if skill_counts["total"] > 0 else _SETUP_STATUS_DISABLED,
+        **skill_counts,
+        "hint": "Visit /skills to manage skill governance." if skill_counts["disabled"] > 0 else None,
+    }
+
+    # ── Gateway ──────────────────────────────────────────────────────────
+    gateway_running, gateway_state = _resolve_gateway_liveness()
+    gateway_status = _SETUP_STATUS_READY if gateway_running else _SETUP_STATUS_WAITING_SERVICE
+    gateway_section: dict = {
+        "status": gateway_status,
+        "running": gateway_running,
+        "state": gateway_state,
+        "hint": (
+            None if gateway_running
+            else "Run `command-desk gateway restart` or use Gateway page to start."
+        ),
+    }
+
+    # ── Observability ────────────────────────────────────────────────────
+    otel_env = "HERMES_OTEL_ENABLED"
+    otel_enabled = _os.environ.get(otel_env, "").strip() in ("1", "true", "yes")
+    obsidian_status = _setup_obsidian_bridge_status()
+    obs_section: dict = {
+        "status": _SETUP_STATUS_READY if otel_enabled else _SETUP_STATUS_DISABLED,
+        "otel_enabled": otel_enabled,
+        "otel_env": otel_env,
+        "obsidian_bridge_status": obsidian_status,
+        "hint": None if otel_enabled else f"Set {otel_env}=1 to enable OTEL export.",
+    }
+
+    # ── Summary ───────────────────────────────────────────────────────────
+    # Aggregate per top-level section.
+    section_statuses = [
+        secrets_status,
+        *(p["status"] for p in providers),
+        mcp_status,
+        skills_section["status"],
+        gateway_status,
+        obs_section["status"],
+    ]
+    ready_count = sum(1 for s in section_statuses if s == _SETUP_STATUS_READY)
+    waiting_cred = sum(1 for s in section_statuses if s == _SETUP_STATUS_WAITING_CREDENTIAL)
+    waiting_svc = sum(1 for s in section_statuses if s == _SETUP_STATUS_WAITING_SERVICE)
+    failed_count = sum(1 for s in section_statuses if s == _SETUP_STATUS_FAILED)
+    disabled_count = sum(1 for s in section_statuses if s in (_SETUP_STATUS_DISABLED, _SETUP_STATUS_LOCKED))
+    total_items = len(section_statuses)
+    readiness_pct = round(ready_count / total_items * 100) if total_items > 0 else 0
+
+    return {
+        "secrets": secrets_section,
+        "providers": providers,
+        "mcp": mcp_section,
+        "skills": skills_section,
+        "gateway": gateway_section,
+        "observability": obs_section,
+        "summary": {
+            "ready": ready_count,
+            "waiting_credential": waiting_cred,
+            "waiting_service": waiting_svc,
+            "failed": failed_count,
+            "disabled": disabled_count,
+            "total": total_items,
+            "readiness_pct": readiness_pct,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Pairing endpoints — approve / revoke / list messaging pairing codes.
 #
 # These are how a remote admin onboards messaging users (Telegram, Discord, …)
