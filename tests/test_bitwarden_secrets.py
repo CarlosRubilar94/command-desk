@@ -666,6 +666,10 @@ def test_env_loader_calls_bsm_when_enabled(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows does not enforce Unix 0600 file permissions; chmod is a no-op for mode bits below 0o666",
+)
 def test_disk_cache_written_after_first_fetch(monkeypatch, tmp_path):
     """First fetch hits bws AND writes a 0600 file under hermes_home/cache/."""
     home = tmp_path / ".hermes"

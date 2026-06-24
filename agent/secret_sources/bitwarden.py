@@ -387,8 +387,18 @@ def _pick_zip_member(zf: zipfile.ZipFile, binary_name: str) -> str:
 
     Historically the archive has been flat (``bws`` at the root) but we
     tolerate a top-level directory just in case upstream changes.
+
+    Bitwarden's Windows release zips ship the binary as ``bws`` (no .exe)
+    even though the installed target must be ``bws.exe``.  When the exact
+    name is not found we fall back to matching by stem so that
+    ``bws.exe → bws`` works transparently; the caller renames it via the
+    atomic ``os.replace(extracted, target)`` step.
     """
-    candidates = [n for n in zf.namelist() if n.split("/")[-1] == binary_name]
+    stem = binary_name.rsplit(".", 1)[0] if "." in binary_name else binary_name
+    candidates = [
+        n for n in zf.namelist()
+        if n.split("/")[-1] == binary_name or n.split("/")[-1] == stem
+    ]
     if not candidates:
         raise RuntimeError(
             f"Could not find {binary_name} inside downloaded archive "
