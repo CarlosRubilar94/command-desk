@@ -34,25 +34,24 @@ import type {
 import { useModalBehavior } from "@/hooks/useModalBehavior";
 import { usePageHeader } from "@/contexts/usePageHeader";
 import { cn, themedBody } from "@/lib/utils";
+import { DeckPageShell } from "@/components/DeckPageShell";
+import { StatusPill, EmptyState, SkeletonCard } from "@/components/ds";
+import type { StatusVariant } from "@/components/ds";
 
-// State → badge mapping. The backend emits a small, fixed vocabulary plus
-// whatever the live gateway runtime reports (connected/disconnected/fatal).
-const STATE_BADGE: Record<
-  string,
-  { tone: "success" | "warning" | "destructive" | "secondary" | "outline"; label: string }
-> = {
-  connected: { tone: "success", label: "Connected" },
-  pending_restart: { tone: "warning", label: "Restart to apply" },
-  gateway_stopped: { tone: "warning", label: "Gateway stopped" },
-  startup_failed: { tone: "destructive", label: "Start failed" },
-  disconnected: { tone: "warning", label: "Disconnected" },
-  not_configured: { tone: "outline", label: "Not configured" },
-  disabled: { tone: "secondary", label: "Disabled" },
-  fatal: { tone: "destructive", label: "Error" },
+// State → StatusPill mapping.
+const STATE_PILL: Record<string, { variant: StatusVariant; label: string }> = {
+  connected: { variant: "success", label: "Connected" },
+  pending_restart: { variant: "warning", label: "Restart to apply" },
+  gateway_stopped: { variant: "warning", label: "Gateway stopped" },
+  startup_failed: { variant: "error", label: "Start failed" },
+  disconnected: { variant: "warning", label: "Disconnected" },
+  not_configured: { variant: "neutral", label: "Not configured" },
+  disabled: { variant: "neutral", label: "Disabled" },
+  fatal: { variant: "error", label: "Error" },
 };
 
-function stateBadge(state: string) {
-  return STATE_BADGE[state] ?? { tone: "outline" as const, label: state };
+function stateInfo(state: string): { variant: StatusVariant; label: string } {
+  return STATE_PILL[state] ?? { variant: "neutral" as StatusVariant, label: state };
 }
 
 const TELEGRAM_USER_ID_RE = /^\d+$/;
@@ -270,14 +269,19 @@ export default function ChannelsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <Spinner className="text-2xl text-primary" />
-      </div>
+      <DeckPageShell>
+        <div className="flex flex-col gap-4 p-5">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+      </DeckPageShell>
     );
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <DeckPageShell>
+    <div className="flex flex-col gap-6 p-5">
       <Toast toast={toast} />
 
       {/* Restart banner */}
@@ -443,9 +447,17 @@ export default function ChannelsPage() {
       )}
 
       {/* Platform list */}
+      {platforms.length === 0 && (
+        <EmptyState
+          icon={<Radio className="h-6 w-6" />}
+          title="No channels available"
+          description="No messaging channels were returned by the gateway."
+          compact
+        />
+      )}
       <div className="grid gap-3">
         {platforms.map((platform) => {
-          const badge = stateBadge(platform.state);
+          const pill = stateInfo(platform.state);
           const busy = togglingId === platform.id;
           const StateIcon =
             platform.state === "connected"
@@ -474,7 +486,7 @@ export default function ChannelsPage() {
                         <span className="font-mondwest normal-case text-sm font-medium">
                           {platform.name}
                         </span>
-                        <Badge tone={badge.tone}>{badge.label}</Badge>
+                        <StatusPill variant={pill.variant} label={pill.label} />
                       </div>
                       <span className="text-xs text-muted-foreground">
                         {platform.description}
@@ -539,6 +551,7 @@ export default function ChannelsPage() {
         })}
       </div>
     </div>
+    </DeckPageShell>
   );
 }
 

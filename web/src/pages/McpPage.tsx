@@ -20,8 +20,10 @@ import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Select, SelectOption } from "@nous-research/ui/ui/components/select";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
-import { H2 } from "@nous-research/ui/ui/components/typography/h2";
 import { api } from "@/lib/api";
+import { DeckPageShell } from "@/components/DeckPageShell";
+import { StatusPill, EmptyState, SkeletonCard, Toolbar } from "@/components/ds";
+import type { StatusVariant } from "@/components/ds";
 import type {
   McpCatalogDiagnostic,
   McpCatalogEntry,
@@ -98,12 +100,6 @@ function StatusChip({ status }: { status: McpStatusChip | string }) {
 // Utility helpers
 // ---------------------------------------------------------------------------
 
-const TRANSPORT_TONE: Record<string, "success" | "warning" | "secondary"> = {
-  http: "success",
-  stdio: "warning",
-  unknown: "secondary",
-};
-
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value.trim());
 }
@@ -135,6 +131,11 @@ function parseEnv(raw: string): Record<string, string> {
   return env;
 }
 
+const TRANSPORT_VARIANT: Record<string, StatusVariant> = {
+  http: "success",
+  stdio: "warning",
+  unknown: "neutral",
+};
 // ---------------------------------------------------------------------------
 // Bitwarden status banner
 // ---------------------------------------------------------------------------
@@ -460,9 +461,13 @@ export default function McpPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <Spinner className="text-2xl text-primary" />
-      </div>
+      <DeckPageShell>
+        <div className="flex flex-col gap-4 p-5">
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+      </DeckPageShell>
     );
   }
 
@@ -472,7 +477,8 @@ export default function McpPage() {
   });
 
   return (
-    <div className="flex flex-col gap-6">
+    <DeckPageShell>
+    <div className="flex flex-col gap-6 p-5">
       <Toast toast={toast} />
 
       <DeleteConfirmDialog
@@ -703,35 +709,39 @@ export default function McpPage() {
 
       {/* ── Your MCP servers ── */}
       <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <H2
-            variant="sm"
-            className="flex items-center gap-2 text-muted-foreground"
-          >
-            <Server className="h-4 w-4" />
-            Your MCP servers ({servers.length})
-          </H2>
-          {controlCenter && (
-            <button
-              onClick={() => loadControlCenter()}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <RefreshCw className="h-3 w-3" />
-              Refresh status
-            </button>
-          )}
-        </div>
+        <Toolbar
+          left={
+            <span className="flex items-center gap-2 text-[var(--dsd-text-xs)] font-[var(--dsd-fw-semibold)] uppercase tracking-wider text-[var(--dsd-text-dim)]">
+              <Server className="h-4 w-4" />
+              Your MCP servers ({servers.length})
+            </span>
+          }
+          right={
+            controlCenter ? (
+              <Button
+                ghost
+                size="sm"
+                onClick={() => loadControlCenter()}
+                className="uppercase"
+                prefix={<RefreshCw className="h-3.5 w-3.5" />}
+              >
+                Refresh status
+              </Button>
+            ) : undefined
+          }
+        />
 
         {restartNote && (
           <p className="text-xs text-warning">{restartNote}</p>
         )}
 
         {servers.length === 0 && (
-          <Card>
-            <CardContent className="py-8 text-center text-sm text-muted-foreground">
-              No MCP servers configured.
-            </CardContent>
-          </Card>
+          <EmptyState
+            icon={<Server className="h-6 w-6" />}
+            title="No MCP servers configured"
+            description="Add a server to connect an MCP endpoint to your agent."
+            compact
+          />
         )}
 
         {servers.map((server) => {
@@ -754,14 +764,13 @@ export default function McpPage() {
                     <span className="font-medium text-sm truncate">
                       {server.name}
                     </span>
-                    <Badge
-                      tone={TRANSPORT_TONE[server.transport] ?? "secondary"}
-                    >
-                      {server.transport}
-                    </Badge>
+                    <StatusPill
+                      variant={TRANSPORT_VARIANT[server.transport] ?? "neutral"}
+                      label={server.transport}
+                    />
                     {statusChip && <StatusChip status={statusChip} />}
                     {!server.enabled && !statusChip && (
-                      <Badge tone="outline">disabled</Badge>
+                      <StatusPill variant="neutral" label="disabled" />
                     )}
                   </div>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -851,26 +860,26 @@ export default function McpPage() {
 
       {/* ── Catalog ── */}
       <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <H2
-            variant="sm"
-            className="flex items-center gap-2 text-muted-foreground"
-          >
-            <Package className="h-4 w-4" />
-            Catalog ({catalog.length})
-          </H2>
-        </div>
+        <Toolbar
+          left={
+            <span className="flex items-center gap-2 text-[var(--dsd-text-xs)] font-[var(--dsd-fw-semibold)] uppercase tracking-wider text-[var(--dsd-text-dim)]">
+              <Package className="h-4 w-4" />
+              Catalog ({catalog.length})
+            </span>
+          }
+        />
 
         <p className="text-xs text-muted-foreground">
           Browse Nous-approved MCP servers and install them with one click.
         </p>
 
         {catalog.length === 0 && (
-          <Card>
-            <CardContent className="py-8 text-center text-sm text-muted-foreground">
-              No catalog entries available.
-            </CardContent>
-          </Card>
+          <EmptyState
+            icon={<Package className="h-6 w-6" />}
+            title="No catalog entries available"
+            description="The MCP catalog is empty or could not be loaded."
+            compact
+          />
         )}
 
         {catalog.map((entry) => {
@@ -888,12 +897,11 @@ export default function McpPage() {
                     <span className="font-medium text-sm truncate">
                       {entry.name}
                     </span>
-                    <Badge
-                      tone={TRANSPORT_TONE[entry.transport] ?? "secondary"}
-                    >
-                      {entry.transport}
-                    </Badge>
-                    <Badge tone="outline">auth: {entry.auth_type}</Badge>
+                    <StatusPill
+                      variant={TRANSPORT_VARIANT[entry.transport] ?? "neutral"}
+                      label={entry.transport}
+                    />
+                    <StatusPill variant="neutral" label={`auth: ${entry.auth_type}`} />
                     {ccEntry?.status && (
                       <StatusChip status={ccEntry.status} />
                     )}
@@ -908,14 +916,14 @@ export default function McpPage() {
                       </a>
                     ) : (
                       entry.source && (
-                        <Badge tone="outline">{entry.source}</Badge>
+                        <StatusPill variant="neutral" label={entry.source} />
                       )
                     )}
                     {entry.installed && (
-                      <Badge tone="success">Installed</Badge>
+                      <StatusPill variant="success" label="Installed" />
                     )}
                     {entry.installed && !entry.enabled && (
-                      <Badge tone="outline">disabled</Badge>
+                      <StatusPill variant="neutral" label="disabled" />
                     )}
                   </div>
                   {entry.description && (
@@ -1004,7 +1012,7 @@ export default function McpPage() {
 
                 <div className="flex items-center gap-1 shrink-0">
                   {entry.installed ? (
-                    <Badge tone="success">Installed</Badge>
+                    <StatusPill variant="success" label="Installed" />
                   ) : (
                     <Button
                       className="uppercase"
@@ -1023,5 +1031,6 @@ export default function McpPage() {
         })}
       </div>
     </div>
+    </DeckPageShell>
   );
 }
