@@ -211,6 +211,7 @@ class TestSpawnEnvIsolation:
     def test_spawn_env_preserves_HOME(self, monkeypatch):
         """The spawn env must contain the parent process's HOME unchanged.
         Verifies via a subprocess-monkey-patch."""
+        import shutil as _shutil
         import subprocess
         from agent.transports import codex_app_server as cas
 
@@ -240,6 +241,8 @@ class TestSpawnEnvIsolation:
                 pass
 
         monkeypatch.setattr(subprocess, "Popen", FakePopen)
+        # Ensure the binary resolves even when codex is not installed on CI.
+        monkeypatch.setattr(_shutil, "which", lambda x: "/usr/bin/codex")
         monkeypatch.setenv("HOME", "/users/alice")
 
         client = cas.CodexAppServerClient(codex_bin="codex")
@@ -255,6 +258,7 @@ class TestSpawnEnvIsolation:
     def test_spawn_env_sets_CODEX_HOME_when_provided(self, monkeypatch):
         """CODEX_HOME isolation must still work — that's the whole point
         of the codex_home arg."""
+        import shutil as _shutil
         import subprocess
         from agent.transports import codex_app_server as cas
 
@@ -282,6 +286,8 @@ class TestSpawnEnvIsolation:
                 pass
 
         monkeypatch.setattr(subprocess, "Popen", FakePopen)
+        # Ensure the binary resolves even when codex is not installed on CI.
+        monkeypatch.setattr(_shutil, "which", lambda x: "/usr/bin/codex")
         monkeypatch.setenv("HOME", "/users/alice")
 
         client = cas.CodexAppServerClient(

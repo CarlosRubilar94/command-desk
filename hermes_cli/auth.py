@@ -225,6 +225,17 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         inference_base_url=DEFAULT_COPILOT_ACP_BASE_URL,
         base_url_env_var="COPILOT_ACP_BASE_URL",
     ),
+    # Keyless subprocess providers — no API key; auth is the local CLI session.
+    "claude-cli": ProviderConfig(
+        id="claude-cli",
+        name="Claude Code CLI (Pro)",
+        auth_type="external_process",
+    ),
+    "cursor-cli": ProviderConfig(
+        id="cursor-cli",
+        name="Cursor CLI (assinatura)",
+        auth_type="external_process",
+    ),
     "gemini": ProviderConfig(
         id="gemini",
         name="Google AI Studio",
