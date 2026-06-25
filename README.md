@@ -18,6 +18,8 @@ command-desk doctor
 command-desk dashboard
 ```
 
+Installer script for Windows hosts: `scripts/install.ps1`.
+
 Dashboard: http://127.0.0.1:9119
 
 | Page | URL |

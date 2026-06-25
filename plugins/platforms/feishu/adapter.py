@@ -89,7 +89,14 @@ except ImportError:
 # Use find_spec for a fast availability probe — no import cost.
 import importlib.util as _importlib_util
 
-FEISHU_AVAILABLE: bool = _importlib_util.find_spec("lark_oapi") is not None
+try:
+    FEISHU_AVAILABLE: bool = _importlib_util.find_spec("lark_oapi") is not None
+except ValueError:
+    # find_spec raises ValueError when sys.modules contains a stub without
+    # __spec__ set (e.g. a MagicMock added by test isolation helpers).
+    # Fall back to a plain sys.modules membership check.
+    import sys as _sys
+    FEISHU_AVAILABLE = "lark_oapi" in _sys.modules
 
 # Module-level stubs; populated on first call to _ensure_lark_imports().
 lark = None  # type: ignore[assignment]
@@ -204,6 +211,19 @@ def _ensure_lark_imports() -> bool:
     except ImportError:
         FEISHU_AVAILABLE = False
         return False
+
+
+def _ensure_lark_request_primitives() -> bool:
+    """Ensure BaseRequest/HttpMethod/AccessTokenType are ready for API calls.
+
+    Tests may monkeypatch these globals directly without loading lark_oapi.
+    Treat pre-populated stubs as ready instead of forcing a real SDK import.
+    """
+    if BaseRequest is not None and HttpMethod is not None and AccessTokenType is not None:
+        return True
+    if not _ensure_lark_imports():
+        return False
+    return BaseRequest is not None and HttpMethod is not None and AccessTokenType is not None
 
 FEISHU_WEBSOCKET_AVAILABLE = websockets is not None
 FEISHU_WEBHOOK_AVAILABLE = aiohttp is not None
@@ -4079,6 +4099,8 @@ class FeishuAdapter(BasePlatformAdapter):
     async def _fetch_bot_names(self, bot_ids: List[str]) -> Optional[Dict[str, str]]:
         if not self._client or not bot_ids:
             return None
+        if not _ensure_lark_request_primitives():
+            return None
         try:
             req = (
                 BaseRequest.builder()
@@ -4324,6 +4346,8 @@ class FeishuAdapter(BasePlatformAdapter):
         doesn't return it. If the probe fails, env-provided values are preserved.
         """
         if not self._client:
+            return
+        if not _ensure_lark_request_primitives():
             return
 
         # Primary probe: /open-apis/bot/v3/info — returns bot_name + open_id, no
@@ -4783,19 +4807,19 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_get_chat_request(chat_id: str) -> Any:
-        if "GetChatRequest" in globals():
+        if GetChatRequest is not None:
             return GetChatRequest.builder().chat_id(chat_id).build()
         return SimpleNamespace(chat_id=chat_id)
 
     @staticmethod
     def _build_get_message_request(message_id: str) -> Any:
-        if "GetMessageRequest" in globals():
+        if GetMessageRequest is not None:
             return GetMessageRequest.builder().message_id(message_id).build()
         return SimpleNamespace(message_id=message_id)
 
     @staticmethod
     def _build_message_resource_request(*, message_id: str, file_key: str, resource_type: str) -> Any:
-        if "GetMessageResourceRequest" in globals():
+        if GetMessageResourceRequest is not None:
             return (
                 GetMessageResourceRequest.builder()
                 .message_id(message_id)
@@ -4807,7 +4831,7 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_get_application_request(*, app_id: str, lang: str) -> Any:
-        if "GetApplicationRequest" in globals():
+        if GetApplicationRequest is not None:
             return (
                 GetApplicationRequest.builder()
                 .app_id(app_id)
@@ -4818,7 +4842,7 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_reply_message_body(*, content: str, msg_type: str, reply_in_thread: bool, uuid_value: str) -> Any:
-        if "ReplyMessageRequestBody" in globals():
+        if ReplyMessageRequestBody is not None:
             return (
                 ReplyMessageRequestBody.builder()
                 .content(content)
@@ -4836,7 +4860,7 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_reply_message_request(message_id: str, request_body: Any) -> Any:
-        if "ReplyMessageRequest" in globals():
+        if ReplyMessageRequest is not None:
             return (
                 ReplyMessageRequest.builder()
                 .message_id(message_id)
@@ -4847,7 +4871,7 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_update_message_body(*, msg_type: str, content: str) -> Any:
-        if "UpdateMessageRequestBody" in globals():
+        if UpdateMessageRequestBody is not None:
             return (
                 UpdateMessageRequestBody.builder()
                 .msg_type(msg_type)
@@ -4858,7 +4882,7 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_update_message_request(message_id: str, request_body: Any) -> Any:
-        if "UpdateMessageRequest" in globals():
+        if UpdateMessageRequest is not None:
             return (
                 UpdateMessageRequest.builder()
                 .message_id(message_id)
@@ -4869,7 +4893,7 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_create_message_body(*, receive_id: str, msg_type: str, content: str, uuid_value: str) -> Any:
-        if "CreateMessageRequestBody" in globals():
+        if CreateMessageRequestBody is not None:
             return (
                 CreateMessageRequestBody.builder()
                 .receive_id(receive_id)
@@ -4887,7 +4911,7 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_create_message_request(receive_id_type: str, request_body: Any) -> Any:
-        if "CreateMessageRequest" in globals():
+        if CreateMessageRequest is not None:
             return (
                 CreateMessageRequest.builder()
                 .receive_id_type(receive_id_type)
@@ -4898,7 +4922,7 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_image_upload_body(*, image_type: str, image: Any) -> Any:
-        if "CreateImageRequestBody" in globals():
+        if CreateImageRequestBody is not None:
             return (
                 CreateImageRequestBody.builder()
                 .image_type(image_type)
@@ -4909,13 +4933,13 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_image_upload_request(request_body: Any) -> Any:
-        if "CreateImageRequest" in globals():
+        if CreateImageRequest is not None:
             return CreateImageRequest.builder().request_body(request_body).build()
         return SimpleNamespace(request_body=request_body)
 
     @staticmethod
     def _build_file_upload_body(*, file_type: str, file_name: str, file: Any) -> Any:
-        if "CreateFileRequestBody" in globals():
+        if CreateFileRequestBody is not None:
             return (
                 CreateFileRequestBody.builder()
                 .file_type(file_type)
@@ -4927,7 +4951,7 @@ class FeishuAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _build_file_upload_request(request_body: Any) -> Any:
-        if "CreateFileRequest" in globals():
+        if CreateFileRequest is not None:
             return CreateFileRequest.builder().request_body(request_body).build()
         return SimpleNamespace(request_body=request_body)
 

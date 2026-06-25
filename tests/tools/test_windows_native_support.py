@@ -199,7 +199,7 @@ class TestTerminatePidRoutingOnWindows:
             return result
 
         monkeypatch.setattr(status, "_IS_WINDOWS", True)
-        monkeypatch.setattr(status.subprocess, "run", fake_run)
+        monkeypatch.setattr(status, "safe_run", fake_run)
         status.terminate_pid(12345, force=True)
 
         assert captured["args"][0] == "taskkill"
@@ -219,7 +219,8 @@ class TestTerminatePidRoutingOnWindows:
             return result
 
         monkeypatch.setattr(status, "_IS_WINDOWS", True)
-        monkeypatch.setattr(status.subprocess, "run", fake_run)
+        monkeypatch.setattr(status, "safe_run", fake_run)
+        monkeypatch.setattr(status, "_pid_exists", lambda _pid: True)
         with pytest.raises(OSError, match="cannot be terminated"):
             status.terminate_pid(12345, force=True)
 
