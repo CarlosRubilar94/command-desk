@@ -4467,14 +4467,89 @@ def _inject_cli_subscription_rows(payload: dict) -> None:
     Idempotent: if a provider row already exists and is authenticated it is
     left unchanged; if it exists but is unauthenticated the row is promoted.
     """
-    from hermes_cli.codex_models import DEFAULT_CODEX_MODELS
+    from hermes_cli.codex_models import DEFAULT_CODEX_MODELS, _add_forward_compat_models
+
+    # Full Claude Code CLI model catalog (claude -p --model <id>).
+    # IDs accepted by the `--model` flag under a Pro/Max subscription.
+    # Sources: code.claude.com/docs/en/model-config (June 2026).
+    _CLAUDE_CLI_MODELS = [
+        "claude-opus-4-8",        # Claude Opus 4.8 — most capable (Max/Enterprise)
+        "claude-opus-4-6",        # Claude Opus 4.6 — previous Opus generation
+        "claude-sonnet-4-6",      # Claude Sonnet 4.6 — current default (Pro+)
+        "claude-sonnet-4-5",      # Claude Sonnet 4.5 — previous Sonnet
+        "claude-haiku-4-5",       # Claude Haiku 4.5 — fast/cheap (replaces haiku-3-5)
+        "claude-fable-5",         # Claude Fable 5 — extended thinking (Max/Enterprise)
+    ]
+
+    # Full cursor-agent model list (`cursor-agent --list-models` / `agent models`).
+    # IDs confirmed from actual `agent models` output and CLI error messages
+    # (Cursor forum, June 2026; cursor-agent 2026.06.24).
+    _CURSOR_CLI_MODELS = [
+        # Cursor in-house (Composer)
+        "composer-2.5",           # Composer 2.5 — default Auto/Composer model
+        "composer-2",
+        "composer-2-fast",
+        "composer-1.5",
+        # Claude (Anthropic) — Cursor internal model IDs
+        "sonnet-4.6",             # Claude 4.6 Sonnet
+        "sonnet-4.6-thinking",    # Claude 4.6 Sonnet (Thinking)
+        "opus-4.6",               # Claude 4.6 Opus
+        "opus-4.6-thinking",      # Claude 4.6 Opus (Thinking)
+        "sonnet-4.5",             # Claude 4.5 Sonnet
+        "sonnet-4.5-thinking",
+        "opus-4.5",               # Claude 4.5 Opus
+        "opus-4.5-thinking",
+        # GPT-5.5 (OpenAI)
+        "gpt-5.5-medium",         # GPT-5.5 Medium
+        # GPT-5.4 (OpenAI)
+        "gpt-5.4-xhigh",
+        "gpt-5.4-xhigh-fast",
+        "gpt-5.4-high",
+        "gpt-5.4-high-fast",
+        "gpt-5.4-medium",
+        "gpt-5.4-medium-fast",
+        "gpt-5.4-low",
+        # GPT-5.3 Codex (OpenAI)
+        "gpt-5.3-codex-xhigh",
+        "gpt-5.3-codex-high",
+        "gpt-5.3-codex-high-fast",
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-fast",
+        "gpt-5.3-codex-low",
+        "gpt-5.3-codex-low-fast",
+        # GPT-5.2 (OpenAI)
+        "gpt-5.2-xhigh",
+        "gpt-5.2-xhigh-fast",
+        "gpt-5.2-high",
+        "gpt-5.2-high-fast",
+        "gpt-5.2-fast",
+        "gpt-5.2-low",
+        "gpt-5.2-low-fast",
+        # GPT-5.1 (OpenAI)
+        "gpt-5.1-high",
+        "gpt-5.1",
+        "gpt-5.1-low",
+        "gpt-5.1-codex-max",
+        "gpt-5.1-codex",
+        "gpt-5.1-codex-mini",
+        # GPT-5 other
+        "gpt-5-mini",
+        # Gemini (Google)
+        "gemini-3.1-pro",
+        "gemini-3-pro",
+        "gemini-3-flash",
+        # Moonshot
+        "kimi-k2",
+    ]
+
+    _codex_models = _add_forward_compat_models(list(DEFAULT_CODEX_MODELS))
 
     _CLI_ROWS = [
         {
             "slug": "claude-cli",
             "name": "Claude Code CLI (Pro)",
-            "models": ["claude-sonnet-4-5", "claude-opus-4-8", "claude-haiku-3-5"],
-            "total_models": 3,
+            "models": _CLAUDE_CLI_MODELS,
+            "total_models": len(_CLAUDE_CLI_MODELS),
             "is_current": False,
             "is_user_defined": False,
             "authenticated": True,
@@ -4485,8 +4560,8 @@ def _inject_cli_subscription_rows(payload: dict) -> None:
         {
             "slug": "openai-codex",
             "name": "Codex CLI (ChatGPT)",
-            "models": list(DEFAULT_CODEX_MODELS[:5]),
-            "total_models": len(DEFAULT_CODEX_MODELS),
+            "models": _codex_models,
+            "total_models": len(_codex_models),
             "is_current": False,
             "is_user_defined": False,
             "authenticated": True,
@@ -4497,8 +4572,8 @@ def _inject_cli_subscription_rows(payload: dict) -> None:
         {
             "slug": "cursor-cli",
             "name": "Cursor CLI (assinatura)",
-            "models": ["claude-sonnet-4-5", "cursor-small", "gpt-4o", "claude-opus-4-8"],
-            "total_models": 4,
+            "models": _CURSOR_CLI_MODELS,
+            "total_models": len(_CURSOR_CLI_MODELS),
             "is_current": False,
             "is_user_defined": False,
             "authenticated": True,
