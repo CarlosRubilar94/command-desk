@@ -53,20 +53,22 @@ def test_ticker_calls_tick_at_least_once_then_stops():
     assert calls[0].get("sync") is False
 
 
-def test_desktop_ticker_calls_tick_then_stops():
-    """The desktop dashboard ticker loop calls cron.scheduler.tick and exits
-    once the stop_event is set. Desktop has no live adapters, so it ticks with
-    no adapters/loop."""
+def test_desktop_ticker_calls_provider_start_then_stops():
+    """Desktop ticker resolves a provider and starts it with the interval."""
     from hermes_cli.web_server import _start_desktop_cron_ticker
 
-    calls = []
+    calls = {}
     stop = threading.Event()
 
-    def fake_tick(*args, **kwargs):
-        calls.append(kwargs)
-        return 0
+    class _FakeProvider:
+        name = "fake"
 
-    with patch("cron.scheduler.tick", side_effect=fake_tick):
+        def start(self, stop_event, **kwargs):
+            calls["stop_event"] = stop_event
+            calls["kwargs"] = kwargs
+            stop_event.wait(0.05)
+
+    with patch("cron.scheduler_provider.resolve_cron_scheduler", return_value=_FakeProvider()):
         t = threading.Thread(
             target=_start_desktop_cron_ticker,
             args=(stop,),
@@ -79,8 +81,8 @@ def test_desktop_ticker_calls_tick_then_stops():
         t.join(timeout=5)
 
     assert not t.is_alive(), "desktop ticker did not exit after stop_event was set"
-    assert len(calls) >= 1, "desktop ticker never called tick()"
-    assert calls[0].get("sync") is False
+    assert calls.get("stop_event") is stop
+    assert calls.get("kwargs", {}).get("interval") == 0
 
 
 # ── Phase 1: CronScheduler ABC + InProcessCronScheduler ──────────────────────

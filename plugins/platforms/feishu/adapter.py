@@ -212,6 +212,19 @@ def _ensure_lark_imports() -> bool:
         FEISHU_AVAILABLE = False
         return False
 
+
+def _ensure_lark_request_primitives() -> bool:
+    """Ensure BaseRequest/HttpMethod/AccessTokenType are ready for API calls.
+
+    Tests may monkeypatch these globals directly without loading lark_oapi.
+    Treat pre-populated stubs as ready instead of forcing a real SDK import.
+    """
+    if BaseRequest is not None and HttpMethod is not None and AccessTokenType is not None:
+        return True
+    if not _ensure_lark_imports():
+        return False
+    return BaseRequest is not None and HttpMethod is not None and AccessTokenType is not None
+
 FEISHU_WEBSOCKET_AVAILABLE = websockets is not None
 FEISHU_WEBHOOK_AVAILABLE = aiohttp is not None
 
@@ -4086,7 +4099,7 @@ class FeishuAdapter(BasePlatformAdapter):
     async def _fetch_bot_names(self, bot_ids: List[str]) -> Optional[Dict[str, str]]:
         if not self._client or not bot_ids:
             return None
-        if not _ensure_lark_imports():
+        if not _ensure_lark_request_primitives():
             return None
         try:
             req = (
@@ -4334,7 +4347,7 @@ class FeishuAdapter(BasePlatformAdapter):
         """
         if not self._client:
             return
-        if not _ensure_lark_imports():
+        if not _ensure_lark_request_primitives():
             return
 
         # Primary probe: /open-apis/bot/v3/info — returns bot_name + open_id, no
