@@ -206,6 +206,18 @@ HERMES_OVERLAYS: Dict[str, HermesOverlay] = {
         transport="bedrock_converse",
         auth_type="aws_sdk",
     ),
+    # Keyless subprocess providers — no HTTP client, no API key.
+    # Auth is delegated entirely to the local CLI subscription session.
+    "claude-cli": HermesOverlay(
+        transport="claude_cli",
+        auth_type="external_process",
+        base_url_override="",
+    ),
+    "cursor-cli": HermesOverlay(
+        transport="cursor_cli",
+        auth_type="external_process",
+        base_url_override="",
+    ),
 }
 
 
@@ -367,6 +379,8 @@ _LABEL_OVERRIDES: Dict[str, str] = {
     "bedrock": "AWS Bedrock",
     "ollama-cloud": "Ollama Cloud",
     "xai-oauth": "xAI Grok OAuth (SuperGrok / Premium+)",
+    "claude-cli": "Claude Code CLI (Pro)",
+    "cursor-cli": "Cursor CLI (assinatura)",
 }
 
 
@@ -377,6 +391,8 @@ TRANSPORT_TO_API_MODE: Dict[str, str] = {
     "anthropic_messages": "anthropic_messages",
     "codex_responses": "codex_responses",
     "bedrock_converse": "bedrock_converse",
+    "claude_cli": "claude_cli",
+    "cursor_cli": "cursor_cli",
 }
 
 

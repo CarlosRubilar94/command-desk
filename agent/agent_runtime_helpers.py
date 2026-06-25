@@ -1524,7 +1524,17 @@ def switch_model(agent, new_model, new_provider, api_key='', base_url='', api_mo
             agent.api_key = api_key
 
         # ── Build new client ──
-        if api_mode == "anthropic_messages":
+        if api_mode in {"claude_cli", "cursor_cli"}:
+            # Keyless subprocess providers — no HTTP client needed.
+            # Auth is delegated to the local CLI subscription session.
+            agent.client = None
+            agent._client_kwargs = {}
+            agent.api_key = ""
+            if api_mode == "claude_cli":
+                agent.claude_cli_model = new_model
+            else:
+                agent.cursor_cli_model = new_model
+        elif api_mode == "anthropic_messages":
             from agent.anthropic_adapter import (
                 build_anthropic_client,
                 resolve_anthropic_token,
