@@ -4454,6 +4454,93 @@ _AUX_TASK_SLOTS: Tuple[str, ...] = (
 )
 
 
+def _inject_cli_subscription_rows(payload: dict) -> None:
+    """Inject always-authenticated rows for keyless CLI subscription providers.
+
+    ``claude-cli``, ``openai-codex`` (if not already present as authenticated),
+    and ``cursor-cli`` authenticate via the user's local subscription session —
+    no API key needed.  ``list_authenticated_providers`` never marks them
+    authenticated because they don't go through the credential-pool path.
+    This function inserts them at the front of ``payload["providers"]`` so the
+    /chat model switcher always surfaces them.
+
+    Idempotent: if a provider row already exists and is authenticated it is
+    left unchanged; if it exists but is unauthenticated the row is promoted.
+    """
+    from hermes_cli.codex_models import DEFAULT_CODEX_MODELS
+
+    _CLI_ROWS = [
+        {
+            "slug": "claude-cli",
+            "name": "Claude Code CLI (Pro)",
+            "models": ["claude-sonnet-4-5", "claude-opus-4-8", "claude-haiku-3-5"],
+            "total_models": 3,
+            "is_current": False,
+            "is_user_defined": False,
+            "authenticated": True,
+            "auth_type": "external_process",
+            "source": "cli-subscription",
+            "group": "cli-subscription",
+        },
+        {
+            "slug": "openai-codex",
+            "name": "Codex CLI (ChatGPT)",
+            "models": list(DEFAULT_CODEX_MODELS[:5]),
+            "total_models": len(DEFAULT_CODEX_MODELS),
+            "is_current": False,
+            "is_user_defined": False,
+            "authenticated": True,
+            "auth_type": "external_process",
+            "source": "cli-subscription",
+            "group": "cli-subscription",
+        },
+        {
+            "slug": "cursor-cli",
+            "name": "Cursor CLI (assinatura)",
+            "models": ["claude-sonnet-4-5", "cursor-small", "gpt-4o", "claude-opus-4-8"],
+            "total_models": 4,
+            "is_current": False,
+            "is_user_defined": False,
+            "authenticated": True,
+            "auth_type": "external_process",
+            "source": "cli-subscription",
+            "group": "cli-subscription",
+        },
+    ]
+
+    providers: list = payload.get("providers") or []
+    current_provider: str = str(payload.get("provider") or "")
+    current_model: str = str(payload.get("model") or "")
+
+    # Build a lookup of existing rows by slug.
+    existing: dict[str, int] = {
+        str(r.get("slug", "")): i for i, r in enumerate(providers)
+    }
+
+    prepend: list[dict] = []
+    for row in _CLI_ROWS:
+        slug = row["slug"]
+        row = dict(row)
+        row["is_current"] = (slug == current_provider)
+        idx = existing.get(slug)
+        if idx is not None:
+            existing_row = providers[idx]
+            if not existing_row.get("authenticated"):
+                # Promote the skeleton row to authenticated.
+                existing_row["authenticated"] = True
+                existing_row["auth_type"] = "external_process"
+                existing_row["source"] = "cli-subscription"
+                existing_row["group"] = "cli-subscription"
+                if not existing_row.get("models"):
+                    existing_row["models"] = row["models"]
+                    existing_row["total_models"] = row["total_models"]
+            # Already present — don't prepend a duplicate.
+        else:
+            prepend.append(row)
+
+    payload["providers"] = prepend + providers
+
+
 @app.get("/api/model/options")
 def get_model_options(profile: Optional[str] = None, refresh: bool = False):
     """Return authenticated providers + their curated model lists.
@@ -4483,7 +4570,7 @@ def get_model_options(profile: Optional[str] = None, refresh: bool = False):
         # `auth_type`/`key_env`/`warning` so the GUI can render a setup
         # affordance instead of hiding the provider entirely.
         with _profile_scope(profile):
-            return build_models_payload(
+            payload = build_models_payload(
                 load_picker_context(),
                 include_unconfigured=True,
                 picker_hints=True,
@@ -4492,6 +4579,14 @@ def get_model_options(profile: Optional[str] = None, refresh: bool = False):
                 capabilities=True,
                 refresh=bool(refresh),
             )
+
+        # Inject always-authenticated CLI subscription providers.  These are
+        # keyless subprocess providers that don't authenticate via any API key
+        # flow, so they never appear as "authenticated" in the normal inventory.
+        # We surface them here so the /chat model switcher always lists them.
+        _inject_cli_subscription_rows(payload)
+
+        return payload
     except HTTPException:
         raise
     except Exception:

@@ -1035,6 +1035,10 @@ CANONICAL_PROVIDERS: list[ProviderEntry] = [
     ProviderEntry("bedrock",        "AWS Bedrock",              "AWS Bedrock (Claude, Nova, Llama, DeepSeek; IAM or API key)"),
     ProviderEntry("azure-foundry",  "Azure Foundry",            "Azure Foundry (OpenAI-style or Anthropic-style endpoint, your Azure AI deployment)"),
     ProviderEntry("qwen-oauth",     "Qwen OAuth (Portal)",      "Qwen OAuth (Reuses local Qwen CLI login)"),
+    # Keyless subscription-backed subprocess providers — always available when the
+    # respective CLI is installed; no API key required.
+    ProviderEntry("claude-cli",     "Claude Code CLI (Pro)",    "Claude Code CLI (Claude Pro/Max subscription, claude -p subprocess)"),
+    ProviderEntry("cursor-cli",     "Cursor CLI (assinatura)",  "Cursor CLI (Cursor subscription, cursor-agent -p subprocess)"),
 ]
 
 # Auto-extend CANONICAL_PROVIDERS with any provider registered in providers/
@@ -3762,6 +3766,21 @@ def validate_requested_model(
             "persist": True,
             "recognized": False,
             "message": message,
+        }
+
+    # Keyless subprocess providers: no API probe possible; always accept whatever model
+    # the user picks (the subprocess may override or ignore it anyway).
+    if normalized in {"claude-cli", "cursor-cli"}:
+        catalog_models = _PROVIDER_MODELS.get(normalized, [])
+        recognized = requested_for_lookup in set(catalog_models)
+        return {
+            "accepted": True,
+            "persist": True,
+            "recognized": recognized,
+            "message": None if recognized else (
+                f"Note: `{requested}` is not in the built-in {normalized} model list. "
+                "It will be passed as-is to the subprocess — the CLI may accept or reject it."
+            ),
         }
 
     # Providers with non-standard catalog validation — /v1/models probing is not the right path.

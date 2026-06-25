@@ -24,7 +24,11 @@ HEADERS = {"X-Hermes-Session-Token": _SESSION_TOKEN}
 # the model picker's local-endpoint flow, not a fixed credential card. It is in
 # the CLI picker's universe but intentionally has no dedicated Providers-tab
 # card. Exempt it from the union check.
-_EXEMPT = {"custom"}
+# `claude-cli` and `cursor-cli` are keyless subscription-backed subprocess
+# providers that need NO credential card (auth is the local CLI session).
+# They are always ready-to-use and surfaced directly by /api/model/options;
+# they intentionally have no API-key card or OAuth account card.
+_EXEMPT = {"custom", "claude-cli", "cursor-cli"}
 
 # Providers that legitimately offer BOTH auth methods and so intentionally
 # appear on both desktop tabs (an API-key card AND an account sign-in card).

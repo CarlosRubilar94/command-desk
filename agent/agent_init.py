@@ -771,6 +771,10 @@ def init_agent(
                 ).strip()
         except Exception:
             pass
+        # Propagate configured model so run_claude_cli_turn can pass --model
+        # to claude (e.g. "claude-opus-4-8" selected from the model picker).
+        if getattr(agent, "model", ""):
+            agent.claude_cli_model = agent.model
         if not agent.quiet_mode:
             _fb_label = agent.claude_cli_fallback or "off"
             print(
@@ -786,6 +790,11 @@ def init_agent(
         agent.client = None
         agent._client_kwargs = {}
         agent.api_key = ""
+        # Propagate the configured model ID so run_cursor_cli_turn can pass
+        # --model to cursor-agent (if the user picked a specific model from
+        # the picker, e.g. "claude-sonnet-4-5" or "cursor-small").
+        if getattr(agent, "model", ""):
+            agent.cursor_cli_model = agent.model
         if not agent.quiet_mode:
             print(
                 f"🤖 AI Agent initialized with model: {agent.model} "
