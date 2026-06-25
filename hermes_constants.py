@@ -46,9 +46,21 @@ def _get_platform_default_hermes_home() -> Path:
     """Return the platform-native default Hermes home path."""
     if sys.platform == "win32":
         local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
-        base = Path(local_appdata) if local_appdata else Path.home() / "AppData" / "Local"
-        return base / "hermes"
-    return Path.home() / ".hermes"
+        if local_appdata:
+            return Path(local_appdata) / "hermes"
+        try:
+            return Path.home() / "AppData" / "Local" / "hermes"
+        except RuntimeError:
+            import tempfile
+            return Path(tempfile.gettempdir()) / "hermes"
+    home_env = os.environ.get("HOME", "").strip()
+    if home_env:
+        return Path(home_env) / ".hermes"
+    try:
+        return Path.home() / ".hermes"
+    except RuntimeError:
+        import tempfile
+        return Path(tempfile.gettempdir()) / "hermes"
 
 
 def get_hermes_home() -> Path:

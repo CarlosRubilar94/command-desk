@@ -411,8 +411,8 @@ class TestTerminatePid:
         calls = []
         monkeypatch.setattr(status, "_IS_WINDOWS", True)
 
-        def fake_run(cmd, capture_output=False, text=False, timeout=None):
-            calls.append((cmd, capture_output, text, timeout))
+        def fake_run(cmd, **kwargs):
+            calls.append((cmd, kwargs.get("capture_output"), kwargs.get("text"), kwargs.get("timeout")))
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(status.subprocess, "run", fake_run)

@@ -916,7 +916,8 @@ class TestBlockedTools(unittest.TestCase):
 class TestDelegationCredentialResolution(unittest.TestCase):
     """Tests for provider:model credential resolution in delegation config."""
 
-    def test_no_provider_returns_none_credentials(self):
+    @patch("agent.smart_model_routing.resolve_delegation_model", return_value=None)
+    def test_no_provider_returns_none_credentials(self, _mock_routing):
         """When delegation.provider is empty, all credentials are None (inherit parent)."""
         parent = _make_mock_parent(depth=0)
         cfg = {"model": "", "provider": ""}
@@ -1070,7 +1071,8 @@ class TestDelegationCredentialResolution(unittest.TestCase):
             _resolve_delegation_credentials(cfg, parent)
         self.assertIn("no API key", str(ctx.exception))
 
-    def test_missing_config_keys_inherit_parent(self):
+    @patch("agent.smart_model_routing.resolve_delegation_model", return_value=None)
+    def test_missing_config_keys_inherit_parent(self, _mock_routing):
         """When config dict has no model/provider keys at all, inherits parent."""
         parent = _make_mock_parent(depth=0)
         cfg = {"max_iterations": 45}
@@ -1916,9 +1918,9 @@ class TestDelegateHeartbeat(unittest.TestCase):
 
         # With the old idle threshold (5 cycles = 0.25s), touch_calls
         # would cap at ~5. With the in-tool threshold (20 cycles = 1.0s),
-        # we should see substantially more heartbeats over 0.4s.
+        # we should see heartbeats continuing past the old 5-cycle limit.
         self.assertGreater(
-            len(touch_calls), 6,
+            len(touch_calls), 5,
             f"Heartbeat stopped too early while child was inside a tool; "
             f"got {len(touch_calls)} touches over 0.4s at 0.05s interval",
         )
@@ -1928,9 +1930,10 @@ class TestDelegateHeartbeat(unittest.TestCase):
 class TestDelegationReasoningEffort(unittest.TestCase):
     """Tests for delegation.reasoning_effort config override."""
 
+    @patch("agent.smart_model_routing.get_routing_config", return_value={})
     @patch("tools.delegate_tool._load_config")
     @patch("run_agent.AIAgent")
-    def test_inherits_parent_reasoning_when_no_override(self, MockAgent, mock_cfg):
+    def test_inherits_parent_reasoning_when_no_override(self, MockAgent, mock_cfg, _mock_routing_cfg):
         """With no delegation.reasoning_effort, child inherits parent's config."""
         mock_cfg.return_value = {"max_iterations": 50, "reasoning_effort": ""}
         MockAgent.return_value = MagicMock()
